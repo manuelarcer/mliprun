@@ -406,7 +406,10 @@ class TestCLIForwardsHead:
 
         assert result.exit_code == 0, result.output
         assert captured["uma_task"] == "oc25"
-        assert captured["mace_head"] is not None or "mace_head" in captured
+        # The CLI forwards its parsed --mace-head default verbatim; gating a
+        # UMA run's mace_head to None is collect_provenance's job, not the
+        # CLI's, and is covered by Task 1.
+        assert captured["mace_head"] == "omat_pbe"
 ```
 
 Before running, confirm the exact option names with `md run --help` — if `--output-dir` is not an option on this command, drop it (the command defaults to writing next to the input structure, which is already `tmp_path`).
