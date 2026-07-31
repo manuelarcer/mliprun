@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from mliprun.core.run_record import (
+    NEW_FIELDS_KEY,
     RECORD_FILENAME,
     SCHEMA_VERSION,
     BatchInfo,
@@ -413,6 +414,8 @@ class TestHeadInStageProvenance:
         data = _read(tmp_path)
         assert data["stages"][1]["stage_provenance"] == {"uma_task": "oc25"}
         assert data["provenance"]["uma_task"] == "omat"
+        # Present-and-different is a real change, not a new field.
+        assert NEW_FIELDS_KEY not in data["stages"][1]
 
     def test_append_with_same_head_writes_no_stage_provenance(self, tmp_path):
         base = {"mliprun_version": "0.4.0", "hostname": "node-a",
@@ -422,4 +425,120 @@ class TestHeadInStageProvenance:
         rec.complete(status="converged")
         rec2 = _begin(tmp_path, provenance=dict(base), append=True)
         rec2.complete(status="converged")
-        assert "stage_provenance" not in _read(tmp_path)["stages"][1]
+        stage = _read(tmp_path)["stages"][1]
+        assert "stage_provenance" not in stage
+        # Present-and-same: neither key. A null `mace_head` on both sides is
+        # "no MACE head applies", not a fact worth flagging.
+        assert NEW_FIELDS_KEY not in stage
+
+
+#: A record as schema 1 wrote it: no `uma_task` / `mace_head` keys anywhere.
+_SCHEMA_1_PROVENANCE = {
+    "mliprun_version": "0.4.0",
+    "ase_version": "3.23.0",
+    "mlip_package": {"name": "fairchem-core", "version": "2.0.0"},
+    "mlip_model": "uma-s-1p2",
+    "device_requested": "cuda",
+    "device_resolved": "cuda",
+    "python_version": "3.11.9",
+    "hostname": "node-a",
+    "started_at": "2026-07-01T09:00:00+08:00",
+    "finished_at": "2026-07-01T11:00:00+08:00",
+    "walltime_s": 7200.0,
+}
+
+
+def _write_schema_1_record(tmp_path):
+    """Drop a genuine schema-1 record on disk for an append to resume."""
+    (tmp_path / RECORD_FILENAME).write_text(json.dumps({
+        "schema_version": 1,
+        "command": "neb",
+        "status": "converged",
+        "run": {"mode": "one-off", "batch": None},
+        "inputs": {"n_images": 5, "n_atoms": 32},
+        "parameters": {},
+        "provenance": dict(_SCHEMA_1_PROVENANCE),
+        "stages": [{
+            "index": 0, "kind": "neb", "status": "converged",
+            "started_at": "2026-07-01T09:00:00+08:00",
+            "walltime_s": 7200.0, "steps": 120, "results": {},
+        }],
+    }, indent=2))
+
+
+def _schema_2_provenance(**overrides):
+    """The same environment, described by schema-2 collect_provenance()."""
+    prov = dict(_SCHEMA_1_PROVENANCE, uma_task="omat", mace_head=None)
+    prov.update(overrides)
+    return prov
+
+
+class TestNewFieldsMarker:
+    """I4 (human ruling): a diff field the stored record has no key for is
+    reported as *new*, never as *changed*.
+
+    A schema-1 record predates `uma_task`/`mace_head`, so comparing with
+    `.get()` on both sides made "never written" indistinguishable from
+    "null" -- and a same-head resume of a legacy UMA run claimed the head
+    had switched. That is a CANON C3 false positive in the artifact whose
+    whole job is answering C3 questions.
+    """
+
+    def test_same_head_resume_of_a_legacy_record_claims_no_change(self, tmp_path):
+        _write_schema_1_record(tmp_path)
+        rec = _begin(tmp_path, command="neb", stage_kind="neb-restart",
+                     append=True, provenance=_schema_2_provenance())
+        rec.complete(status="converged")
+
+        stage = _read(tmp_path)["stages"][1]
+        # The head did NOT change, so nothing may go to stage_provenance.
+        assert "stage_provenance" not in stage
+        assert stage[NEW_FIELDS_KEY] == {"uma_task": "omat", "mace_head": None}
+
+    def test_marker_carries_this_stage_s_head_not_a_guess_at_stage_0(self, tmp_path):
+        """The reader must see what ran *now*; stage 0 stays unknown."""
+        _write_schema_1_record(tmp_path)
+        rec = _begin(tmp_path, command="neb", stage_kind="neb-restart",
+                     append=True,
+                     provenance=_schema_2_provenance(uma_task="oc25"))
+        rec.complete(status="converged")
+
+        data = _read(tmp_path)
+        assert data["stages"][1][NEW_FIELDS_KEY]["uma_task"] == "oc25"
+        # The origin provenance is never back-filled: stage 0's head is not
+        # knowable from this record, and inventing it would be worse.
+        assert "uma_task" not in data["provenance"]
+
+    def test_legacy_append_leaves_schema_version_at_one(self, tmp_path):
+        """The record becomes a hybrid, and says so honestly. Rewriting it
+        to 2 would assert stage 0 carried fields it never did."""
+        _write_schema_1_record(tmp_path)
+        rec = _begin(tmp_path, command="neb", stage_kind="neb-restart",
+                     append=True, provenance=_schema_2_provenance())
+        rec.complete(status="converged")
+        assert _read(tmp_path)["schema_version"] == 1
+
+    def test_a_real_change_still_reaches_stage_provenance(self, tmp_path):
+        """Both keys can appear at once: the hostname genuinely moved, and
+        the head fields are merely new."""
+        _write_schema_1_record(tmp_path)
+        rec = _begin(tmp_path, command="neb", stage_kind="neb-restart",
+                     append=True,
+                     provenance=_schema_2_provenance(hostname="node-b"))
+        rec.complete(status="converged")
+
+        stage = _read(tmp_path)["stages"][1]
+        assert stage["stage_provenance"] == {"hostname": "node-b"}
+        assert stage[NEW_FIELDS_KEY] == {"uma_task": "omat", "mace_head": None}
+
+    def test_field_absent_from_the_incoming_provenance_is_reported_nowhere(self, tmp_path):
+        """A minimal caller that omits the head fields entirely has nothing
+        to say about them -- neither key may appear."""
+        _write_schema_1_record(tmp_path)
+        rec = _begin(tmp_path, command="neb", stage_kind="neb-restart",
+                     append=True, provenance=dict(_SCHEMA_1_PROVENANCE))
+        rec.complete(status="converged")
+
+        stage = _read(tmp_path)["stages"][1]
+        assert "stage_provenance" not in stage
+        assert NEW_FIELDS_KEY not in stage

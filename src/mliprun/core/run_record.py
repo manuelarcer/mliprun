@@ -53,6 +53,10 @@ VALID_PARAM_SOURCES = frozenset({"user", "default", "env", "prompt", "unspecifie
 _PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved",
                            "mlip_model", "uma_task", "mace_head")
 
+#: Stage key for diff fields the incoming provenance carries but the stored
+#: top-level provenance has no slot for at all -- see `_split_provenance`.
+NEW_FIELDS_KEY = "stage_provenance_new_fields"
+
 
 def _now_iso() -> str:
     """Timezone-aware local timestamp, ISO 8601."""
@@ -172,6 +176,14 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
     never raise -- ``socket.gethostname()`` genuinely fails on some
     HPC/container setups.
 
+    That "must never raise" is a load-bearing invariant, not a courtesy:
+    callers evaluate ``collect_provenance(...)`` as an argument expression,
+    so it runs at the call site, *outside* :meth:`RunRecord.begin`'s
+    ``try``. The module guarantee that a record failure never kills a run
+    rests on this function being total; ``begin``'s handler cannot catch
+    what is raised before ``begin`` is entered. Keep every new fallible
+    call inside its own guard.
+
     ``uma_task`` and ``mace_head`` are gated on the model tag rather than
     trusted from the caller: CLIs pass whatever their ``--uma-task`` /
     ``--mace-head`` options resolved to, defaults included, so a MACE run
@@ -270,6 +282,39 @@ def _tag(parameters: dict, sources: Optional[dict]) -> dict:
     }
 
 
+def _split_provenance(prov_in: dict, top_prov: dict) -> tuple[dict, dict]:
+    """Sort an appended stage's provenance into "changed" and "new".
+
+    Returns ``(changed, new)``. ``changed`` holds the fields whose value
+    differs from the run's origin -- a genuine environment switch, the
+    ``stage_provenance`` contract. ``new`` holds the fields the stored
+    provenance has **no key for at all**, which is a different fact and must
+    not be reported as a change.
+
+    The distinction exists because a schema-1 record predates ``uma_task`` /
+    ``mace_head``. Comparing with ``dict.get`` on both sides makes "the key
+    was never written" look identical to "the key is null", so resuming a
+    legacy UMA run with the *same* head would claim the head had switched --
+    a CANON C3 false positive in the very artifact that answers C3 questions.
+    A missing key means stage 0's value is unknown, not that it was
+    different; the params text file next to the record is the only remaining
+    evidence of what stage 0 actually ran.
+
+    Fields absent from ``prov_in`` are in neither dict: this stage has
+    nothing to say about them.
+    """
+    changed: dict = {}
+    new: dict = {}
+    for key in _PROVENANCE_DIFF_FIELDS:
+        if key not in prov_in:
+            continue
+        if key not in top_prov:
+            new[key] = prov_in[key]
+        elif prov_in[key] != top_prov[key]:
+            changed[key] = prov_in[key]
+    return changed, new
+
+
 class RunRecord:
     """A record being written. Obtain one from :meth:`begin`."""
 
@@ -325,15 +370,18 @@ class RunRecord:
                 # instead the stage records only what differs from it, so a
                 # reader can see what changed about the environment between
                 # stages without losing the original context.
+                # I4 (human ruling): a field the stored record has no key
+                # for is reported under NEW_FIELDS_KEY, never as a change.
+                # `schema_version` is deliberately left as stage 0 wrote it:
+                # rewriting it would assert this code's schema over a stage
+                # whose provenance this code never collected.
                 top_prov = payload.get("provenance") or {}
-                prov_in = provenance or {}
-                stage_delta = {
-                    key: prov_in.get(key)
-                    for key in _PROVENANCE_DIFF_FIELDS
-                    if prov_in.get(key) != top_prov.get(key)
-                }
+                stage_delta, new_fields = _split_provenance(
+                    provenance or {}, top_prov)
                 if stage_delta:
                     stage["stage_provenance"] = stage_delta
+                if new_fields:
+                    stage[NEW_FIELDS_KEY] = new_fields
             else:
                 prov = dict(provenance)
                 prov["started_at"] = _now_iso()
