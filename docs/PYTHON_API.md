@@ -84,6 +84,7 @@ converged = run_optimization(
     relax_cell=False,   # True → also relax the cell (VASP ISIF=3-equivalent)
     output_dir="./relaxed",
     model_name="uma-s-1p2",
+    uma_task="omat",    # or mace_head="omat_pbe" — see "Run-record keywords"
     plot=False,         # default: no PNG. Set True to write *_convergence.png (CSV always written)
 )
 ```
@@ -123,6 +124,7 @@ run_md(
     traj_interval=100,  # frames written to md.traj every N steps
     output_dir="./md",
     model_name="uma-s-1p2",
+    uma_task="omat",    # or mace_head="omat_pbe" — see "Run-record keywords"
 )
 ```
 
@@ -148,6 +150,33 @@ dyn.run(50000)
 `setup_dynamics` returns the corresponding ASE dynamics object (`Langevin`, `NoseHoover`, `NVTBerendsen`, `NPT`, `NPTBerendsen`, or `VelocityVerlet`). It is also where Maxwell-Boltzmann velocity initialization happens for NVT/NPT.
 
 For the full parameter list and unit conventions, see [MD_REFERENCE.md](MD_REFERENCE.md).
+
+---
+
+## Run-record keywords
+
+`run_optimization` and `run_md` both write a `mliprun_run.json` run record
+([OUTPUTS.md](OUTPUTS.md#the-run-record)). These keywords exist only to fill
+it in — none of them changes the physics — and all are optional:
+
+| Keyword | Default | Notes |
+|---------|---------|-------|
+| `uma_task` | `None` | The UMA task head this run used. Recorded only when `model_name` starts with `uma-`. |
+| `mace_head` | `None` | The MACE head this run used. Recorded only when `model_name` starts with `mace-mh-`. |
+| `device_requested` | `"auto"` | The device as asked for. |
+| `device_resolved` | `"auto"` | The device actually used (e.g. `"cuda"`). |
+| `run_context` | `None` | A `RunContext` declaring the command, batch identity, and where each parameter value came from. Without it every parameter is tagged `unspecified` — mliprun never guesses. |
+
+Pass the same head/task you gave `setup_calculator` / `build_calculator`.
+These functions receive an `Atoms` object with a calculator already attached
+and cannot interrogate it for the head, so an omitted `uma_task` is recorded
+as "not determined" rather than guessed — CANON C1: the head is an explicit
+decision, never inferred. The mismatched one is dropped rather than trusted,
+so passing both is harmless.
+
+The record is what lets you check, later, that two energies you are about to
+subtract came from the same head. Filling these in is the difference between
+a record that identifies the level of theory and one that does not.
 
 ---
 

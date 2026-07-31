@@ -4,9 +4,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
-- Run record (`mliprun_run.json`) now records `uma_task` / `mace_head` in its
-  `provenance` block, so the record identifies the level of theory on its own.
-  Schema version 2.
+### Changed
+
+- **Run record schema `1` → `2`.** `mliprun_run.json` now records the head/task
+  that actually ran (`provenance.uma_task` / `provenance.mace_head`), so the
+  record identifies the level of theory on its own — a model tag alone does
+  not, because the heads are independent fine-tunes with independent energy
+  zeros. Each field is recorded only for its own model family, so a MACE run
+  is never labelled with the `--uma-task` its command line happened to carry.
+  `run_optimization`, `run_md` and `CustomNEB` accept the head/task as
+  keywords; `optimize`, `md`, `neb` and `autoneb` forward what they parsed.
+  Consumers that pin `schema_version == 1` must be updated.
+- An appended stage whose provenance carries a field the stored record has no
+  key for (resuming a run that started under schema 1) reports it under
+  `stage_provenance_new_fields`, meaning "this field is new; stage 0's value
+  was not recorded". Previously such a field landed in `stage_provenance`,
+  which claims the value *changed* — so a same-head resume of a legacy run
+  wrongly asserted the head had switched. `schema_version` is left as stage 0
+  wrote it; see [docs/OUTPUTS.md](docs/OUTPUTS.md#stages).
 
 ## [0.4.0] - 2026-07-14
 
