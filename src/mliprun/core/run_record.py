@@ -47,7 +47,7 @@ _MLIP_PACKAGES = (
 VALID_PARAM_SOURCES = frozenset({"user", "default", "env", "prompt", "unspecified"})
 
 #: Provenance fields compared between the run's origin and an appended
-#: stage. Only these four are meaningful to call out as "what changed" --
+#: stage. Only these fields are meaningful to call out as "what changed" --
 #: see I2 in .superpowers/sdd/task-1-fixes.md.
 _PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved",
                            "mlip_model", "uma_task", "mace_head")
