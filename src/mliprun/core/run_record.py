@@ -5,6 +5,7 @@ every caller gets one -- CLI commands and direct library callers alike. This
 module is the only place that knows the file format.
 
 Design: docs/superpowers/specs/2026-07-21-unified-run-record-design.md
+Amended: docs/superpowers/specs/2026-07-29-run-record-head-provenance-design.md
 
 The governing rule is that a record failure must never kill a run: every
 public entry point swallows its own exceptions and logs a warning. A six-hour
@@ -29,7 +30,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 RECORD_FILENAME = "mliprun_run.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Model-tag prefix -> installed distribution name. Longest prefix wins, so
 #: ``mace-mh-1`` resolves before the bare ``mace`` entry.
@@ -47,9 +48,14 @@ _MLIP_PACKAGES = (
 VALID_PARAM_SOURCES = frozenset({"user", "default", "env", "prompt", "unspecified"})
 
 #: Provenance fields compared between the run's origin and an appended
-#: stage. Only these four are meaningful to call out as "what changed" --
+#: stage. Only these fields are meaningful to call out as "what changed" --
 #: see I2 in .superpowers/sdd/task-1-fixes.md.
-_PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved", "mlip_model")
+_PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved",
+                           "mlip_model", "uma_task", "mace_head")
+
+#: Stage key for diff fields the incoming provenance carries but the stored
+#: top-level provenance has no slot for at all -- see `_split_provenance`.
+NEW_FIELDS_KEY = "stage_provenance_new_fields"
 
 
 def _now_iso() -> str:
@@ -157,7 +163,8 @@ def _mlip_package(mlip_model: Any) -> dict:
 
 
 def collect_provenance(*, mlip_model: Any, device_requested: str,
-                        device_resolved: str) -> dict:
+                        device_resolved: str, uma_task: Optional[str] = None,
+                        mace_head: Optional[str] = None) -> dict:
     """Gather environment and version facts for the record.
 
     ``device_requested`` and ``device_resolved`` are kept apart because
@@ -168,6 +175,21 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
     ``None`` fields is far better than no record, and this function must
     never raise -- ``socket.gethostname()`` genuinely fails on some
     HPC/container setups.
+
+    That "must never raise" is a load-bearing invariant, not a courtesy:
+    callers evaluate ``collect_provenance(...)`` as an argument expression,
+    so it runs at the call site, *outside* :meth:`RunRecord.begin`'s
+    ``try``. The module guarantee that a record failure never kills a run
+    rests on this function being total; ``begin``'s handler cannot catch
+    what is raised before ``begin`` is entered. Keep every new fallible
+    call inside its own guard.
+
+    ``uma_task`` and ``mace_head`` are gated on the model tag rather than
+    trusted from the caller: CLIs pass whatever their ``--uma-task`` /
+    ``--mace-head`` options resolved to, defaults included, so a MACE run
+    would otherwise be recorded as carrying a UMA task it never used.
+    CANON C1 makes the head its own explicit decision and C3 forbids mixing
+    heads within an energy formula, so a wrong head is worse than none.
     """
     try:
         mliprun_version = version("mliprun")
@@ -189,11 +211,14 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
         hostname = socket.gethostname()
     except Exception:  # noqa: BLE001 -- fails on some HPC/container setups
         hostname = None
+    tag = mlip_model if isinstance(mlip_model, str) else ""
     return {
         "mliprun_version": mliprun_version,
         "ase_version": ase_version,
         "mlip_package": mlip_package,
         "mlip_model": mlip_model,
+        "uma_task": uma_task if tag.startswith("uma-") else None,
+        "mace_head": mace_head if tag.startswith("mace-mh-") else None,
         "device_requested": device_requested,
         "device_resolved": device_resolved,
         "python_version": python_version,
@@ -257,6 +282,39 @@ def _tag(parameters: dict, sources: Optional[dict]) -> dict:
     }
 
 
+def _split_provenance(prov_in: dict, top_prov: dict) -> tuple[dict, dict]:
+    """Sort an appended stage's provenance into "changed" and "new".
+
+    Returns ``(changed, new)``. ``changed`` holds the fields whose value
+    differs from the run's origin -- a genuine environment switch, the
+    ``stage_provenance`` contract. ``new`` holds the fields the stored
+    provenance has **no key for at all**, which is a different fact and must
+    not be reported as a change.
+
+    The distinction exists because a schema-1 record predates ``uma_task`` /
+    ``mace_head``. Comparing with ``dict.get`` on both sides makes "the key
+    was never written" look identical to "the key is null", so resuming a
+    legacy UMA run with the *same* head would claim the head had switched --
+    a CANON C3 false positive in the very artifact that answers C3 questions.
+    A missing key means stage 0's value is unknown, not that it was
+    different; the params text file next to the record is the only remaining
+    evidence of what stage 0 actually ran.
+
+    Fields absent from ``prov_in`` are in neither dict: this stage has
+    nothing to say about them.
+    """
+    changed: dict = {}
+    new: dict = {}
+    for key in _PROVENANCE_DIFF_FIELDS:
+        if key not in prov_in:
+            continue
+        if key not in top_prov:
+            new[key] = prov_in[key]
+        elif prov_in[key] != top_prov[key]:
+            changed[key] = prov_in[key]
+    return changed, new
+
+
 class RunRecord:
     """A record being written. Obtain one from :meth:`begin`."""
 
@@ -312,15 +370,18 @@ class RunRecord:
                 # instead the stage records only what differs from it, so a
                 # reader can see what changed about the environment between
                 # stages without losing the original context.
+                # I4 (human ruling): a field the stored record has no key
+                # for is reported under NEW_FIELDS_KEY, never as a change.
+                # `schema_version` is deliberately left as stage 0 wrote it:
+                # rewriting it would assert this code's schema over a stage
+                # whose provenance this code never collected.
                 top_prov = payload.get("provenance") or {}
-                prov_in = provenance or {}
-                stage_delta = {
-                    key: prov_in.get(key)
-                    for key in _PROVENANCE_DIFF_FIELDS
-                    if prov_in.get(key) != top_prov.get(key)
-                }
+                stage_delta, new_fields = _split_provenance(
+                    provenance or {}, top_prov)
                 if stage_delta:
                     stage["stage_provenance"] = stage_delta
+                if new_fields:
+                    stage[NEW_FIELDS_KEY] = new_fields
             else:
                 prov = dict(provenance)
                 prov["started_at"] = _now_iso()

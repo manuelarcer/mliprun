@@ -180,14 +180,14 @@ layer — so a script that calls `run_optimization` directly gets one too.
 
 | Key | Meaning |
 |-----|---------|
-| `schema_version` | Currently `1`. Check it before parsing. |
+| `schema_version` | Currently `2`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head`; in a version-1 record those keys are simply absent, which is not the same as null. |
 | `command` | `optimize`, `md`, `neb` or `autoneb`. |
 | `status` | Status of the **latest** stage: `running`, `converged`, `not_converged` or `failed`. A record left saying `running` means the job died without reporting back. |
 | `run.mode` | `one-off` or `batch`. |
 | `run.batch` | `null` for one-off runs; otherwise `batch_id`, `driver`, `argv`, `root`, `config_file`. Every run of one batch shares a `batch_id`. |
 | `inputs` | For `optimize` and `md`: structure filename and absolute path, atom count, formula. For `neb` and `autoneb`: `n_images` and `n_atoms` (there is no single input structure). |
 | `parameters` | Every resolved parameter as `{"value": ..., "source": ...}`. |
-| `provenance` | Versions (mliprun, ASE, the MLIP package), model, requested vs resolved device, Python, hostname, timestamps, wall time. Always describes stage 0's environment — see below. |
+| `provenance` | Versions (mliprun, ASE, the MLIP package), model **and the head/task it ran** (`uma_task` / `mace_head`), requested vs resolved device, Python, hostname, timestamps, wall time. Always describes stage 0's environment — see below. |
 | `stages` | One entry per invocation in this directory. A NEB restart or MD resume **appends**. |
 
 `provenance` is fixed at stage 0 and is never rewritten by a later stage.
@@ -197,6 +197,22 @@ stage's** `walltime_s` — compute actually spent, not the wall-clock span
 between `started_at` and `finished_at`. A NEB restarted a week after stage 0
 reports the two hours of compute the two stages took, not the week of
 wall-clock gap in between.
+
+#### The head/task fields
+
+`provenance.uma_task` and `provenance.mace_head` name the head that actually
+ran, so the record identifies the level of theory on its own — a model tag
+alone does not, because the heads are independent fine-tunes with independent
+energy zeros. At most one is ever non-null: each is recorded only when the
+model tag belongs to its family (`uma-*` and `mace-mh-*` respectively), so a
+MACE run never inherits the `--uma-task` its command line happened to carry.
+Both are `null` for models with no head at all (CHGNet, SevenNet, plain
+`mace`), and `null` also means "not determined" for a library caller that
+passed neither.
+
+Use these two fields before combining energies from different directories: an
+energy produced under one head must not enter a formula with an energy
+produced under another.
 
 ### Parameter sources
 
@@ -224,12 +240,34 @@ A stage carrying `"prior_history_unknown": true` was appended to a directory
 with no readable prior record — an older run, or one whose record was damaged.
 
 An appended stage that ran in a different environment than stage 0 — a
-restart moved to another cluster, or run after a version bump — carries a
-`stage_provenance` object holding **only** the fields that differ from the
-top-level `provenance`, drawn from `mliprun_version`, `hostname`,
-`device_resolved` and `mlip_model`. The key is omitted entirely when nothing
-differs, and stage 0 never carries it (there is nothing yet to compare it
-against).
+restart moved to another cluster, run after a version bump, or **switched to
+a different head** — carries a `stage_provenance` object holding **only** the
+fields that differ from the top-level `provenance`, drawn from
+`mliprun_version`, `hostname`, `device_resolved`, `mlip_model`, `uma_task`
+and `mace_head`. The key is omitted entirely when nothing differs, and stage 0
+never carries it (there is nothing yet to compare it against).
+
+A stage may also carry `stage_provenance_new_fields`. It means something
+different, and the two never overlap:
+
+| Key | Claim |
+|-----|-------|
+| `stage_provenance` | This field **changed**. Stage 0's value is in the top-level `provenance`; this stage's value is here. |
+| `stage_provenance_new_fields` | This field is **new**. The stored record has no key for it at all, so stage 0's value was **not recorded** and is not knowable from this file. This stage's value is here. |
+
+In practice `stage_provenance_new_fields` appears when a run started under
+schema 1 (before `uma_task`/`mace_head` existed) is resumed by a current
+mliprun. Read it as "the head is now *X*; what stage 0 ran is unrecorded" —
+**not** as "the head changed to *X*". The `*_params.txt` file written
+alongside the record by stage 0 is the remaining evidence of what stage 0
+actually used; check it before combining the two stages' energies.
+
+Such a record is a hybrid: `schema_version` stays at the value stage 0 wrote
+(`1`), while the appended stage carries a schema-2 key. The version is
+deliberately not rewritten — bumping it would assert that stage 0's
+provenance was collected under schema 2, which it was not. Parse defensively:
+treat `schema_version` as describing the top-level `provenance` block, and
+read each stage's own keys for what that stage recorded.
 
 ### Results by command
 

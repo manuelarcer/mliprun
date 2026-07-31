@@ -663,6 +663,13 @@ class CustomNEB:
                 mlip_model=self.mlip,
                 device_requested=self.device,
                 device_resolved=resolve_device(self.device),
+                uma_task=self.uma_task,
+                # Default None, unlike setup_calculator's "omat_pbe": the
+                # calculator needs *a* usable head to run at all, but the
+                # record must never invent one it cannot verify was used
+                # (CANON C1 -- the head is an explicit decision, never
+                # inferred). An unset attribute is recorded as unknown.
+                mace_head=getattr(self, "mace_head", None),
             ),
             run_context=run_context,
             # k, climb, max_steps, the optimizer, and fmax are arguments of
@@ -816,6 +823,10 @@ class CustomNEB:
                 mlip_model=self.mlip,
                 device_requested=self.device,
                 device_resolved=resolve_device(self.device),
+                uma_task=self.uma_task,
+                # Default None, unlike setup_calculator's "omat_pbe" -- see
+                # the same call in run_neb: a record must not invent a head.
+                mace_head=getattr(self, "mace_head", None),
             ),
             run_context=run_context,
         )
