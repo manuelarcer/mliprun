@@ -29,7 +29,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 RECORD_FILENAME = "mliprun_run.json"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Model-tag prefix -> installed distribution name. Longest prefix wins, so
 #: ``mace-mh-1`` resolves before the bare ``mace`` entry.
@@ -49,7 +49,8 @@ VALID_PARAM_SOURCES = frozenset({"user", "default", "env", "prompt", "unspecifie
 #: Provenance fields compared between the run's origin and an appended
 #: stage. Only these four are meaningful to call out as "what changed" --
 #: see I2 in .superpowers/sdd/task-1-fixes.md.
-_PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved", "mlip_model")
+_PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved",
+                           "mlip_model", "uma_task", "mace_head")
 
 
 def _now_iso() -> str:
@@ -157,7 +158,8 @@ def _mlip_package(mlip_model: Any) -> dict:
 
 
 def collect_provenance(*, mlip_model: Any, device_requested: str,
-                        device_resolved: str) -> dict:
+                        device_resolved: str, uma_task: Optional[str] = None,
+                        mace_head: Optional[str] = None) -> dict:
     """Gather environment and version facts for the record.
 
     ``device_requested`` and ``device_resolved`` are kept apart because
@@ -168,6 +170,13 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
     ``None`` fields is far better than no record, and this function must
     never raise -- ``socket.gethostname()`` genuinely fails on some
     HPC/container setups.
+
+    ``uma_task`` and ``mace_head`` are gated on the model tag rather than
+    trusted from the caller: CLIs pass whatever their ``--uma-task`` /
+    ``--mace-head`` options resolved to, defaults included, so a MACE run
+    would otherwise be recorded as carrying a UMA task it never used.
+    CANON C1 makes the head its own explicit decision and C3 forbids mixing
+    heads within an energy formula, so a wrong head is worse than none.
     """
     try:
         mliprun_version = version("mliprun")
@@ -189,11 +198,14 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
         hostname = socket.gethostname()
     except Exception:  # noqa: BLE001 -- fails on some HPC/container setups
         hostname = None
+    tag = mlip_model if isinstance(mlip_model, str) else ""
     return {
         "mliprun_version": mliprun_version,
         "ase_version": ase_version,
         "mlip_package": mlip_package,
         "mlip_model": mlip_model,
+        "uma_task": uma_task if tag.startswith("uma-") else None,
+        "mace_head": mace_head if tag.startswith("mace-mh-") else None,
         "device_requested": device_requested,
         "device_resolved": device_resolved,
         "python_version": python_version,

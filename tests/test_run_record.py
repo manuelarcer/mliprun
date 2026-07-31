@@ -344,3 +344,82 @@ class TestReviewFixes:
         backups = list(tmp_path.glob(f"{RECORD_FILENAME}.corrupt-*"))
         assert len(backups) == 1
         assert backups[0].read_text() == "[]"
+
+
+class TestHeadProvenance:
+    """CANON C1/C3: the head/task is its own decision and must never be
+    inferred. A record naming only the model tag cannot identify the level
+    of theory."""
+
+    def test_head_fields_default_to_none(self):
+        prov = collect_provenance(mlip_model="chgnet", device_requested="cpu",
+                                  device_resolved="cpu")
+        assert prov["uma_task"] is None
+        assert prov["mace_head"] is None
+
+    def test_records_uma_task_for_uma_model(self):
+        prov = collect_provenance(mlip_model="uma-s-1p2", device_requested="cuda",
+                                  device_resolved="cuda", uma_task="oc25")
+        assert prov["uma_task"] == "oc25"
+        assert prov["mace_head"] is None
+
+    def test_records_mace_head_for_mace_model(self):
+        prov = collect_provenance(mlip_model="mace-mh-1", device_requested="cpu",
+                                  device_resolved="cpu", mace_head="omat_pbe")
+        assert prov["mace_head"] == "omat_pbe"
+        assert prov["uma_task"] is None
+
+    def test_drops_head_that_does_not_match_the_model_family(self):
+        """A CLI passes its parsed --uma-task unconditionally, defaults
+        included. A MACE run must not inherit a UMA task it never used."""
+        prov = collect_provenance(mlip_model="mace-mh-1", device_requested="cpu",
+                                  device_resolved="cpu", uma_task="omat",
+                                  mace_head="omat_pbe")
+        assert prov["uma_task"] is None
+        assert prov["mace_head"] == "omat_pbe"
+
+    def test_tolerates_non_string_model(self):
+        prov = collect_provenance(mlip_model=None, device_requested="cpu",
+                                  device_resolved="cpu", uma_task="omat")
+        assert prov["uma_task"] is None
+        assert prov["mace_head"] is None
+
+
+class TestSchemaVersion:
+    def test_schema_version_is_two(self):
+        """Bumped so a reader can tell 'no uma_task key because the record
+        predates the field' from 'uma_task is null because it was MACE'."""
+        assert SCHEMA_VERSION == 2
+
+    def test_written_record_carries_the_new_version(self, tmp_path):
+        _begin(tmp_path)
+        assert _read(tmp_path)["schema_version"] == 2
+
+
+class TestHeadInStageProvenance:
+    def test_append_records_a_switched_head(self, tmp_path):
+        """C3 forbids mixing heads within an energy formula, so a resume
+        that switches head is exactly what must not go unrecorded."""
+        base = {"mliprun_version": "0.4.0", "hostname": "node-a",
+                "device_resolved": "cuda", "mlip_model": "uma-s-1p2",
+                "uma_task": "omat", "mace_head": None}
+        rec = _begin(tmp_path, provenance=dict(base))
+        rec.complete(status="converged")
+
+        rec2 = _begin(tmp_path, provenance=dict(base, uma_task="oc25"),
+                      append=True)
+        rec2.complete(status="converged")
+
+        data = _read(tmp_path)
+        assert data["stages"][1]["stage_provenance"] == {"uma_task": "oc25"}
+        assert data["provenance"]["uma_task"] == "omat"
+
+    def test_append_with_same_head_writes_no_stage_provenance(self, tmp_path):
+        base = {"mliprun_version": "0.4.0", "hostname": "node-a",
+                "device_resolved": "cuda", "mlip_model": "uma-s-1p2",
+                "uma_task": "omat", "mace_head": None}
+        rec = _begin(tmp_path, provenance=dict(base))
+        rec.complete(status="converged")
+        rec2 = _begin(tmp_path, provenance=dict(base), append=True)
+        rec2.complete(status="converged")
+        assert "stage_provenance" not in _read(tmp_path)["stages"][1]
