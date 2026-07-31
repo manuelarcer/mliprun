@@ -30,6 +30,27 @@ def _record(d):
     return json.loads((d / RECORD_FILENAME).read_text())
 
 
+#: One case per MLIP family, for the head/task forwarding tests:
+#: (model tag, provenance/keyword name, a **non-default** value, the sibling
+#: key that must stay null because it belongs to the other family).
+#: Every value here is deliberately not the CLI/engine default -- see
+#: `test_run_forwards_the_head_to_the_record`.
+#:
+#: The ids must not be the bare words `uma`/`mace`: a parametrize id becomes
+#: a pytest keyword, and conftest's `pytest_collection_modifyitems` skips
+#: anything keyworded `uma`/`mace` when that package is absent -- which would
+#: silently disable every case here. Model tags collide with nothing.
+_HEAD_CASES = [
+    pytest.param("uma-s-1p2", "uma_task", "oc25", "mace_head", id="uma-s-1p2"),
+    pytest.param("mace-mh-1", "mace_head", "omol", "uma_task", id="mace-mh-1"),
+]
+
+
+def _flag(head: str) -> str:
+    """`uma_task` -> `--uma-task`."""
+    return "--" + head.replace("_", "-")
+
+
 class TestOptimizeRecord:
     def test_library_caller_gets_a_complete_record(self, tmp_path):
         """A caller that bypasses the CLI still gets a record -- the defect
@@ -156,6 +177,48 @@ class TestOptimizeCliRecord:
         assert rows[0] == ["subdir", "status", "converged", "steps",
                             "energy_eV", "walltime_s", "detail"]
         assert any(row[0] == "a" for row in rows[1:])
+
+    @pytest.mark.parametrize("mlip,head,value,other", _HEAD_CASES)
+    def test_run_forwards_the_head_to_the_record(self, tmp_path, emt_patched,
+                                                  mlip, head, value, other):
+        """`optimize run` must hand its parsed head/task to the engine.
+
+        A **non-default** value is required: with the default, a value the
+        CLI parsed and one the engine defaulted to are indistinguishable, so
+        the assertion would still pass with the kwarg deleted.
+        """
+        struct = tmp_path / "init.vasp"
+        write(str(struct), bulk("Cu", "fcc", a=3.7), format="vasp")
+
+        result = runner.invoke(optimize_app, [
+            "run", "--structure", str(struct), "--mlip", mlip,
+            _flag(head), value, "--fmax", "0.5", "--max-steps", "5",
+        ])
+        assert result.exit_code == 0, result.output
+
+        prov = _record(tmp_path)["provenance"]
+        assert prov[head] == value
+        assert prov[other] is None  # gated off: wrong model family
+
+    @pytest.mark.parametrize("mlip,head,value,other", _HEAD_CASES)
+    def test_batch_forwards_the_head_to_every_record(self, tmp_path, emt_patched,
+                                                      mlip, head, value, other):
+        """Same forwarding, separate call site in `optimize batch`."""
+        for name in ("a", "b"):
+            d = tmp_path / name
+            d.mkdir()
+            write(str(d / "init.vasp"), bulk("Cu", "fcc", a=3.7), format="vasp")
+
+        result = runner.invoke(optimize_app, [
+            "batch", "--parent", str(tmp_path), "--mlip", mlip,
+            _flag(head), value, "--fmax", "0.5", "--max-steps", "5",
+        ])
+        assert result.exit_code == 0, result.output
+
+        for name in ("a", "b"):
+            prov = _record(tmp_path / name)["provenance"]
+            assert prov[head] == value, name
+            assert prov[other] is None, name
 
     def test_txt_file_still_written(self, tmp_path, emt_patched):
         """The .txt files are retained; the JSON supplements, not replaces."""
@@ -317,9 +380,13 @@ class TestNebRunWiring:
         from mliprun.core.neb import CustomNEB
 
         initial, final = _neb_pair()
+        # `mlip` is a default rather than fixed, so the head/task tests can
+        # ask for a real model family -- collect_provenance gates uma_task /
+        # mace_head on the tag prefix and would drop them under "test".
+        kwargs.setdefault("mlip", "test")
         neb = CustomNEB(
             initial=initial, final=final, num_images=3,
-            mlip="test", output_dir=tmp_path, **kwargs,
+            output_dir=tmp_path, **kwargs,
         )
         # run_neb builds a calculator per image via self.setup_calculator();
         # swap in EMT so the run works without a real MLIP installed.
@@ -391,6 +458,40 @@ class TestNebRunWiring:
         assert stage_params["fmax"]["value"] == pytest.approx(neb.fmax)
         assert stage_params["fmax"]["source"] == "user"
 
+    @pytest.mark.parametrize("mlip,head,value,other", _HEAD_CASES)
+    def test_neb_stage_records_the_head_the_images_ran_with(
+            self, tmp_path, monkeypatch, mlip, head, value, other):
+        """The record must name the head that produced the barrier.
+
+        A NEB barrier is exactly the kind of number CANON C3 governs, and
+        `run_neb` reads the head off `self` -- so a kwarg dropped from the
+        `collect_provenance` call is silent. Non-default values are used
+        deliberately: with the default, a forwarded value and a defaulted
+        one are indistinguishable and the assertion proves nothing.
+        """
+        neb = self._emt_neb(tmp_path, monkeypatch, mlip=mlip, **{head: value})
+        neb.run_neb(max_steps=2)
+
+        prov = _record(tmp_path)["provenance"]
+        assert prov[head] == value
+        assert prov["mlip_model"] == mlip
+        assert prov[other] is None  # gated off: wrong model family
+
+    def test_neb_restart_stage_records_a_switched_task(self, tmp_path, monkeypatch):
+        """Restarting under a different head is the C3 hazard the record
+        exists to expose; the append path must carry the new value too."""
+        neb = self._emt_neb(tmp_path, monkeypatch, mlip="uma-s-1p2",
+                            uma_task="oc25")
+        neb.run_neb(max_steps=2)
+
+        neb2 = self._emt_neb(tmp_path, monkeypatch, mlip="uma-s-1p2",
+                             uma_task="odac")
+        neb2.run_neb(max_steps=2, climb=True, append=True)
+
+        data = _record(tmp_path)
+        assert data["provenance"]["uma_task"] == "oc25"
+        assert data["stages"][1]["stage_provenance"] == {"uma_task": "odac"}
+
     def test_failed_neb_run_still_leaves_a_record(self, tmp_path, monkeypatch):
         """An exception mid-optimization must not swallow the evidence."""
         from mliprun.core.neb import CustomNEB
@@ -455,9 +556,13 @@ class TestAutonebRunWiring:
         from mliprun.core.neb import CustomNEB
 
         initial, final = _neb_pair()
+        # `mlip` is a default rather than fixed, so the head/task tests can
+        # ask for a real model family -- collect_provenance gates uma_task /
+        # mace_head on the tag prefix and would drop them under "test".
+        kwargs.setdefault("mlip", "test")
         neb = CustomNEB(
             initial=initial, final=final, num_images=3,
-            mlip="test", output_dir=tmp_path, **kwargs,
+            output_dir=tmp_path, **kwargs,
         )
         monkeypatch.setattr(neb, "setup_calculator", lambda: EMT())
         return neb
@@ -487,6 +592,20 @@ class TestAutonebRunWiring:
         params = _record(tmp_path)["parameters"]
         assert params["n_max"]["value"] == 3
         assert params["n_max"]["source"] == "user"
+
+    @pytest.mark.parametrize("mlip,head,value,other", _HEAD_CASES)
+    def test_autoneb_stage_records_the_head_the_images_ran_with(
+            self, tmp_path, monkeypatch, mlip, head, value, other):
+        """Same C3 exposure as the NEB stage, separate call site: AutoNEB
+        opens its own record. Non-default values keep the assertion
+        load-bearing (see the NEB counterpart)."""
+        neb = self._emt_neb(tmp_path, monkeypatch, mlip=mlip, **{head: value})
+        neb.run_autoneb(n_simul=1, n_max=3, maxsteps=5, climb=False)
+
+        prov = _record(tmp_path)["provenance"]
+        assert prov[head] == value
+        assert prov["mlip_model"] == mlip
+        assert prov[other] is None  # gated off: wrong model family
 
     def test_failed_autoneb_run_still_leaves_a_record(self, tmp_path, monkeypatch):
         """An exception inside AutoNEB's own run() must not swallow the
