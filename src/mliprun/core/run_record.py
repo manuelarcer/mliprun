@@ -5,6 +5,7 @@ every caller gets one -- CLI commands and direct library callers alike. This
 module is the only place that knows the file format.
 
 Design: docs/superpowers/specs/2026-07-21-unified-run-record-design.md
+Amended: docs/superpowers/specs/2026-07-29-run-record-head-provenance-design.md
 
 The governing rule is that a record failure must never kill a run: every
 public entry point swallows its own exceptions and logs a warning. A six-hour

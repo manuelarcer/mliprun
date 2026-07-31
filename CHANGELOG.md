@@ -4,7 +4,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
-_Nothing yet._
+- Run record (`mliprun_run.json`) now records `uma_task` / `mace_head` in its
+  `provenance` block, so the record identifies the level of theory on its own.
+  Schema version 2.
 
 ## [0.4.0] - 2026-07-14
 

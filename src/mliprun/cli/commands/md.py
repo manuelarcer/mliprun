@@ -235,6 +235,8 @@ def run(
         run_context=run_context,
         device_requested=device,
         device_resolved=_resolve_device(device),
+        uma_task=uma_task,
+        mace_head=mace_head,
     )
 
     # List output files
