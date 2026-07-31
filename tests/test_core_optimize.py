@@ -78,3 +78,22 @@ class TestOptimizerSelection:
             output_dir=tmp_workdir, verbose=False,
         )
         assert converged is True or converged is False or isinstance(converged, (bool, np.bool_))
+
+
+class TestOptimizeRecordsHead:
+    def test_run_optimization_writes_the_mace_head_into_the_record(self, tmp_path):
+        import json
+        from ase.build import bulk
+        from ase.calculators.emt import EMT
+        from mliprun.core.optimize import run_optimization
+
+        atoms = bulk("Cu", "fcc", a=3.7) * (2, 2, 2)
+        atoms.rattle(stdev=0.05, seed=42)
+        atoms.calc = EMT()
+        run_optimization(atoms, optimizer="bfgs", fmax=0.05, max_steps=20,
+                         output_dir=tmp_path, verbose=False,
+                         model_name="mace-mh-1", mace_head="omat_pbe")
+
+        data = json.loads((tmp_path / "mliprun_run.json").read_text())
+        assert data["provenance"]["mace_head"] == "omat_pbe"
+        assert data["provenance"]["uma_task"] is None

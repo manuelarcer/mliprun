@@ -130,3 +130,22 @@ class TestRunMd:
                 atoms, ensemble="nvt", steps=5, log_interval=1, traj_interval=1,
                 output_dir=tmp_workdir, resume=True,
             )
+
+
+class TestMDRecordsHead:
+    def test_run_md_writes_the_uma_task_into_the_record(self, tmp_path):
+        import json
+        from ase.build import bulk
+        from ase.calculators.emt import EMT
+        from mliprun.core.md import run_md
+
+        atoms = bulk("Cu", "fcc", a=3.6) * (2, 2, 2)
+        atoms.calc = EMT()
+        run_md(atoms, ensemble="nve", steps=2, log_interval=1,
+               traj_interval=1, output_dir=tmp_path, model_name="uma-s-1p2",
+               uma_task="oc25")
+
+        data = json.loads((tmp_path / "mliprun_run.json").read_text())
+        assert data["provenance"]["uma_task"] == "oc25"
+        assert data["provenance"]["mace_head"] is None
+        assert data["schema_version"] == 2

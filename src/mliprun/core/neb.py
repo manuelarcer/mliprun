@@ -663,6 +663,8 @@ class CustomNEB:
                 mlip_model=self.mlip,
                 device_requested=self.device,
                 device_resolved=resolve_device(self.device),
+                uma_task=self.uma_task,
+                mace_head=getattr(self, "mace_head", None),
             ),
             run_context=run_context,
             # k, climb, max_steps, the optimizer, and fmax are arguments of
@@ -816,6 +818,8 @@ class CustomNEB:
                 mlip_model=self.mlip,
                 device_requested=self.device,
                 device_resolved=resolve_device(self.device),
+                uma_task=self.uma_task,
+                mace_head=getattr(self, "mace_head", None),
             ),
             run_context=run_context,
         )

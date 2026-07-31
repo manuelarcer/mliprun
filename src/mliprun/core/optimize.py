@@ -53,6 +53,8 @@ def run_optimization(
     run_context: Optional[RunContext] = None,
     device_requested: str = "auto",
     device_resolved: str = "auto",
+    uma_task: Optional[str] = None,
+    mace_head: Optional[str] = None,
 ) -> bool:
     """Run geometry optimization on an ASE Atoms object.
 
@@ -97,6 +99,12 @@ def run_optimization(
         The device as asked for (e.g. ``'auto'``), recorded for provenance.
     device_resolved : str
         The device actually used (e.g. ``'cuda'``).
+    uma_task : str, optional
+        UMA task actually used, recorded for provenance. Ignored for
+        non-UMA models.
+    mace_head : str, optional
+        MACE head actually used, recorded for provenance. Ignored for
+        non-MACE models.
 
     Returns
     -------
@@ -153,6 +161,8 @@ def run_optimization(
             mlip_model=model_name,
             device_requested=device_requested,
             device_resolved=device_resolved,
+            uma_task=uma_task,
+            mace_head=mace_head,
         ),
         run_context=run_context,
     )
