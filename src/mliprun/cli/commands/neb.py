@@ -71,7 +71,7 @@ def create_backup_folder(output_dir: Path):
 
 
 def _handle_restart(output_dir, *, mlip, uma_task, mace_head, fmax, log, k, climb,
-                    neb_optimizer, neb_max_steps, device):
+                    dyneb, scale_fmax, neb_optimizer, neb_max_steps, device):
     """Handle NEB restart mode.
 
     Returns
@@ -121,6 +121,10 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, fmax, log, k, clim
         overrides.append(f"k: {k}")
     if climb is not None:
         overrides.append(f"climb: {climb}")
+    if dyneb is not None:
+        overrides.append(f"dyneb: {dyneb}")
+    if scale_fmax is not None:
+        overrides.append(f"scale_fmax: {scale_fmax}")
     if neb_optimizer is not None:
         overrides.append(f"optimizer: {neb_optimizer}")
     if neb_max_steps is not None:
@@ -160,6 +164,8 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, fmax, log, k, clim
         "fmax": fmax if fmax is not None else loaded_params["fmax"],
         "k": k if k is not None else loaded_params.get("k", 0.1),
         "climb": climb if climb is not None else loaded_params.get("climb", True),
+        "dyneb": dyneb if dyneb is not None else loaded_params.get("dyneb", False),
+        "scale_fmax": scale_fmax if scale_fmax is not None else loaded_params.get("scale_fmax", 0.0),
         "neb_optimizer": neb_optimizer or loaded_params.get("neb_optimizer", "fire"),
         "neb_max_steps": neb_max_steps if neb_max_steps is not None else loaded_params.get("neb_max_steps", 600),
         "log": log or loaded_params.get("log", "neb.log"),
@@ -186,6 +192,8 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, fmax, log, k, clim
         "Final fmax:": params["fmax"],
         "Spring constant (k):": params["k"],
         "Climb:": params["climb"],
+        "Dynamic NEB:": params["dyneb"],
+        "Scale fmax:": params["scale_fmax"],
         "NEB optimizer:": params["neb_optimizer"],
         "NEB max steps:": params["neb_max_steps"],
         "Optimize endpoints:": "False (restart)",
@@ -199,6 +207,7 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, fmax, log, k, clim
 
 def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
                     interp_steps, fmax, mlip, uma_task, mace_head, log, k, climb,
+                    dyneb, scale_fmax,
                     neb_optimizer, neb_max_steps, optimize_endpoints,
                     endpoint_fmax, endpoint_optimizer, endpoint_max_steps,
                     relax_atoms_str, device):
@@ -224,6 +233,8 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
     log = log or "neb.log"
     k = k or 0.1
     climb = climb if climb is not None else True
+    dyneb = dyneb if dyneb is not None else False
+    scale_fmax = scale_fmax if scale_fmax is not None else 0.0
     neb_optimizer = neb_optimizer or "fire"
     neb_max_steps = neb_max_steps or 600
     optimize_endpoints = optimize_endpoints if optimize_endpoints is not None else True
@@ -257,7 +268,8 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
     params = {
         "mlip": mlip, "uma_task": uma_task, "mace_head": mace_head,
         "fmax": fmax, "k": k,
-        "climb": climb, "neb_optimizer": neb_optimizer,
+        "climb": climb, "dyneb": dyneb, "scale_fmax": scale_fmax,
+        "neb_optimizer": neb_optimizer,
         "neb_max_steps": neb_max_steps, "log": log,
         "num_images": num_images, "total_images": total_images,
         "relax_atoms": relax_indices, "optimize_endpoints": optimize_endpoints,
@@ -279,6 +291,8 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
         "Final fmax:": fmax,
         "Spring constant (k):": k,
         "Climb:": climb,
+        "Dynamic NEB:": dyneb,
+        "Scale fmax:": scale_fmax,
         "NEB optimizer:": neb_optimizer,
         "NEB max steps:": neb_max_steps,
         "Optimize endpoints:": optimize_endpoints,
@@ -336,6 +350,8 @@ def run(
     log: str = typer.Option(None, help="Name for the NEB iteration log file (default: neb.log)"),
     k: float = typer.Option(None, help="Spring constant for NEB"),
     climb: bool = typer.Option(None, help="Enable climbing image NEB"),
+    dyneb: bool = typer.Option(None, "--dyneb/--no-dyneb", help="Use DyNEB (dynamic NEB): freeze images already converged below fmax to save force calls (default: off)"),
+    scale_fmax: float = typer.Option(None, help="DyNEB only: loosen per-image convergence with distance from the highest-energy image (0 = uniform criterion)"),
     neb_optimizer: str = typer.Option(None, help="NEB optimizer: 'fire', 'mdmin', 'bfgs', or 'lbfgs'"),
     neb_max_steps: int = typer.Option(None, help="Maximum steps for NEB optimization"),
     optimize_endpoints: bool = typer.Option(None, help="Optimize initial and final structures before NEB"),
@@ -364,7 +380,8 @@ def run(
         neb_obj, params = _handle_restart(
             output_dir, mlip=mlip, uma_task=uma_task, mace_head=mace_head,
             fmax=fmax, log=log,
-            k=k, climb=climb, neb_optimizer=neb_optimizer,
+            k=k, climb=climb, dyneb=dyneb, scale_fmax=scale_fmax,
+            neb_optimizer=neb_optimizer,
             neb_max_steps=neb_max_steps, device=device,
         )
         typer.echo("Skipping interpolation (loaded from restart)")
@@ -374,6 +391,7 @@ def run(
             num_images=num_images, interp_fmax=interp_fmax,
             interp_steps=interp_steps, fmax=fmax, mlip=mlip,
             uma_task=uma_task, mace_head=mace_head, log=log, k=k, climb=climb,
+            dyneb=dyneb, scale_fmax=scale_fmax,
             neb_optimizer=neb_optimizer, neb_max_steps=neb_max_steps,
             optimize_endpoints=optimize_endpoints, endpoint_fmax=endpoint_fmax,
             endpoint_optimizer=endpoint_optimizer,
@@ -387,7 +405,8 @@ def run(
     climb_val = params.get("climb", True)
     max_steps = params.get("neb_max_steps", 600)
 
-    typer.echo(f"Running NEB optimization (optimizer={neb_optimizer_name.upper()}, "
+    engine = "DyNEB" if params.get("dyneb") else "NEB"
+    typer.echo(f"Running {engine} optimization (optimizer={neb_optimizer_name.upper()}, "
                f"climb={climb_val}, max_steps={max_steps})...")
     run_context = RunContext(
         command="neb",
@@ -395,7 +414,9 @@ def run(
         param_sources=param_sources_from_ctx(ctx),
     )
     neb_obj.run_neb(optimizer=neb_opt, climb=climb_val, max_steps=max_steps,
-                    k=params.get("k"), plot=plot, run_context=run_context,
+                    k=params.get("k"), dyneb=params.get("dyneb", False),
+                    scale_fmax=params.get("scale_fmax", 0.0),
+                    plot=plot, run_context=run_context,
                     append=restart)
 
     typer.echo("Processing results...")
