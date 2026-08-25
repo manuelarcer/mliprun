@@ -237,6 +237,8 @@ neb run --initial path/to/initial.vasp --final path/to/final.vasp
 - `--mlip`: Model choice (default: `auto`)
 - `--k`: Spring constant (default: 0.1)
 - `--climb / --no-climb`: Climbing image NEB (default: enabled)
+- `--dyneb / --no-dyneb`: Use ASE's DyNEB (dynamic NEB) instead of plain NEB (default: off). Images whose forces are already below `--fmax` are frozen — not recomputed — until a neighbouring image moves them out of convergence, which saves force calls in the serial image loop. Same tangent method and climbing-image handling as plain NEB.
+- `--scale-fmax`: DyNEB only. Loosens the per-image convergence criterion with distance from the highest-energy image (default: 0 = one uniform criterion). Values > 0 trade accuracy of far-from-barrier images for speed — decide per project.
 - `--neb-optimizer`: Optimizer for NEB (`fire`, `mdmin`, `bfgs`, `lbfgs`)
 - `--neb-max-steps`: Maximum NEB steps
 - `--optimize-endpoints / --no-optimize-endpoints`: Pre-optimize endpoints (default: enabled)
@@ -266,7 +268,7 @@ neb run --restart --mlip mace         # Warning: changes MLIP model
 The restart mechanism:
 - Loads images from `A2B_full.traj` and parameters from `neb_parameters.txt`
 - Creates a timestamped backup of previous results (`bkup_YYYY.MM.DD_HH.MM.SS/`)
-- Allows overriding: `--mlip`, `--fmax`, `--k`, `--climb`, `--neb-optimizer`, `--neb-max-steps`
+- Allows overriding: `--mlip`, `--fmax`, `--k`, `--climb`, `--dyneb`, `--scale-fmax`, `--neb-optimizer`, `--neb-max-steps`
 - Forbids changing: `--initial`, `--final`, `--num-images`, `--relax-atoms`, `--optimize-endpoints`
 
 #### Highly-Constrained NEB

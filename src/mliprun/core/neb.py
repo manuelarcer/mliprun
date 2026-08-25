@@ -16,6 +16,7 @@ from ase.io.trajectory import Trajectory
 from ase.io.vasp import write_vasp
 from ase.mep import NEB
 from ase.mep.autoneb import AutoNEB
+from ase.mep.dyneb import DyNEB
 from ase.mep.neb import idpp_interpolate
 from ase.optimize import FIRE, MDMin
 from scipy.interpolate import make_interp_spline
@@ -169,6 +170,8 @@ class CustomNEB:
             "Final fmax": ("fmax", float),
             "Spring constant (k)": ("k", lambda v: None if v == "None" else float(v)),
             "Climb": ("climb", lambda v: v.lower() == "true"),
+            "Dynamic NEB": ("dyneb", lambda v: v.lower() == "true"),
+            "Scale fmax": ("scale_fmax", float),
             "NEB optimizer": ("neb_optimizer", lambda v: v.lower() if v != "None" else None),
             "NEB max steps": ("neb_max_steps", lambda v: None if v == "None" else int(v)),
             "Optimize endpoints": ("optimize_endpoints", lambda v: v.lower() == "true"),
@@ -609,6 +612,8 @@ class CustomNEB:
         climb: bool = False,
         max_steps: int = 600,
         k: Optional[float] = None,
+        dyneb: bool = False,
+        scale_fmax: float = 0.0,
         plot: bool = False,
         run_context: Optional[RunContext] = None,
         append: bool = False,
@@ -631,6 +636,15 @@ class CustomNEB:
             NEB spring constant, forwarded to ``ase.mep.NEB``. Left ``None``
             uses ASE's own default (0.1 eV/Ang^2, same as this project's CLI
             default), so omitting it reproduces the prior behaviour exactly.
+        dyneb : bool
+            Use ``ase.mep.dyneb.DyNEB`` instead of plain NEB: images whose
+            forces are already below ``fmax`` are frozen (not recomputed)
+            until a neighbouring image unconverges them, saving force calls
+            in this serial loop. Same tangent method and climb handling.
+        scale_fmax : float
+            DyNEB only. Loosens the per-image convergence criterion with
+            distance from the highest-energy image (0 = one uniform
+            criterion, ASE's default).
         plot : bool
             If True, write neb_convergence.png. Defaults to False -- plotting is
             opt-in; neb_convergence.csv is always written.
@@ -681,14 +695,21 @@ class CustomNEB:
             # fmax would otherwise leave the new value unrecorded.
             stage_parameters={"climb": climb, "max_steps": max_steps, "k": k,
                               "optimizer": getattr(optimizer, "__name__", str(optimizer)),
-                              "fmax": self.fmax},
+                              "fmax": self.fmax,
+                              "dyneb": dyneb, "scale_fmax": scale_fmax},
             append=append,
         )
 
         neb_kwargs = {"climb": climb, "method": "improvedtangent"}
         if k is not None:
             neb_kwargs["k"] = k
-        neb = NEB(self.images, **neb_kwargs)
+        if dyneb:
+            # DyNEB requires its own fmax to equal the fmax handed to the
+            # optimizer's run() below; both come from self.fmax.
+            neb = DyNEB(self.images, fmax=self.fmax, dynamic_relaxation=True,
+                        scale_fmax=scale_fmax, **neb_kwargs)
+        else:
+            neb = NEB(self.images, **neb_kwargs)
         for image in self.images:
             image.calc = self.setup_calculator()
 

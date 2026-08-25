@@ -4,6 +4,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- `neb run --dyneb` (with `--scale-fmax`): opt-in DyNEB (ASE
+  `ase.mep.dyneb.DyNEB`) — dynamic relaxation freezes images already
+  converged below fmax so the serial image loop skips their force calls
+  (68 → 40 evaluations on the EMT test path at an identical barrier).
+  Off by default; plain-NEB numerics are unchanged. Both settings are
+  written to `neb_parameters.txt` and the run record, and `--restart`
+  reproduces or overrides them like `--climb`/`--k`.
+
 ### Changed
 
 - **Run record schema `1` → `2`.** `mliprun_run.json` now records the head/task
