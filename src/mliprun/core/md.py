@@ -238,6 +238,7 @@ def run_md(
     device_resolved: str = "auto",
     uma_task: Optional[str] = None,
     mace_head: Optional[str] = None,
+    sevennet_task: Optional[str] = None,
 ) -> None:
     """Run molecular dynamics simulation.
 
@@ -278,6 +279,9 @@ def run_md(
     uma_task : str, optional
         UMA task actually used, recorded for provenance. Ignored for
         non-UMA models.
+    sevennet_task : str, optional
+        SevenNet inference task, recorded in the run record when the model is
+        a ``7net*`` tag. No default: see ``validate_mlip``.
     mace_head : str, optional
         MACE head actually used, recorded for provenance. Ignored for
         non-MACE models.
@@ -334,6 +338,7 @@ def run_md(
             device_resolved=device_resolved,
             uma_task=uma_task,
             mace_head=mace_head,
+            sevennet_task=sevennet_task,
         ),
         run_context=run_context,
         append=resume,

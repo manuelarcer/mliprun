@@ -14,6 +14,7 @@ from mliprun.cli.utils import (
     param_sources_from_ctx,
     setup_calculator,
     validate_mlip,
+    SEVENNET_TASK_HELP,
 )
 
 app = typer.Typer(help="Run molecular dynamics simulations.")
@@ -43,6 +44,7 @@ def run(
     uma_task: str = typer.Option("omat", help=UMA_TASK_HELP),
     device: str = typer.Option("auto", help=DEVICE_HELP),
     mace_head: str = typer.Option("omat_pbe", help=MACE_HEAD_HELP),
+    sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
 
     # Resume
     resume: bool = typer.Option(
@@ -116,12 +118,16 @@ def run(
     if mlip == "auto":
         mlip = detect_mlip()
         typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
+        # An auto-detected tag still has to satisfy its own task rules.
+        validate_mlip(mlip, sevennet_task)
     else:
-        validate_mlip(mlip)
+        validate_mlip(mlip, sevennet_task)
         typer.echo(f"🧠 Using MLIP: {mlip}")
 
     if mlip.startswith("uma-"):
         typer.echo(f"   UMA task: {uma_task}")
+    if mlip.startswith("7net"):
+        typer.echo(f"   SevenNet task: {sevennet_task}")
 
     # Display ensemble information
     typer.echo(f"\n🔬 MD Simulation Setup:")
@@ -153,7 +159,8 @@ def run(
     if mlip.startswith("mace-mh-"):
         typer.echo(f"   MACE head: {mace_head}")
     atoms = setup_calculator(atoms, mlip, uma_task, device=device,
-                              mace_head=mace_head)
+                              mace_head=mace_head,
+                              sevennet_task=sevennet_task)
 
     # Save parameters before the run starts so the file exists for long runs
     # (500k+ steps) and is still present if the job dies mid-trajectory.
@@ -172,6 +179,8 @@ def run(
             f.write(f"UMA task:          {uma_task}\n")
         if mlip.startswith("mace-mh-"):
             f.write(f"MACE head:         {mace_head}\n")
+        if mlip.startswith("7net"):
+            f.write(f"SevenNet task:     {sevennet_task}\n")
         f.write(f"Structure:         {structure.name}\n")
         f.write(f"Ensemble:          {ensemble.upper()}\n")
 
@@ -237,6 +246,7 @@ def run(
         device_resolved=_resolve_device(device),
         uma_task=uma_task,
         mace_head=mace_head,
+        sevennet_task=sevennet_task,
     )
 
     # List output files

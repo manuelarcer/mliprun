@@ -376,7 +376,7 @@ def validate_mlip(mlip: str, sevennet_task: Optional[str] = None) -> None:
         )
 
 
-def resolve_mlip(mlip: str) -> str:
+def resolve_mlip(mlip: str, sevennet_task: Optional[str] = None) -> str:
     """Detect or validate MLIP and echo the result.
 
     Combines detect + validate + user echo into a single helper so every
@@ -386,6 +386,8 @@ def resolve_mlip(mlip: str) -> str:
     ----------
     mlip : str
         MLIP model name or ``"auto"`` for auto-detection.
+    sevennet_task : str, optional
+        SevenNet inference task, forwarded to :func:`validate_mlip`.
 
     Returns
     -------
@@ -395,8 +397,12 @@ def resolve_mlip(mlip: str) -> str:
     if mlip == "auto":
         mlip = detect_mlip()
         typer.echo(f"Auto-detected MLIP: {mlip}")
+        # An auto-detected tag still has to satisfy its own task rules: the
+        # SevenNet pick is multi-task, and skipping this would let it through
+        # to a far worse error inside SevenNet itself.
+        validate_mlip(mlip, sevennet_task)
     else:
-        validate_mlip(mlip)
+        validate_mlip(mlip, sevennet_task)
         typer.echo(f"Using MLIP: {mlip}")
     return mlip
 
