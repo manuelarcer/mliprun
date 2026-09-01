@@ -86,6 +86,32 @@ The list comes from `sevenn.util.get_available_pretrained_models()` and each che
 
 An unknown task prints the valid list for that model, so `mlip optimize run --mlip 7net-omni` with no task tells you what to choose.
 
+### Measured: the tasks really do sit on different energy zeros
+
+Verified on cos-cluster (NVIDIA L40S, `--device cuda`) on 2026-09-01. System: O adsorbed on a Pt(111) 2x2x4 slab, 17 atoms, 10 A vacuum, bottom two layers fixed. These are software smoke-test numbers, not converged science.
+
+| Model | Task | Single-point energy | Model load | Single point |
+| --- | --- | --- | --- | --- |
+| `7net-omni` | `mpa` | −97.583282 eV | 15.4 s | 0.98 s |
+| `7net-omni` | `oc20` | −88.172501 eV | 8.1 s | 1.05 s |
+| `7net-mf-ompa` | `mpa` | −97.404488 eV | 7.4 s | 1.07 s |
+| `7net-0` | — (single-task) | −97.958290 eV | 5.6 s | 0.19 s |
+
+**The same model on the same structure differs by 9.410782 eV between `mpa` and `oc20`.** That is the concrete reason `--sevennet-task` has no default and why CANON C3 forbids mixing tasks inside one formula: an adsorption energy built from one leg at `mpa` and another at `oc20` would be wrong by roughly that amount, and nothing in the output would say so.
+
+The `7net-0` row is the single-task path: no `modal` argument is passed at all, which is what that checkpoint requires.
+
+### End-to-end validation
+
+Same machine and date, `7net-omni` with `--sevennet-task mpa` on `--device cuda`:
+
+- `optimize run` (fmax 0.05 eV/A, BFGS): converged. Relaxed geometry checked rather than assumed — maximum atomic displacement 0.163 A, O in a threefold hollow at 2.044 A from three Pt, no merged atoms, formula unchanged.
+- `md run` (NVT, Langevin, 300 K, 0.5 fs, 50 steps): completed.
+- `neb run` (5 intermediate images, k = 0.1, climbing image, fmax 0.05 eV/A): completed, maximum 0.377 eV above the initial image on a deliberately coarse smoke-test band.
+- Both error paths confirmed to exit non-zero: a multi-task tag with no task, and a task passed to a single-task tag.
+- All three `mliprun_run.json` records carry `schema_version: 3`, `provenance.sevennet_task: "mpa"`, and `device_resolved: "cuda"`; `uma_task` and `mace_head` are null.
+
+
 ---
 
 ## Tag: `7net-omni`

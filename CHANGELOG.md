@@ -23,6 +23,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   exist in 0.13.0, `7net-0_22may2024` and `7net-mf-0` are in the registry but
   absent from the documentation's table, and `7net-mf-0` names its tasks
   `PBE`/`R2SCAN` in uppercase, so task names are matched exactly.
+  Validated end to end on cos-cluster (NVIDIA L40S): optimize, MD and NEB all
+  run, both error paths exit non-zero, and every run record carries the task.
+  On one O/Pt(111) structure `7net-omni` gives −97.583282 eV under `mpa` and
+  −88.172501 eV under `oc20` — a 9.410782 eV gap, which is the measured reason
+  the task is never defaulted.
 
 - `neb run --dyneb` (with `--scale-fmax`): opt-in DyNEB (ASE
   `ase.mep.dyneb.DyNEB`) — dynamic relaxation freezes images already
