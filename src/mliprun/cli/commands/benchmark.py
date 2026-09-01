@@ -2,6 +2,7 @@
 import json
 import time
 from pathlib import Path
+from typing import Optional
 
 import typer
 from ase.io import read
@@ -11,6 +12,7 @@ from mliprun.cli.utils import (
     MACE_AVAILABLE,
     SEVENN_AVAILABLE,
     CHGNET_AVAILABLE,
+    SEVENNET_TASK_HELP,
     UMA_TASK_HELP,
     setup_calculator,
 )
@@ -18,13 +20,18 @@ from mliprun.cli.utils import (
 app = typer.Typer(help="Benchmark single-point energy + timing across available MLIPs.")
 
 
-def _available_models() -> list[str]:
-    """Return the default list of MLIP tags installed in this environment."""
+def _available_models(sevennet_task: Optional[str] = None) -> list[str]:
+    """Return the default list of MLIP tags installed in this environment.
+
+    SevenNet's recommended model is multi-task and its tasks have independent
+    energy zeros, so it is listed only when a task was given. Benchmarking it
+    under an assumed task would report a number nobody chose (CANON C1).
+    """
     models: list[str] = []
     if FAIRCHEM_AVAILABLE:
         models.append("uma-s-1p2")
-    if SEVENN_AVAILABLE:
-        models.append("7net-mf-ompa")
+    if SEVENN_AVAILABLE and sevennet_task is not None:
+        models.append("7net-omni")
     if MACE_AVAILABLE:
         models.append("mace")
     if CHGNET_AVAILABLE:
@@ -40,6 +47,7 @@ def run(
         help="Comma-separated MLIP tags to benchmark. Default: every MLIP installed in the current environment.",
     ),
     uma_task: str = typer.Option("omat", help=UMA_TASK_HELP),
+    sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
     output: Path = typer.Option(None, help="Optional path for a JSON results file."),
 ):
     """Run a single-point energy + wall-time benchmark for each MLIP in turn.
@@ -54,7 +62,13 @@ def run(
     if models:
         model_list = [m.strip() for m in models.split(",") if m.strip()]
     else:
-        model_list = _available_models()
+        model_list = _available_models(sevennet_task)
+        if SEVENN_AVAILABLE and sevennet_task is None:
+            typer.echo(
+                "Note: SevenNet is installed but skipped -- its recommended "
+                "model is multi-task and its tasks have independent energy "
+                "zeros. Pass --sevennet-task to include it.\n"
+            )
         if not model_list:
             typer.echo("No MLIP installed. Install one of fairchem-core, sevenn, mace-torch, chgnet.")
             raise typer.Exit(code=1)
@@ -66,7 +80,8 @@ def run(
         typer.echo(f"--- {model} ---")
         bench_atoms = atoms.copy()
         try:
-            setup_calculator(bench_atoms, model, uma_task)
+            setup_calculator(bench_atoms, model, uma_task,
+                             sevennet_task=sevennet_task)
             t0 = time.perf_counter()
             energy = bench_atoms.get_potential_energy()
             elapsed = time.perf_counter() - t0
