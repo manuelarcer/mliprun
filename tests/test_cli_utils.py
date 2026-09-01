@@ -47,7 +47,11 @@ class TestDetectMlip:
     @patch("mliprun.cli.utils.MACE_AVAILABLE", False)
     @patch("mliprun.cli.utils.SEVENN_AVAILABLE", True)
     def test_falls_back_to_sevenn(self):
-        assert detect_mlip() == "7net-mf-ompa"
+        # 7net-omni is SevenNet's recommended model and the only one of its
+        # family with surface heads (oc20/oc22). It is multi-task, so `--mlip
+        # auto` in a SevenNet-only env resolves here and then stops for a
+        # missing --sevennet-task rather than guessing a task (CANON C1).
+        assert detect_mlip() == "7net-omni"
 
     @patch("mliprun.cli.utils.FAIRCHEM_AVAILABLE", False)
     @patch("mliprun.cli.utils.SEVENN_AVAILABLE", False)

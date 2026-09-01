@@ -17,8 +17,10 @@ MLIP_HELP = (
     "MLIP model. Use 'auto' (default) to auto-detect, or pass a tag explicitly: "
     "any 'uma-*' name (e.g. 'uma-s-1p2', the current default), 'mace' "
     "(MACE-MP-0 medium), 'mace-mh-1' (multi-head foundation; requires "
-    "--mace-head), '7net-mf-ompa', or 'chgnet'. Any tag starting with 'uma-' "
-    "is forwarded to FAIRChem unchanged."
+    "--mace-head), any '7net-*' tag (e.g. '7net-omni', which requires "
+    "--sevennet-task), or 'chgnet'. Any tag starting with 'uma-' is forwarded "
+    "to FAIRChem unchanged, and any unrecognised '7net-*' tag is forwarded to "
+    "SevenNet unchanged."
 )
 
 MACE_HEAD_HELP = (
@@ -238,6 +240,13 @@ def detect_mlip() -> str:
     readily-usable fallback: a fresh environment with ``pip install mace-torch``
     lands on a working model without any access request.
 
+    The SevenNet pick is ``7net-omni``, that family's recommended model and the
+    only one of them carrying surface heads (``oc20``/``oc22``). It is
+    multi-task, so in a SevenNet-only environment ``--mlip auto`` resolves here
+    and then stops in :func:`validate_mlip` for a missing ``--sevennet-task``.
+    That is deliberate: CANON C1 makes the task an explicit decision, and a
+    loud stop is recoverable where a wrong energy zero is not.
+
     Returns
     -------
     str
@@ -253,7 +262,7 @@ def detect_mlip() -> str:
     elif MACE_AVAILABLE:
         return "mace"
     elif SEVENN_AVAILABLE:
-        return "7net-mf-ompa"
+        return "7net-omni"
     elif CHGNET_AVAILABLE:
         return "chgnet"
     else:
