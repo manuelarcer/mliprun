@@ -104,8 +104,8 @@ class CustomNEB:
         interp_steps: int = 1000,
         fmax: float = 0.05,
         mlip: str = "7net-mf-ompa",
-        uma_task: str = "omat",
-        mace_head: str = "omat_pbe",
+        uma_task: Optional[str] = None,
+        mace_head: Optional[str] = None,
         sevennet_task: Optional[str] = None,
         output_dir: str | Path = ".",
         relax_atoms: Optional[list[int]] = None,
@@ -297,8 +297,9 @@ class CustomNEB:
         else:
             mlip = original_mlip
 
-        uma_task = uma_task or params.get("uma_task", "omat")
-        mace_head = mace_head or params.get("mace_head", "omat_pbe")
+        # No "<default>" fallbacks: see the sevennet_task line below.
+        uma_task = uma_task or params.get("uma_task")
+        mace_head = mace_head or params.get("mace_head")
         # No `or "<default>"` fallback here, unlike the two above: a SevenNet
         # task has no default, and inventing one on restart would resume the
         # band on a different energy zero (CANON C3).
@@ -368,7 +369,7 @@ class CustomNEB:
         """
         model = model or self.mlip
         uma_task = uma_task or self.uma_task
-        mace_head = mace_head or getattr(self, "mace_head", "omat_pbe")
+        mace_head = mace_head or getattr(self, "mace_head", None)
         sevennet_task = sevennet_task or getattr(self, "sevennet_task", None)
 
         device = getattr(self, "device", "cpu")
@@ -401,11 +402,25 @@ class CustomNEB:
             from mace.calculators import mace_mp
             return mace_mp(model="medium", device=device)
         elif model.startswith("mace-mh-"):
+            if mace_head is None:
+                raise ValueError(
+                    f"{model} is a multi-head MACE model and needs an "
+                    f"explicit head: the heads are independent fine-tunes "
+                    f"with independent energy zeros, so one cannot be "
+                    f"guessed. Pass mace_head=... (CLI: --mace-head)."
+                )
             from mace.calculators import MACECalculator
             from mliprun.cli.utils import _ensure_mace_foundation_checkpoint
             ckpt = _ensure_mace_foundation_checkpoint(model)
             return MACECalculator(model_paths=ckpt, device=device, head=mace_head)
         elif model.startswith("uma-"):
+            if uma_task is None:
+                raise ValueError(
+                    f"{model} is a multi-head UMA model and needs an "
+                    f"explicit task: the heads are independent fine-tunes "
+                    f"with independent energy zeros, so one cannot be "
+                    f"guessed. Pass uma_task=... (CLI: --uma-task)."
+                )
             from fairchem.core import FAIRChemCalculator, pretrained_mlip
             predictor = pretrained_mlip.get_predict_unit(model, device=device)
             return FAIRChemCalculator(predictor, task_name=uma_task)

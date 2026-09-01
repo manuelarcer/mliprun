@@ -39,6 +39,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Breaking
 
+- **`--uma-task` and `--mace-head` are now required, with no defaults.** They
+  previously defaulted to `omat` and `omat_pbe` and ran silently when unset —
+  the exact hazard CANON C1 names. A `uma-*` model with no `--uma-task`, or a
+  `mace-mh-*` model with no `--mace-head`, now exits with an error listing the
+  valid values. Plain `mace` (MACE-MP-0) is single-head and now *rejects*
+  `--mace-head`, the way a single-task SevenNet tag rejects `--sevennet-task`.
+  **This breaks existing command lines and orchestrator scripts** that relied
+  on the defaults: they will fail loudly on the next run and need the head
+  added. That is the point — a wrong energy zero is not recoverable after the
+  fact, a failed launch is. The same rule now applies to `--mlip auto`, to
+  library callers (`CustomNEB` raises `ValueError`), and to `benchmark run`,
+  where UMA joins the auto-detected list only when a task is given.
+- **The `--uma-task` list was wrong.** It advertised `omat`, `oc20`, `omol`,
+  `odac`; `uma-s-1p2`'s own task registry (fairchem-core 2.19.0) also carries
+  `omc`, `oc22` and `oc25`. All seven are accepted and documented. The MACE
+  head list was verified against the `mace-mh-1` checkpoint and was correct.
 - **`7net-mf-ompa` now requires `--sevennet-task mpa`** (or `omat24`) where it
   previously ran on a hardcoded `mpa`. Treated as a free break: the SevenNet
   path had never executed, so no run record, result, or script depends on it.

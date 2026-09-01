@@ -41,9 +41,9 @@ def run(
 
     # MLIP options
     mlip: str = typer.Option("auto", help=MLIP_HELP),
-    uma_task: str = typer.Option("omat", help=UMA_TASK_HELP),
+    uma_task: str = typer.Option(None, help=UMA_TASK_HELP),
     device: str = typer.Option("auto", help=DEVICE_HELP),
-    mace_head: str = typer.Option("omat_pbe", help=MACE_HEAD_HELP),
+    mace_head: str = typer.Option(None, help=MACE_HEAD_HELP),
     sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
 
     # Resume
@@ -119,9 +119,9 @@ def run(
         mlip = detect_mlip()
         typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
         # An auto-detected tag still has to satisfy its own task rules.
-        validate_mlip(mlip, sevennet_task)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
     else:
-        validate_mlip(mlip, sevennet_task)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
         typer.echo(f"🧠 Using MLIP: {mlip}")
 
     if mlip.startswith("uma-"):

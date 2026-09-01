@@ -134,8 +134,8 @@ The package installs the following entry points:
 These apply to `optimize`, `md`, `neb`, `autoneb`, and `benchmark`:
 
 - `--mlip`: Model tag. `auto` (default) picks the first installed in order **UMA → MACE → SevenNet → CHGNet** (UMA preferred when present, MACE as the readily-usable fallback), or pass an explicit tag: any `uma-*` (e.g. `uma-s-1p2`), `mace` (MACE-MP-0), `mace-mh-1` (multi-head foundation), any `7net-*` tag (e.g. `7net-omni`, which requires `--sevennet-task`), `chgnet`.
-- `--uma-task`: Task head for UMA models — `omat` (default, bulk inorganic), `oc20` (catalysis/surfaces), `omol` (molecules), `odac`. Ignored for non-UMA models.
-- `--mace-head`: Head for multi-head MACE models (`mace-mh-*`) — `omat_pbe` (default), `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`. Ignored for plain `mace`.
+- `--uma-task`: Task head for UMA models. **No default and required for every `uma-*` model** — the heads are independent fine-tunes with independent energy zeros, so a guessed head silently changes the level of theory. One of `omat` (bulk inorganic), `omc` (molecular crystals), `omol` (molecules), `oc20` (catalysis/surfaces), `oc22`, `oc25`, `odac`. Ignored for non-UMA models.
+- `--mace-head`: Head for multi-head MACE models (`mace-mh-*`). **No default and required for those models**, for the same reason as `--uma-task`. One of `omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`. Rejected for plain `mace`, which is single-head.
 - `--sevennet-task`: Inference task for SevenNet models (`modal` in SevenNet's API). **No default** — a multi-task tag without one is an error listing the valid tasks, because the tasks are independent fine-tunes with independent energy zeros. `7net-omni`/`-i8`/`-i12`: `mpa` (PBE+U, general), `oc20` (RPBE, surfaces), `oc22`, `omat24`, `matpes_pbe`, `odac23`, `omol25_low`, `omol25_high`, `spice`, `qcml`, `pet_mad`, `mp_r2scan`, `matpes_r2scan`. `7net-mf-ompa`: `omat24`, `mpa`. `7net-mf-0`: `PBE`, `R2SCAN` (uppercase; names are matched exactly). Rejected for single-task tags (`7net-omat`, `7net-l3i5`, `7net-0`). Ignored for non-SevenNet models.
 - `--device`: `auto` (default; cuda if available, else cpu), `cuda`, or `cpu`. On multi-GPU nodes set `CUDA_VISIBLE_DEVICES` to choose the GPU. (`neb` is the exception: it defaults to `cpu`, so pass `--device cuda` explicitly for GPU NEB runs.)
 - `--plot / --no-plot`: write PNG figures of the results. **Off by default** (plotting is opt-in) — the CSV data is always written, so pass `--plot` only when you want the figures. Applies to `optimize`, `md`, and `neb`.
@@ -329,11 +329,11 @@ Extract and visualize results from a completed AutoNEB calculation:
 benchmark run --structure path/to/structure.vasp
 ```
 
-Times a single ``get_potential_energy()`` call for each MLIP installed in the current environment (UMA, SevenNet, MACE, CHGNet). SevenNet joins the auto-detected list only when `--sevennet-task` is given; without one it is skipped with a printed note, rather than benchmarked under an assumed task. Runs in-process — no working-directory or external script dependency.
+Times a single ``get_potential_energy()`` call for each MLIP installed in the current environment (UMA, SevenNet, MACE, CHGNet). UMA and SevenNet join the auto-detected list only when `--uma-task` / `--sevennet-task` is given; without one each is skipped with a printed note, rather than benchmarked under an assumed head. Runs in-process — no working-directory or external script dependency.
 
 **Key options:**
 - `--models`: Comma-separated MLIP tags to benchmark (default: every installed MLIP).
-- `--uma-task`: UMA task head used for `uma-*` models (default: `omat`).
+- `--uma-task`: UMA task head used for `uma-*` models. Required; there is no default.
 - `--output`: Optional path for a JSON results file.
 
 **Example:**

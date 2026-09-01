@@ -79,10 +79,10 @@ class TestCLIForwardsHead:
 
         assert result.exit_code == 0, result.output
         assert captured["uma_task"] == "oc25"
-        # The CLI forwards its parsed --mace-head default verbatim; gating a
-        # UMA run's mace_head to None is collect_provenance's job, not the
-        # CLI's, and is covered by Task 1.
-        assert captured["mace_head"] == "omat_pbe"
+        # --mace-head no longer has a default, so a UMA run forwards None
+        # rather than a MACE head it never used. collect_provenance still
+        # gates the field on the tag as a second line of defence.
+        assert captured["mace_head"] is None
 
 
 class TestCLIForwardsSevenNetTask:
@@ -197,3 +197,67 @@ class TestOptParamsRecordsTheTask:
         text = path.read_text()
         assert "SevenNet task" not in text
         assert "UMA task:          oc20" in text
+
+
+class TestHeadsAreRequiredAtTheCLI:
+    """The heads must be explicit at the command line, not just in
+    validate_mlip: a typer default of "omat" means the CLI never passes None
+    and the guard can never fire (CANON C1)."""
+
+    def _structure(self, tmp_path):
+        from ase.build import bulk
+        from ase.io import write
+        path = tmp_path / "POSCAR"
+        write(str(path), bulk("Cu", "fcc", a=3.6))
+        return path
+
+    def test_optimize_run_rejects_uma_without_a_task(self, tmp_path):
+        from unittest.mock import patch
+        from mliprun.cli.commands.optimize import app as optimize_app
+        structure = self._structure(tmp_path)
+        with patch("mliprun.cli.utils.FAIRCHEM_AVAILABLE", True):
+            result = CliRunner().invoke(optimize_app, [
+                "run", "--structure", str(structure), "--mlip", "uma-s-1p2"])
+        assert result.exit_code != 0
+        assert "--uma-task is required" in result.output
+
+    def test_md_run_rejects_mace_mh_without_a_head(self, tmp_path):
+        from unittest.mock import patch
+        structure = self._structure(tmp_path)
+        with patch("mliprun.cli.utils.MACE_AVAILABLE", True):
+            result = CliRunner().invoke(md_app, [
+                "--structure", str(structure), "--mlip", "mace-mh-1",
+                "--steps", "1"])
+        assert result.exit_code != 0
+        assert "--mace-head is required" in result.output
+
+    def test_optimize_run_rejects_a_head_on_plain_mace(self, tmp_path):
+        from unittest.mock import patch
+        from mliprun.cli.commands.optimize import app as optimize_app
+        structure = self._structure(tmp_path)
+        with patch("mliprun.cli.utils.MACE_AVAILABLE", True):
+            result = CliRunner().invoke(optimize_app, [
+                "run", "--structure", str(structure), "--mlip", "mace",
+                "--mace-head", "omat_pbe"])
+        assert result.exit_code != 0
+        assert "no selectable head" in result.output
+
+    @pytest.mark.parametrize("module,command_name,option", [
+        ("mliprun.cli.commands.optimize", "run", "--uma-task"),
+        ("mliprun.cli.commands.optimize", "run", "--mace-head"),
+        ("mliprun.cli.commands.optimize", "batch", "--uma-task"),
+        ("mliprun.cli.commands.md", None, "--uma-task"),
+        ("mliprun.cli.commands.autoneb", None, "--mace-head"),
+        ("mliprun.cli.commands.benchmark", None, "--uma-task"),
+    ])
+    def test_head_options_default_to_none(self, module, command_name, option):
+        import importlib
+        import typer.main
+        app_obj = importlib.import_module(module).app
+        click_obj = typer.main.get_command(app_obj)
+        if command_name is not None:
+            click_obj = click_obj.commands[command_name]
+        param = next(p for p in click_obj.params if option in p.opts)
+        assert param.default is None, (
+            f"{module} {option} still defaults to {param.default!r}; a "
+            f"non-None default is the silent head CANON C1 forbids")

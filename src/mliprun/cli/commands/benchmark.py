@@ -20,15 +20,17 @@ from mliprun.cli.utils import (
 app = typer.Typer(help="Benchmark single-point energy + timing across available MLIPs.")
 
 
-def _available_models(sevennet_task: Optional[str] = None) -> list[str]:
+def _available_models(sevennet_task: Optional[str] = None,
+                      uma_task: Optional[str] = None) -> list[str]:
     """Return the default list of MLIP tags installed in this environment.
 
-    SevenNet's recommended model is multi-task and its tasks have independent
-    energy zeros, so it is listed only when a task was given. Benchmarking it
-    under an assumed task would report a number nobody chose (CANON C1).
+    UMA and SevenNet are multi-head/multi-task and their heads have
+    independent energy zeros, so each is listed only when its head was given.
+    Benchmarking one under an assumed head would report a number nobody chose
+    (CANON C1). MACE-MP-0 and CHGNet are single-head and always listed.
     """
     models: list[str] = []
-    if FAIRCHEM_AVAILABLE:
+    if FAIRCHEM_AVAILABLE and uma_task is not None:
         models.append("uma-s-1p2")
     if SEVENN_AVAILABLE and sevennet_task is not None:
         models.append("7net-omni")
@@ -46,7 +48,7 @@ def run(
         None,
         help="Comma-separated MLIP tags to benchmark. Default: every MLIP installed in the current environment.",
     ),
-    uma_task: str = typer.Option("omat", help=UMA_TASK_HELP),
+    uma_task: str = typer.Option(None, help=UMA_TASK_HELP),
     sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
     output: Path = typer.Option(None, help="Optional path for a JSON results file."),
 ):
@@ -62,7 +64,13 @@ def run(
     if models:
         model_list = [m.strip() for m in models.split(",") if m.strip()]
     else:
-        model_list = _available_models(sevennet_task)
+        model_list = _available_models(sevennet_task, uma_task)
+        if FAIRCHEM_AVAILABLE and uma_task is None:
+            typer.echo(
+                "Note: UMA is installed but skipped -- it is multi-head and "
+                "its heads have independent energy zeros. Pass --uma-task to "
+                "include it.\n"
+            )
         if SEVENN_AVAILABLE and sevennet_task is None:
             typer.echo(
                 "Note: SevenNet is installed but skipped -- its recommended "
