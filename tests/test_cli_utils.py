@@ -5,6 +5,7 @@ from unittest.mock import patch
 import typer
 
 from mliprun.cli.utils import (
+    _SEVENNET_MODELS,
     detect_mlip,
     validate_mlip,
     resolve_mlip,
@@ -263,3 +264,87 @@ class TestResolveDeviceRelocation:
         from mliprun.core.utils import resolve_device
 
         assert _resolve_device is resolve_device
+
+
+class TestSevenNetTable:
+    """The tag -> task table is the single source of truth for SevenNet.
+
+    Every value here was read from the checkpoints themselves on 2026-09-01
+    (``sevenn`` 0.13.0): the tag list from
+    ``sevenn.util.get_available_pretrained_models()``, the task lists from the
+    ``Modality`` line of ``sevenn cp <tag>``.
+    """
+
+    def test_every_registry_tag_is_present(self):
+        # No 7net-nano-* in this release, despite the documentation listing it.
+        expected = {
+            "7net-omni", "7net-omni-i8", "7net-omni-i12",
+            "7net-mf-ompa", "7net-mf-0",
+            "7net-omat", "7net-l3i5", "7net-0", "7net-0_22may2024",
+        }
+        assert set(_SEVENNET_MODELS) == expected
+
+    def test_multi_task_models_carry_tasks(self):
+        assert len(_SEVENNET_MODELS["7net-omni"]) == 13
+        assert _SEVENNET_MODELS["7net-mf-ompa"] == ("omat24", "mpa")
+        # oc20/oc22 are the surface heads; their presence is the reason
+        # 7net-omni replaced 7net-mf-ompa as the auto-detected tag.
+        assert "oc20" in _SEVENNET_MODELS["7net-omni"]
+        assert "oc22" in _SEVENNET_MODELS["7net-omni"]
+
+    def test_mf_0_tasks_are_uppercase(self):
+        # 7net-mf-0 is the one tag whose checkpoint names its modalities in
+        # uppercase. Storing them lowercased would send SevenNet a task its
+        # checkpoint does not have.
+        assert _SEVENNET_MODELS["7net-mf-0"] == ("PBE", "R2SCAN")
+
+    def test_single_task_models_carry_no_tasks(self):
+        for tag in ("7net-omat", "7net-l3i5", "7net-0", "7net-0_22may2024"):
+            assert _SEVENNET_MODELS[tag] == ()
+
+    def test_omni_variants_share_one_task_list(self):
+        assert _SEVENNET_MODELS["7net-omni-i8"] == _SEVENNET_MODELS["7net-omni"]
+        assert _SEVENNET_MODELS["7net-omni-i12"] == _SEVENNET_MODELS["7net-omni"]
+
+
+@patch("mliprun.cli.utils.SEVENN_AVAILABLE", True)
+class TestValidateSevenNetTask:
+    def test_multi_task_without_task_raises(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("7net-omni")
+        assert "--sevennet-task is required" in str(exc.value.exit_code)
+
+    def test_multi_task_error_lists_the_valid_tasks(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("7net-mf-ompa")
+        message = str(exc.value.exit_code)
+        assert "omat24" in message and "mpa" in message
+
+    def test_invalid_task_raises_and_names_it(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("7net-omni", sevennet_task="not_a_task")
+        assert "not_a_task" in str(exc.value.exit_code)
+
+    def test_task_on_single_task_model_raises(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("7net-0", sevennet_task="mpa")
+        assert "no selectable task" in str(exc.value.exit_code)
+
+    def test_valid_pair_passes(self):
+        validate_mlip("7net-omni", sevennet_task="oc20")
+        validate_mlip("7net-mf-ompa", sevennet_task="mpa")
+        validate_mlip("7net-mf-0", sevennet_task="PBE")
+
+    def test_task_matching_is_case_sensitive(self):
+        # 'pbe' is not a task 7net-mf-0 has; accepting it would invent a name
+        # the checkpoint does not carry.
+        with pytest.raises(typer.Exit):
+            validate_mlip("7net-mf-0", sevennet_task="pbe")
+
+    def test_single_task_model_without_task_passes(self):
+        validate_mlip("7net-0")
+        validate_mlip("7net-omat")
+
+    def test_unknown_7net_tag_passes_with_a_warning(self, capsys):
+        validate_mlip("7net-future-model", sevennet_task="whatever")
+        assert "can be validated" in capsys.readouterr().out
