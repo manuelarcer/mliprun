@@ -27,7 +27,7 @@
 
 ---
 
-### Task 1: Verify the SevenNet model/task table against the installed package
+### Task 1: Verify the SevenNet model/task table against the installed package  ✅ DONE 2026-09-01
 
 The task strings in the spec were transcribed from the SevenNet documentation. A wrong string in a head table silently changes the level of theory, so the table is verified against the installed package before any of it is committed. This task produces the authoritative table that Task 2 encodes.
 
@@ -39,7 +39,7 @@ The task strings in the spec were transcribed from the SevenNet documentation. A
 - Consumes: nothing.
 - Produces: the verified tag → task tuple mapping used verbatim in Task 2.
 
-- [ ] **Step 1: Confirm the env is built**
+- [x] **Step 1: Confirm the env is built**
 
 ```bash
 ssh cos-cluster 'tail -6 /scratchb/juar/sevennet-dev/install_sevenn.log'
@@ -47,7 +47,7 @@ ssh cos-cluster 'tail -6 /scratchb/juar/sevennet-dev/install_sevenn.log'
 
 Expected: the `=== versions ===` block showing `torch 2.8.0 cuda 12.8 avail True` and a `sevenn` version, followed by `DONE`.
 
-- [ ] **Step 2: Read the checkpoint metadata for each multi-task model**
+- [x] **Step 2: Read the checkpoint metadata for each multi-task model**
 
 `sevenn cp <tag>` prints a checkpoint overview including the modal (task) list, without running the model.
 
@@ -58,7 +58,7 @@ for t in 7net-omni 7net-mf-ompa; do echo "##### $t"; $V/bin/sevenn cp $t 2>&1 | 
 
 Expected: a modal/task list for each. Record the exact strings.
 
-- [ ] **Step 3: Cross-check by instantiating with a task**
+- [x] **Step 3: Cross-check by instantiating with a task**
 
 If `sevenn cp` does not print the modal list, get it from the checkpoint directly:
 
@@ -77,7 +77,7 @@ for tag in ("7net-omni", "7net-mf-ompa"):
 Run: `ssh cos-cluster '<venv>/bin/python /scratchb/juar/sevennet-dev/probe_tasks.py'`
 Expected: a dict or list of task names per tag.
 
-- [ ] **Step 4: Locate the checkpoint cache**
+- [x] **Step 4: Locate the checkpoint cache**
 
 ```bash
 ssh cos-cluster 'du -sh ~/.cache/* 2>/dev/null | sort -h | tail -5; ls -la ~/.cache/sevennet 2>/dev/null | head'
@@ -85,7 +85,7 @@ ssh cos-cluster 'du -sh ~/.cache/* 2>/dev/null | sort -h | tail -5; ls -la ~/.ca
 
 Expected: the directory SevenNet downloads weights into, and its size. `/home` is quota'd and non-executable on this cluster; if the cache lands there and is large, note the environment variable or symlink needed to move it to `/scratchb`, and record it in the install recipe in Task 9.
 
-- [ ] **Step 5: Reconcile the table**
+- [x] **Step 5: Reconcile the table**
 
 Compare the observed strings against the spec's table. If any differ, edit the spec's table to the observed values and commit that correction on its own:
 
@@ -119,20 +119,29 @@ from mliprun.cli.utils import _SEVENNET_MODELS
 
 class TestSevenNetTable:
     def test_every_documented_tag_is_present(self):
+        # Verified against sevenn 0.13.0:
+        # sevenn.util.get_available_pretrained_models(). There are no
+        # 7net-nano-* tags in this release despite the documentation.
         expected = {
-            "7net-omni", "7net-omni-i8", "7net-omni-i12", "7net-mf-ompa",
-            "7net-omat", "7net-l3i5", "7net-0",
-            "7net-nano-4.5", "7net-nano-5.0", "7net-nano-5.5", "7net-nano-6.0",
+            "7net-omni", "7net-omni-i8", "7net-omni-i12",
+            "7net-mf-ompa", "7net-mf-0",
+            "7net-omat", "7net-l3i5", "7net-0", "7net-0_22may2024",
         }
         assert set(_SEVENNET_MODELS) == expected
 
     def test_multi_task_models_carry_tasks(self):
         assert len(_SEVENNET_MODELS["7net-omni"]) == 13
-        assert _SEVENNET_MODELS["7net-mf-ompa"] == ("mpa", "omat24")
+        assert _SEVENNET_MODELS["7net-mf-ompa"] == ("omat24", "mpa")
         assert "oc20" in _SEVENNET_MODELS["7net-omni"]
 
+    def test_mf_0_tasks_are_uppercase(self):
+        # 7net-mf-0 is the one tag whose checkpoint names its modalities in
+        # uppercase. Storing them lowercased would send SevenNet a task its
+        # checkpoint does not have.
+        assert _SEVENNET_MODELS["7net-mf-0"] == ("PBE", "R2SCAN")
+
     def test_single_task_models_carry_none(self):
-        for tag in ("7net-omat", "7net-l3i5", "7net-0", "7net-nano-5.0"):
+        for tag in ("7net-omat", "7net-l3i5", "7net-0", "7net-0_22may2024"):
             assert _SEVENNET_MODELS[tag] == ()
 
     def test_omni_variants_share_one_task_list(self):
@@ -166,6 +175,12 @@ class TestValidateSevenNetTask:
     def test_valid_pair_passes(self):
         validate_mlip("7net-omni", sevennet_task="oc20")
         validate_mlip("7net-mf-ompa", sevennet_task="mpa")
+        validate_mlip("7net-mf-0", sevennet_task="PBE")
+
+    def test_task_matching_is_case_sensitive(self):
+        # 'pbe' is not a task 7net-mf-0 has; accepting it would invent a name.
+        with pytest.raises(typer.Exit):
+            validate_mlip("7net-mf-0", sevennet_task="pbe")
 
     def test_single_task_model_without_task_passes(self):
         validate_mlip("7net-0")
@@ -189,24 +204,25 @@ Insert after `_TAG_TO_RECIPE` in `src/mliprun/cli/utils.py`. Replace the task tu
 #: An empty tuple marks a single-task model, which rejects --sevennet-task.
 #: Tasks are independent fine-tunes with independent energy zeros (CANON C3),
 #: so the task is never defaulted -- see `validate_mlip`.
+# Task names are stored exactly as the checkpoints report them (the
+# `Modality` line of `sevenn cp <tag>`). 7net-mf-0 uses uppercase where every
+# other model uses lowercase, so comparison is exact -- never case-folded.
 _SEVENNET_OMNI_TASKS = (
-    "mpa", "omat24", "matpes_pbe", "oc20", "oc22", "odac23",
-    "omol25_low", "omol25_high", "spice", "qcml", "pet_mad",
-    "mp_r2scan", "matpes_r2scan",
+    "omat24", "mpa", "omol25_low", "omol25_high", "matpes_pbe",
+    "matpes_r2scan", "mp_r2scan", "oc20", "oc22", "spice", "qcml",
+    "odac23", "pet_mad",
 )
 
 _SEVENNET_MODELS: dict[str, tuple[str, ...]] = {
     "7net-omni": _SEVENNET_OMNI_TASKS,
     "7net-omni-i8": _SEVENNET_OMNI_TASKS,
     "7net-omni-i12": _SEVENNET_OMNI_TASKS,
-    "7net-mf-ompa": ("mpa", "omat24"),
+    "7net-mf-ompa": ("omat24", "mpa"),
+    "7net-mf-0": ("PBE", "R2SCAN"),
     "7net-omat": (),
     "7net-l3i5": (),
     "7net-0": (),
-    "7net-nano-4.5": (),
-    "7net-nano-5.0": (),
-    "7net-nano-5.5": (),
-    "7net-nano-6.0": (),
+    "7net-0_22may2024": (),
 }
 ```
 
@@ -220,7 +236,8 @@ SEVENNET_TASK_HELP = (
     "energy zeros. 7net-omni/-i8/-i12: 'mpa' (PBE+U, the SevenNet-recommended "
     "general default), 'oc20' (RPBE catalysis on surfaces), 'oc22', "
     "'matpes_pbe', 'odac23', 'omol25_low', 'omol25_high', 'spice', 'qcml', "
-    "'pet_mad', 'mp_r2scan', 'matpes_r2scan'. 7net-mf-ompa: 'mpa' or 'omat24'."
+    "'pet_mad', 'mp_r2scan', 'matpes_r2scan'. 7net-mf-ompa: 'omat24' or 'mpa'. "
+    "7net-mf-0: 'PBE' or 'R2SCAN' (uppercase). Task names are matched exactly."
 )
 ```
 
@@ -362,13 +379,11 @@ In `_TAG_TO_RECIPE`, replace the single `"7net-mf-ompa": "sevenn.md"` entry with
     "7net-omni-i8": "sevenn.md#7net-omni-i8",
     "7net-omni-i12": "sevenn.md#7net-omni-i12",
     "7net-mf-ompa": "sevenn.md#7net-mf-ompa",
+    "7net-mf-0": "sevenn.md#7net-mf-0",
     "7net-omat": "sevenn.md#7net-omat",
     "7net-l3i5": "sevenn.md#7net-l3i5",
     "7net-0": "sevenn.md#7net-0",
-    "7net-nano-4.5": "sevenn.md#7net-nano",
-    "7net-nano-5.0": "sevenn.md#7net-nano",
-    "7net-nano-5.5": "sevenn.md#7net-nano",
-    "7net-nano-6.0": "sevenn.md#7net-nano",
+    "7net-0_22may2024": "sevenn.md#7net-0",
 ```
 
 In `_recipe_for_tag`, add a prefix fallback so unknown `7net-*` tags still get the file:
@@ -889,7 +904,7 @@ git commit -m "feat(sevennet): benchmark includes SevenNet only with an explicit
 
 - [ ] **Step 1: Rewrite `docs/install/sevenn.md`**
 
-Replace the whole file. It must carry: the real `_Last verified: 2026-09-01_` line; the conda-prefix recipe actually used on cos-cluster (python 3.11, `torch==2.8.0` from the cu128 index, `torch_geometric`, `sevenn`); the full model/task table from Task 1 with one anchor per tag matching `_TAG_TO_RECIPE` (`#7net-omni`, `#7net-omni-i8`, `#7net-omni-i12`, `#7net-mf-ompa`, `#7net-omat`, `#7net-l3i5`, `#7net-0`, `#7net-nano`); the checkpoint cache location from Task 1 Step 4 and how to redirect it off a quota'd home; and the measured `mpa` vs `oc20` energy difference from Task 10 as the evidence behind a short "tasks have independent energy zeros (CANON C3)" warning.
+Replace the whole file. It must carry: the real `_Last verified: 2026-09-01_` line; the conda-prefix recipe actually used on cos-cluster (python 3.11, `torch==2.8.0` from the cu128 index, `torch_geometric`, `sevenn`); the full model/task table from Task 1 with one anchor per tag matching `_TAG_TO_RECIPE` (`#7net-omni`, `#7net-omni-i8`, `#7net-omni-i12`, `#7net-mf-ompa`, `#7net-mf-0`, `#7net-omat`, `#7net-l3i5`, `#7net-0`); the checkpoint cache location from Task 1 Step 4 and how to redirect it off a quota'd home; and the measured `mpa` vs `oc20` energy difference from Task 10 as the evidence behind a short "tasks have independent energy zeros (CANON C3)" warning.
 
 - [ ] **Step 2: Update the other docs**
 

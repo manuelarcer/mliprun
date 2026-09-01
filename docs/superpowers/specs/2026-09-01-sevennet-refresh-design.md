@@ -54,23 +54,35 @@ empty one.
 
 | Tag | Type | Tasks |
 |---|---|---|
-| `7net-omni` | multi-task | `mpa`, `omat24`, `matpes_pbe`, `oc20`, `oc22`, `odac23`, `omol25_low`, `omol25_high`, `spice`, `qcml`, `pet_mad`, `mp_r2scan`, `matpes_r2scan` |
+| `7net-omni` | multi-task | `omat24`, `mpa`, `omol25_low`, `omol25_high`, `matpes_pbe`, `matpes_r2scan`, `mp_r2scan`, `oc20`, `oc22`, `spice`, `qcml`, `odac23`, `pet_mad` |
 | `7net-omni-i8` | multi-task | same 13 |
 | `7net-omni-i12` | multi-task | same 13 |
-| `7net-mf-ompa` | multi-task | `mpa`, `omat24` |
+| `7net-mf-ompa` | multi-task | `omat24`, `mpa` |
+| `7net-mf-0` | multi-task | `PBE`, `R2SCAN` (uppercase — the only tag whose task names are not lowercase) |
 | `7net-omat` | single-task | — |
 | `7net-l3i5` | single-task | — |
 | `7net-0` | single-task | — |
-| `7net-nano-4.5` | single-task | — |
-| `7net-nano-5.0` | single-task | — |
-| `7net-nano-5.5` | single-task | — |
-| `7net-nano-6.0` | single-task | — |
+| `7net-0_22may2024` | single-task | — |
 
-The task strings above are transcribed from the SevenNet 0.13.0 documentation.
-**They are verified against the installed package (`sevenn cp 7net-omni`) in
-Phase 0 before the table is committed.** A wrong string in a head table silently
-changes the level of theory, so no value enters the code on documentation
-authority alone.
+Verified 2026-09-01 against `sevenn` 0.13.0 on cos-cluster:
+`sevenn.util.get_available_pretrained_models()` for the tag list, and
+`sevenn cp <tag>` for each checkpoint's `Modality` line. The documentation
+disagreed with the package in three ways, all corrected above:
+
+- **`7net-nano-4.5 / -5.0 / -5.5 / -6.0` do not exist in this release.** The
+  documentation lists SevenNet-Nano with those four keywords; the installed
+  registry has none of them. They are dropped from the table. If a later
+  `sevenn` release adds them, the unknown-tag passthrough already carries them.
+- **Two tags the documentation's overview table omits are in the registry:**
+  `7net-0_22may2024` (an earlier SevenNet-0 snapshot, single-task) and
+  `7net-mf-0` (the first multi-fidelity model, multi-task).
+- **`7net-mf-0`'s tasks are uppercase**, `PBE` and `R2SCAN`, unlike every other
+  model's lowercase names. Task comparison is therefore exact and
+  case-sensitive; lowercasing user input would break this tag, and accepting
+  `pbe` for it would be inventing a name the checkpoint does not have.
+
+A wrong string in a head table silently changes the level of theory, so no
+value entered this table on documentation authority alone.
 
 Any other `7net-*` tag is forwarded to `SevenNetCalculator` unchanged, with a
 warning that neither the tag nor its task can be validated. New SevenNet
