@@ -128,3 +128,81 @@ class TestCreateBackupFolder:
         assert (tmp_path / "neb_parameters.txt").exists()
         # But A2B.traj should be moved
         assert not (tmp_path / "A2B.traj").exists()
+
+
+class TestSevenNetTaskRoundTrip:
+    """A restart that dropped the task would resume the band on a different
+    energy zero -- the discontinuity CANON C3 forbids, and the reason the
+    task has to survive neb_parameters.txt."""
+
+    def _params_text(self, extra=""):
+        return (
+            "NEB Run Parameters\n"
+            "===================\n"
+            "MLIP model:            7net-omni\n"
+            "SevenNet task:         oc20\n"
+            "Initial:               initial.vasp\n"
+            "Final:                 final.vasp\n"
+            "Intermediate images:   5\n"
+            "Total images:          7\n"
+            "IDPP fmax:             0.1\n"
+            "IDPP steps:            100\n"
+            "Final fmax:            0.05\n"
+            "Spring constant (k):   0.1\n"
+            "Climb:                 True\n"
+            + extra
+        )
+
+    def test_task_survives_the_params_round_trip(self, tmp_path):
+        params_file = tmp_path / "neb_parameters.txt"
+        params_file.write_text(self._params_text())
+        params = CustomNEB._parse_parameters_file(params_file)
+        assert params["mlip"] == "7net-omni"
+        assert params["sevennet_task"] == "oc20"
+
+    def test_uppercase_task_survives_verbatim(self, tmp_path):
+        # 7net-mf-0's tasks are uppercase; the parser must not normalise.
+        params_file = tmp_path / "neb_parameters.txt"
+        params_file.write_text(
+            "NEB Run Parameters\n"
+            "===================\n"
+            "MLIP model:            7net-mf-0\n"
+            "SevenNet task:         R2SCAN\n"
+            "Intermediate images:   3\n"
+            "Total images:          5\n"
+            "Final fmax:            0.05\n"
+        )
+        params = CustomNEB._parse_parameters_file(params_file)
+        assert params["sevennet_task"] == "R2SCAN"
+
+    def test_absent_task_parses_as_missing_not_empty(self, tmp_path):
+        params_file = tmp_path / "neb_parameters.txt"
+        params_file.write_text(
+            "NEB Run Parameters\n"
+            "===================\n"
+            "MLIP model:            uma-s-1p2\n"
+            "UMA task:              omat\n"
+            "Intermediate images:   3\n"
+            "Total images:          5\n"
+            "Final fmax:            0.05\n"
+        )
+        params = CustomNEB._parse_parameters_file(params_file)
+        assert params.get("sevennet_task") is None
+
+
+class TestCustomNEBSevenNetCalculator:
+    def test_multi_task_without_a_task_raises_a_clear_error(self):
+        # CustomNEB wires its own calculators, so the guard has to exist here
+        # too -- otherwise a direct API caller (or the stale library default
+        # mlip="7net-mf-ompa") reaches SevenNet with no modal and fails deep
+        # inside it instead of at the boundary.
+        neb = CustomNEB.__new__(CustomNEB)
+        neb.mlip = "7net-omni"
+        neb.uma_task = "omat"
+        neb.mace_head = "omat_pbe"
+        neb.sevennet_task = None
+        neb.device = "cpu"
+        with pytest.raises(ValueError) as exc:
+            neb.setup_calculator()
+        assert "oc20" in str(exc.value)
+        assert "7net-omni" in str(exc.value)

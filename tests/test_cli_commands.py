@@ -167,6 +167,8 @@ class TestSevenNetTaskOptionIsExposed:
         ("mliprun.cli.commands.optimize", "run"),
         ("mliprun.cli.commands.optimize", "batch"),
         ("mliprun.cli.commands.md", None),
+        ("mliprun.cli.commands.neb", None),
+        ("mliprun.cli.commands.autoneb", None),
     ])
     def test_command_declares_the_option(self, module, command_name):
         import importlib

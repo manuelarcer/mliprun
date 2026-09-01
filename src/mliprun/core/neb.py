@@ -78,6 +78,10 @@ class CustomNEB:
         MLIP model name.
     uma_task : str
         Task name for UMA models.
+    sevennet_task : str, optional
+        SevenNet inference task ("modal"). Required for multi-task SevenNet
+        models; there is no default, because the tasks are independent
+        fine-tunes with independent energy zeros (CANON C1/C3).
     mace_head : str
         Head name for multi-head MACE foundation models (mace-mh-*).
     output_dir : str or Path
@@ -102,6 +106,7 @@ class CustomNEB:
         mlip: str = "7net-mf-ompa",
         uma_task: str = "omat",
         mace_head: str = "omat_pbe",
+        sevennet_task: Optional[str] = None,
         output_dir: str | Path = ".",
         relax_atoms: Optional[list[int]] = None,
         logfile: str = "neb.log",
@@ -117,6 +122,7 @@ class CustomNEB:
         self.mlip = mlip
         self.uma_task = uma_task
         self.mace_head = mace_head
+        self.sevennet_task = sevennet_task
         self.device = device
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -160,6 +166,7 @@ class CustomNEB:
             "MLIP model": ("mlip", str),
             "UMA task": ("uma_task", str),
             "MACE head": ("mace_head", str),
+            "SevenNet task": ("sevennet_task", str),
             "Device": ("device", str),
             "Initial": ("initial", str),
             "Final": ("final", str),
@@ -225,6 +232,7 @@ class CustomNEB:
         mlip: Optional[str] = None,
         uma_task: Optional[str] = None,
         mace_head: Optional[str] = None,
+        sevennet_task: Optional[str] = None,
         fmax: Optional[float] = None,
         logfile: Optional[str] = None,
         k: Optional[float] = None,
@@ -239,7 +247,7 @@ class CustomNEB:
         ----------
         output_dir : str or Path
             Directory containing A2B_full.traj and neb_parameters.txt.
-        mlip, uma_task, fmax, logfile, k, climb, neb_optimizer, neb_max_steps
+        mlip, uma_task, mace_head, sevennet_task, fmax, logfile, k, climb, neb_optimizer, neb_max_steps
             Optional overrides for the corresponding saved parameters.
 
         Returns
@@ -291,6 +299,10 @@ class CustomNEB:
 
         uma_task = uma_task or params.get("uma_task", "omat")
         mace_head = mace_head or params.get("mace_head", "omat_pbe")
+        # No `or "<default>"` fallback here, unlike the two above: a SevenNet
+        # task has no default, and inventing one on restart would resume the
+        # band on a different energy zero (CANON C3).
+        sevennet_task = sevennet_task or params.get("sevennet_task")
         fmax = fmax if fmax is not None else params["fmax"]
         logfile = logfile or params.get("log", "neb.log")
         device = device if device is not None else params.get("device", "cpu")
@@ -306,6 +318,7 @@ class CustomNEB:
         instance.mlip = mlip
         instance.uma_task = uma_task
         instance.mace_head = mace_head
+        instance.sevennet_task = sevennet_task
         instance.device = device
         instance.output_dir = output_dir
         instance.logfile = logfile
@@ -328,7 +341,8 @@ class CustomNEB:
     # ------------------------------------------------------------------
 
     def setup_calculator(self, model: Optional[str] = None, uma_task: Optional[str] = None,
-                         mace_head: Optional[str] = None):
+                         mace_head: Optional[str] = None,
+                         sevennet_task: Optional[str] = None):
         """Create and return an MLIP calculator.
 
         Parameters
@@ -340,20 +354,49 @@ class CustomNEB:
         mace_head : str, optional
             Head name for multi-head MACE foundation models (mace-mh-*)
             (default: ``self.mace_head``).
+        sevennet_task : str, optional
+            SevenNet inference task (default: ``self.sevennet_task``).
 
         Returns
         -------
         ASE calculator instance.
+
+        Raises
+        ------
+        ValueError
+            If a multi-task SevenNet model is requested with no task.
         """
         model = model or self.mlip
         uma_task = uma_task or self.uma_task
         mace_head = mace_head or getattr(self, "mace_head", "omat_pbe")
+        sevennet_task = sevennet_task or getattr(self, "sevennet_task", None)
 
         device = getattr(self, "device", "cpu")
 
-        if model == "7net-mf-ompa":
+        if model.startswith("7net"):
+            # Table lookup and the guard come first, so the error is raised
+            # at the boundary even when sevenn is not installed.
+            from mliprun.cli.utils import _SEVENNET_MODELS
+
+            tasks = _SEVENNET_MODELS.get(model, ())
+            if tasks and sevennet_task is None:
+                # Caught here rather than left to SevenNet: this class wires
+                # its own calculators, and the library default mlip is still
+                # a multi-task tag, so a direct API caller would otherwise
+                # fail deep inside SevenNet with no mention of the task.
+                raise ValueError(
+                    f"{model} is a multi-task SevenNet model and needs an "
+                    f"explicit task: its tasks are independent fine-tunes "
+                    f"with independent energy zeros, so one cannot be "
+                    f"guessed. Pass sevennet_task=... (CLI: --sevennet-task). "
+                    f"Valid tasks: {', '.join(tasks)}."
+                )
+
             from sevenn.calculator import SevenNetCalculator
-            return SevenNetCalculator(model, modal="mpa", device=device)
+
+            if sevennet_task is None:
+                return SevenNetCalculator(model, device=device)
+            return SevenNetCalculator(model, modal=sevennet_task, device=device)
         elif model == "mace":
             from mace.calculators import mace_mp
             return mace_mp(model="medium", device=device)
@@ -669,6 +712,7 @@ class CustomNEB:
             stage_kind="neb-restart" if append else "neb",
             parameters={"num_images": self.num_images,
                         "uma_task": self.uma_task,
+                        "sevennet_task": getattr(self, "sevennet_task", None),
                         "interp_fmax": self.interp_fmax,
                         "interp_steps": self.interp_steps},
             inputs={"n_images": len(self.images),
@@ -684,6 +728,7 @@ class CustomNEB:
                 # (CANON C1 -- the head is an explicit decision, never
                 # inferred). An unset attribute is recorded as unknown.
                 mace_head=getattr(self, "mace_head", None),
+                sevennet_task=getattr(self, "sevennet_task", None),
             ),
             run_context=run_context,
             # k, climb, max_steps, the optimizer, and fmax are arguments of
@@ -837,7 +882,8 @@ class CustomNEB:
             stage_kind="autoneb",
             parameters={"n_max": n_max, "climb": climb, "fmax": self.fmax,
                         "k": k, "maxsteps": maxsteps,
-                        "uma_task": self.uma_task},
+                        "uma_task": self.uma_task,
+                        "sevennet_task": getattr(self, "sevennet_task", None)},
             inputs={"n_images": len(self.images),
                     "n_atoms": len(self.images[0]) if self.images else 0},
             provenance=collect_provenance(
@@ -848,6 +894,7 @@ class CustomNEB:
                 # Default None, unlike setup_calculator's "omat_pbe" -- see
                 # the same call in run_neb: a record must not invent a head.
                 mace_head=getattr(self, "mace_head", None),
+                sevennet_task=getattr(self, "sevennet_task", None),
             ),
             run_context=run_context,
         )

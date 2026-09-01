@@ -204,7 +204,7 @@ class TestCLIForwardsDyneb:
                 pass
 
         monkeypatch.setattr("mliprun.cli.commands.neb.CustomNEB", FakeNEB)
-        monkeypatch.setattr("mliprun.cli.commands.neb.resolve_mlip", lambda m: "mace")
+        monkeypatch.setattr("mliprun.cli.commands.neb.resolve_mlip", lambda m, *a, **k: "mace")
         monkeypatch.chdir(tmp_path)
 
         result = CliRunner().invoke(neb_app, [
