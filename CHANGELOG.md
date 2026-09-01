@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **SevenNet model family and `--sevennet-task`.** The SevenNet backend was a
+  stub that had never executed: one hardcoded tag (`7net-mf-ompa`) with
+  `modal="mpa"` baked into `build_calculator`, no way to select the task, no
+  provenance for it, and an install recipe still marked "pending first-run
+  validation". All nine tags in the `sevenn` 0.13.0 registry are now
+  supported — `7net-omni`, `7net-omni-i8`, `7net-omni-i12`, `7net-mf-ompa`,
+  `7net-mf-0`, `7net-omat`, `7net-l3i5`, `7net-0`, `7net-0_22may2024` — with
+  any unrecognised `7net-*` tag forwarded to SevenNet unchanged behind a
+  warning, so new checkpoints work without a code change.
+  `--sevennet-task` (SevenNet's `modal`) is available on `optimize run`,
+  `optimize batch`, `md run`, `neb run`, `autoneb run` and `benchmark run`,
+  and is written to the params file and the run record. The tag/task table was
+  read from the checkpoints themselves, not from SevenNet's documentation,
+  which describes a newer release: the documented `7net-nano-*` tags do not
+  exist in 0.13.0, `7net-0_22may2024` and `7net-mf-0` are in the registry but
+  absent from the documentation's table, and `7net-mf-0` names its tasks
+  `PBE`/`R2SCAN` in uppercase, so task names are matched exactly.
+
 - `neb run --dyneb` (with `--scale-fmax`): opt-in DyNEB (ASE
   `ase.mep.dyneb.DyNEB`) — dynamic relaxation freezes images already
   converged below fmax so the serial image loop skips their force calls
@@ -14,8 +32,35 @@ All notable changes to this project are documented here. Format follows [Keep a 
   written to `neb_parameters.txt` and the run record, and `--restart`
   reproduces or overrides them like `--climb`/`--k`.
 
+### Breaking
+
+- **`7net-mf-ompa` now requires `--sevennet-task mpa`** (or `omat24`) where it
+  previously ran on a hardcoded `mpa`. Treated as a free break: the SevenNet
+  path had never executed, so no run record, result, or script depends on it.
+
 ### Changed
 
+- **Run record schema `2` → `3`.** `provenance.sevennet_task` joins
+  `uma_task` and `mace_head`, gated on the model tag the same way, so a
+  SevenNet record identifies its own level of theory. The value is recorded
+  verbatim (`7net-mf-0`'s tasks are uppercase, and normalising would write a
+  task name no checkpoint has). The field also joins the stage-provenance diff,
+  so a task switch mid-pipeline is reported as a change — the CANON C3 guard.
+- **`--sevennet-task` has no default, unlike `--uma-task` and `--mace-head`.**
+  A multi-task SevenNet tag with no task stops the run with an error listing
+  that model's valid tasks. SevenNet tasks are independent fine-tunes with
+  independent energy zeros, so a guessed task silently changes the level of
+  theory (CANON C1). One consequence is deliberate and worth knowing: in a
+  SevenNet-only environment `--mlip auto` resolves to `7net-omni` and then
+  stops, so the "a fresh env lands on a runnable default" promise does not
+  hold for SevenNet.
+- **`--mlip auto` picks `7net-omni` instead of `7net-mf-ompa`** when SevenNet
+  is the only MLIP installed. `7net-omni` is SevenNet's recommended model and
+  the only one of the family with surface heads (`oc20` RPBE, `oc22`). The
+  detection *order* (UMA → MACE → SevenNet → CHGNet) is unchanged.
+- **Auto-detected model tags are now validated.** `optimize`, `md`, `neb` and
+  `autoneb` previously validated only the explicit `--mlip` branch, so a tag
+  chosen by auto-detection was never checked.
 - **Run record schema `1` → `2`.** `mliprun_run.json` now records the head/task
   that actually ran (`provenance.uma_task` / `provenance.mace_head`), so the
   record identifies the level of theory on its own — a model tag alone does

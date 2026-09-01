@@ -5,11 +5,11 @@ A CLI + Python API that drives ASE-based optimisation, MD, and NEB workflows usi
 ## Language
 
 **MLIP tag**:
-The user-facing identifier passed to `--mlip` (e.g. `mace`, `mace-mh-1`, `uma-s-1p2`, `7net-mf-ompa`, `chgnet`). Maps one-to-many to package names.
+The user-facing identifier passed to `--mlip` (e.g. `mace`, `mace-mh-1`, `uma-s-1p2`, `7net-omni`, `chgnet`). Maps one-to-many to package names.
 _Avoid_: model name, calculator name.
 
 **Package name**:
-The PyPI distribution that provides an MLIP (`mace-torch`, `fairchem-core`, `sevenn`, `chgnet`). One package can serve several **MLIP tags** (e.g. `mace-torch` serves both `mace` and every `mace-mh-*`).
+The PyPI distribution that provides an MLIP (`mace-torch`, `fairchem-core`, `sevenn`, `chgnet`). One package can serve several **MLIP tags** (e.g. `mace-torch` serves both `mace` and every `mace-mh-*`; `sevenn` serves every `7net-*`).
 _Avoid_: distribution.
 
 **MLIP env**:
