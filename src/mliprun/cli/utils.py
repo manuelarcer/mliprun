@@ -498,7 +498,8 @@ def _ensure_mace_foundation_checkpoint(tag: str) -> str:
 
 
 def build_calculator(mlip: str, uma_task: str = "omat",
-                     device: str = "auto", mace_head: str = "omat_pbe"):
+                     device: str = "auto", mace_head: str = "omat_pbe",
+                     sevennet_task: Optional[str] = None):
     """Build and return an ASE calculator for the given MLIP choice.
 
     This is the expensive step: it loads the model weights into memory (and,
@@ -520,6 +521,12 @@ def build_calculator(mlip: str, uma_task: str = "omat",
         used when ``mlip`` matches one of those tags. Default ``"omat_pbe"``
         (PBE bulk inorganic). Use ``"oc20_usemppbe"`` for catalysis on
         surfaces.
+    sevennet_task : str, optional
+        Inference task ("modal") for multi-task SevenNet models. Only used
+        for ``7net*`` tags, and deliberately has no default -- see
+        :func:`validate_mlip`, which rejects a multi-task tag without one.
+        ``None`` omits the argument entirely, which is what a single-task
+        checkpoint requires.
 
     Returns
     -------
@@ -537,9 +544,13 @@ def build_calculator(mlip: str, uma_task: str = "omat",
         ckpt = _ensure_mace_foundation_checkpoint(mlip)
         return MACECalculator(model_paths=ckpt, device=device, head=mace_head)
 
-    elif mlip == "7net-mf-ompa":
+    elif mlip.startswith("7net"):
         SevenNetCalculator = _load_sevenn_calculator()
-        return SevenNetCalculator("7net-mf-ompa", modal="mpa", device=device)
+        if sevennet_task is None:
+            # Single-task checkpoints reject `modal`; omit it rather than
+            # passing None.
+            return SevenNetCalculator(mlip, device=device)
+        return SevenNetCalculator(mlip, modal=sevennet_task, device=device)
 
     elif mlip.startswith("uma-"):
         pretrained_mlip, FAIRChemCalculator = _load_fairchem()
@@ -554,7 +565,8 @@ def build_calculator(mlip: str, uma_task: str = "omat",
 
 
 def setup_calculator(atoms, mlip: str, uma_task: str = "omat",
-                     device: str = "auto", mace_head: str = "omat_pbe"):
+                     device: str = "auto", mace_head: str = "omat_pbe",
+                     sevennet_task: Optional[str] = None):
     """Attach a freshly built calculator to ``atoms`` based on MLIP choice.
 
     Convenience wrapper that builds the calculator (see
@@ -576,6 +588,9 @@ def setup_calculator(atoms, mlip: str, uma_task: str = "omat",
         ``"cuda"``, or ``"cpu"``.
     mace_head : str, optional
         Head name for multi-head MACE foundation models (mace-mh-*).
+    sevennet_task : str, optional
+        Inference task ("modal") for multi-task SevenNet models. No default;
+        see :func:`build_calculator`.
 
     Returns
     -------
@@ -583,7 +598,8 @@ def setup_calculator(atoms, mlip: str, uma_task: str = "omat",
         Atoms object with calculator attached.
     """
     atoms.calc = build_calculator(mlip, uma_task, device=device,
-                                  mace_head=mace_head)
+                                  mace_head=mace_head,
+                                  sevennet_task=sevennet_task)
     return atoms
 
 

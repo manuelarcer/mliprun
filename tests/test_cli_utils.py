@@ -6,6 +6,7 @@ import typer
 
 from mliprun.cli.utils import (
     _SEVENNET_MODELS,
+    build_calculator,
     detect_mlip,
     validate_mlip,
     resolve_mlip,
@@ -352,3 +353,34 @@ class TestValidateSevenNetTask:
     def test_unknown_7net_tag_passes_with_a_warning(self, capsys):
         validate_mlip("7net-future-model", sevennet_task="whatever")
         assert "can be validated" in capsys.readouterr().out
+
+
+class TestBuildSevenNetCalculator:
+    """SevenNetCalculator is patched, so these run with no sevenn installed."""
+
+    def _build(self, *args, **kwargs):
+        from unittest.mock import MagicMock
+        fake_cls = MagicMock()
+        with patch("mliprun.cli.utils._load_sevenn_calculator",
+                   return_value=fake_cls):
+            build_calculator(*args, **kwargs)
+        return fake_cls
+
+    def test_passes_tag_and_task_to_the_calculator(self):
+        fake_cls = self._build("7net-omni", device="cpu", sevennet_task="oc20")
+        fake_cls.assert_called_once_with("7net-omni", modal="oc20", device="cpu")
+
+    def test_task_is_forwarded_verbatim_not_case_folded(self):
+        fake_cls = self._build("7net-mf-0", device="cpu", sevennet_task="R2SCAN")
+        fake_cls.assert_called_once_with("7net-mf-0", modal="R2SCAN", device="cpu")
+
+    def test_single_task_model_gets_no_modal_argument(self):
+        # Passing modal=None to a single-task checkpoint is not the same as
+        # omitting it; SevenNet only accepts the argument for multi-fidelity
+        # models.
+        fake_cls = self._build("7net-0", device="cpu")
+        fake_cls.assert_called_once_with("7net-0", device="cpu")
+
+    def test_unknown_tag_is_forwarded_with_its_task(self):
+        fake_cls = self._build("7net-future", device="cpu", sevennet_task="mpa")
+        fake_cls.assert_called_once_with("7net-future", modal="mpa", device="cpu")
