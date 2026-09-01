@@ -30,7 +30,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 RECORD_FILENAME = "mliprun_run.json"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 #: Model-tag prefix -> installed distribution name. Longest prefix wins, so
 #: ``mace-mh-1`` resolves before the bare ``mace`` entry.
@@ -51,7 +51,8 @@ VALID_PARAM_SOURCES = frozenset({"user", "default", "env", "prompt", "unspecifie
 #: stage. Only these fields are meaningful to call out as "what changed" --
 #: see I2 in .superpowers/sdd/task-1-fixes.md.
 _PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved",
-                           "mlip_model", "uma_task", "mace_head")
+                           "mlip_model", "uma_task", "mace_head",
+                           "sevennet_task")
 
 #: Stage key for diff fields the incoming provenance carries but the stored
 #: top-level provenance has no slot for at all -- see `_split_provenance`.
@@ -164,7 +165,8 @@ def _mlip_package(mlip_model: Any) -> dict:
 
 def collect_provenance(*, mlip_model: Any, device_requested: str,
                         device_resolved: str, uma_task: Optional[str] = None,
-                        mace_head: Optional[str] = None) -> dict:
+                        mace_head: Optional[str] = None,
+                        sevennet_task: Optional[str] = None) -> dict:
     """Gather environment and version facts for the record.
 
     ``device_requested`` and ``device_resolved`` are kept apart because
@@ -184,12 +186,17 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
     what is raised before ``begin`` is entered. Keep every new fallible
     call inside its own guard.
 
-    ``uma_task`` and ``mace_head`` are gated on the model tag rather than
-    trusted from the caller: CLIs pass whatever their ``--uma-task`` /
-    ``--mace-head`` options resolved to, defaults included, so a MACE run
-    would otherwise be recorded as carrying a UMA task it never used.
-    CANON C1 makes the head its own explicit decision and C3 forbids mixing
-    heads within an energy formula, so a wrong head is worse than none.
+    ``uma_task``, ``mace_head`` and ``sevennet_task`` are gated on the model
+    tag rather than trusted from the caller: CLIs pass whatever their
+    ``--uma-task`` / ``--mace-head`` / ``--sevennet-task`` options resolved
+    to, defaults included, so a MACE run would otherwise be recorded as
+    carrying a UMA task it never used. CANON C1 makes the head its own
+    explicit decision and C3 forbids mixing heads within an energy formula,
+    so a wrong head is worse than none.
+
+    Values are recorded verbatim. SevenNet's ``7net-mf-0`` names its tasks in
+    uppercase (``PBE``, ``R2SCAN``) where every other model uses lowercase, so
+    normalising the case here would record a task name no checkpoint has.
     """
     try:
         mliprun_version = version("mliprun")
@@ -219,6 +226,7 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
         "mlip_model": mlip_model,
         "uma_task": uma_task if tag.startswith("uma-") else None,
         "mace_head": mace_head if tag.startswith("mace-mh-") else None,
+        "sevennet_task": sevennet_task if tag.startswith("7net") else None,
         "device_requested": device_requested,
         "device_resolved": device_resolved,
         "python_version": python_version,

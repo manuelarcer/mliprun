@@ -14,6 +14,7 @@ from mliprun.core.run_record import (
     BatchInfo,
     RunContext,
     RunRecord,
+    _split_provenance,
     collect_provenance,
     new_batch_id,
 )
@@ -387,14 +388,15 @@ class TestHeadProvenance:
 
 
 class TestSchemaVersion:
-    def test_schema_version_is_two(self):
-        """Bumped so a reader can tell 'no uma_task key because the record
-        predates the field' from 'uma_task is null because it was MACE'."""
-        assert SCHEMA_VERSION == 2
+    def test_schema_version_is_three(self):
+        """2 added uma_task/mace_head; 3 adds sevennet_task. The bump lets a
+        reader tell 'no sevennet_task key because the record predates the
+        field' from 'sevennet_task is null because it was MACE'."""
+        assert SCHEMA_VERSION == 3
 
     def test_written_record_carries_the_new_version(self, tmp_path):
         _begin(tmp_path)
-        assert _read(tmp_path)["schema_version"] == 2
+        assert _read(tmp_path)["schema_version"] == 3
 
 
 class TestHeadInStageProvenance:
@@ -542,3 +544,63 @@ class TestNewFieldsMarker:
         stage = _read(tmp_path)["stages"][1]
         assert "stage_provenance" not in stage
         assert NEW_FIELDS_KEY not in stage
+
+
+class TestSevenNetTaskProvenance:
+    """schema 3: the SevenNet task joins uma_task and mace_head.
+
+    Without it a SevenNet record cannot say which task produced its numbers,
+    so under CANON C1/C3 it cannot back any energy entering a formula.
+    """
+
+    def test_sevennet_run_carries_the_task(self):
+        prov = collect_provenance(
+            mlip_model="7net-omni", device_requested="auto",
+            device_resolved="cuda", sevennet_task="oc20",
+        )
+        assert prov["sevennet_task"] == "oc20"
+        assert prov["uma_task"] is None
+        assert prov["mace_head"] is None
+
+    def test_task_is_recorded_verbatim(self):
+        # 7net-mf-0's tasks are uppercase; the record must not normalise them.
+        prov = collect_provenance(
+            mlip_model="7net-mf-0", device_requested="cpu",
+            device_resolved="cpu", sevennet_task="R2SCAN",
+        )
+        assert prov["sevennet_task"] == "R2SCAN"
+
+    def test_non_sevennet_run_nulls_the_task(self):
+        # CLIs pass whatever their option resolved to regardless of model, so
+        # the field is gated on the tag -- a MACE run must not be recorded as
+        # carrying a SevenNet task it never used.
+        prov = collect_provenance(
+            mlip_model="mace", device_requested="cpu",
+            device_resolved="cpu", sevennet_task="oc20",
+        )
+        assert prov["sevennet_task"] is None
+
+    def test_key_is_always_present(self):
+        prov = collect_provenance(
+            mlip_model="uma-s-1p2", device_requested="cpu",
+            device_resolved="cpu", uma_task="omat",
+        )
+        assert "sevennet_task" in prov
+        assert prov["sevennet_task"] is None
+
+    def test_task_switch_between_stages_is_reported_as_changed(self):
+        top = {"mlip_model": "7net-omni", "sevennet_task": "mpa"}
+        incoming = {"mlip_model": "7net-omni", "sevennet_task": "oc20"}
+        changed, new = _split_provenance(incoming, top)
+        assert changed == {"sevennet_task": "oc20"}
+        assert new == {}
+
+    def test_absent_key_in_a_legacy_record_is_new_not_changed(self):
+        # A schema-2 record has no sevennet_task key at all. That is
+        # "unknown", not "different"; reporting it as a change would be a C3
+        # false positive in the very artifact that answers C3 questions.
+        top = {"mlip_model": "7net-omni"}
+        incoming = {"mlip_model": "7net-omni", "sevennet_task": "mpa"}
+        changed, new = _split_provenance(incoming, top)
+        assert changed == {}
+        assert new == {"sevennet_task": "mpa"}
