@@ -17,10 +17,14 @@ import typer
 
 # (distribution, MLIP tag reported for `--mlip auto`) in detect_mlip()'s
 # preference order: UMA > MACE > SevenNet > CHGNet.
+#
+# This duplicates detect_mlip()'s tag choices and has drifted from them
+# before. tests/test_cli_doctor.py asserts the two agree for every entry --
+# keep that test passing rather than editing this table alone.
 _MLIP_PACKAGES = [
     ("fairchem-core", "uma-s-1p2"),
     ("mace-torch", "mace"),
-    ("sevenn", "7net-mf-ompa"),
+    ("sevenn", "7net-omni"),
     ("chgnet", "chgnet"),
 ]
 
