@@ -258,3 +258,43 @@ class TestCustomNEBBuildsTheSevenNetCalculator:
         neb.mlip = "7net-0"
         neb.setup_calculator()
         fake_cls.assert_called_once_with("7net-0", device="cpu")
+
+
+class TestCustomNEBGuardsTheHead:
+    """CustomNEB wires its own calculators, so the C1 guards live here as
+    well as in build_calculator. These are the branches that stop a NEB band
+    from being built on a head nobody chose."""
+
+    def _neb(self, model, **attrs):
+        from mliprun.core.neb import CustomNEB
+        neb = CustomNEB.__new__(CustomNEB)
+        neb.mlip = model
+        neb.uma_task = attrs.get("uma_task")
+        neb.mace_head = attrs.get("mace_head")
+        neb.sevennet_task = attrs.get("sevennet_task")
+        neb.device = "cpu"
+        return neb
+
+    def test_uma_without_a_task_raises(self):
+        with pytest.raises(ValueError) as exc:
+            self._neb("uma-s-1p2").setup_calculator()
+        assert "uma_task" in str(exc.value)
+        assert "--uma-task" in str(exc.value)
+
+    def test_mace_mh_without_a_head_raises(self):
+        with pytest.raises(ValueError) as exc:
+            self._neb("mace-mh-1").setup_calculator()
+        assert "mace_head" in str(exc.value)
+        assert "--mace-head" in str(exc.value)
+
+
+class TestBenchmarkSkipsUmaWithoutATask:
+    def test_prints_why_uma_was_skipped(self, tmp_path):
+        structure = _poscar(tmp_path)
+        with patch("mliprun.cli.commands.benchmark.FAIRCHEM_AVAILABLE", True), \
+             patch("mliprun.cli.commands.benchmark.SEVENN_AVAILABLE", False), \
+             patch("mliprun.cli.commands.benchmark.MACE_AVAILABLE", False), \
+             patch("mliprun.cli.commands.benchmark.CHGNET_AVAILABLE", False):
+            result = runner.invoke(benchmark_app, ["--structure", str(structure)])
+
+        assert "UMA is installed but skipped" in result.output
