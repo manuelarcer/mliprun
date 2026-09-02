@@ -22,8 +22,8 @@ def run(
     n_simul: int = typer.Option(1, help="Number of parallel relaxations (requires MPI for n_simul > 1)"),
     fmax: float = typer.Option(0.05, help="Force convergence threshold (eV/Ang)"),
     mlip: str = typer.Option("auto", help=MLIP_HELP),
-    uma_task: str = typer.Option("omat", help=UMA_TASK_HELP),
-    mace_head: str = typer.Option("omat_pbe", help=MACE_HEAD_HELP),
+    uma_task: str = typer.Option(None, help=UMA_TASK_HELP),
+    mace_head: str = typer.Option(None, help=MACE_HEAD_HELP),
     sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
     climb: bool = typer.Option(True, help="Enable climbing image NEB"),
     k: float = typer.Option(0.1, help="Spring constant"),
@@ -50,7 +50,7 @@ def run(
         typer.echo("Error: Initial and final structures must have the same number of atoms.")
         raise typer.Exit(code=1)
 
-    mlip = resolve_mlip(mlip, sevennet_task)
+    mlip = resolve_mlip(mlip, sevennet_task, uma_task, mace_head)
     if mlip.startswith("uma-"):
         typer.echo(f"   UMA task: {uma_task}")
     if mlip.startswith("mace-mh-"):

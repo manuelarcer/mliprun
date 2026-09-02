@@ -106,14 +106,21 @@ class TestValidateMlip:
 class TestResolveMlip:
     @patch("mliprun.cli.utils.FAIRCHEM_AVAILABLE", True)
     def test_auto_resolves(self):
-        result = resolve_mlip("auto")
+        # UMA is multi-head, so auto-detection now needs the task too.
+        result = resolve_mlip("auto", uma_task="omat")
         assert isinstance(result, str)
         assert result != "auto"
 
     @patch("mliprun.cli.utils.FAIRCHEM_AVAILABLE", True)
     def test_explicit_passes_through(self):
-        result = resolve_mlip("uma-s-1p1")
+        result = resolve_mlip("uma-s-1p1", uma_task="omat")
         assert result == "uma-s-1p1"
+
+    @patch("mliprun.cli.utils.FAIRCHEM_AVAILABLE", True)
+    def test_auto_still_enforces_the_head(self):
+        # Auto-detecting UMA must not become a way to skip the head choice.
+        with pytest.raises(typer.Exit):
+            resolve_mlip("auto")
 
 
 class TestParseRelaxAtoms:
@@ -384,3 +391,118 @@ class TestBuildSevenNetCalculator:
     def test_unknown_tag_is_forwarded_with_its_task(self):
         fake_cls = self._build("7net-future", device="cpu", sevennet_task="mpa")
         fake_cls.assert_called_once_with("7net-future", modal="mpa", device="cpu")
+
+
+class TestHeadTables:
+    """UMA tasks and MACE heads, read from the installed packages on
+    2026-09-01: fairchem-core 2.19.0 (uma-s-1p2's own task registry) and
+    mace-torch 0.3.15 (the mace-mh-1 checkpoint's `heads`)."""
+
+    def test_uma_tasks(self):
+        from mliprun.cli.utils import _UMA_TASKS
+        # The old --uma-task help advertised only omat/oc20/omol/odac; the
+        # model actually carries three more.
+        assert _UMA_TASKS == ("omat", "omc", "omol", "oc20", "oc22",
+                              "oc25", "odac")
+
+    def test_mace_mh_heads(self):
+        from mliprun.cli.utils import _MACE_MH_HEADS
+        assert set(_MACE_MH_HEADS) == {
+            "omat_pbe", "mp_pbe_refit_add", "matpes_r2scan",
+            "oc20_usemppbe", "omol", "spice_wB97M"}
+
+
+@patch("mliprun.cli.utils.FAIRCHEM_AVAILABLE", True)
+class TestValidateUmaTask:
+    def test_uma_without_task_raises(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("uma-s-1p2")
+        assert "--uma-task is required" in str(exc.value.exit_code)
+
+    def test_error_lists_the_valid_tasks(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("uma-s-1p2")
+        assert "oc20" in str(exc.value.exit_code)
+
+    def test_invalid_task_raises(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("uma-s-1p2", uma_task="not_a_task")
+        assert "not_a_task" in str(exc.value.exit_code)
+
+    def test_valid_task_passes(self):
+        validate_mlip("uma-s-1p2", uma_task="oc20")
+        validate_mlip("uma-s-1p1", uma_task="omat")
+
+    def test_unknown_uma_tag_still_requires_a_task(self):
+        with pytest.raises(typer.Exit):
+            validate_mlip("uma-future-model")
+
+    def test_unknown_uma_tag_does_not_validate_the_value(self, capsys):
+        # A newer checkpoint may carry tasks this table has never seen, so
+        # the value is forwarded with a warning rather than rejected.
+        validate_mlip("uma-future-model", uma_task="some_new_task")
+        assert "can be validated" in capsys.readouterr().out
+
+
+@patch("mliprun.cli.utils.MACE_AVAILABLE", True)
+class TestValidateMaceHead:
+    def test_multi_head_without_head_raises(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("mace-mh-1")
+        assert "--mace-head is required" in str(exc.value.exit_code)
+
+    def test_invalid_head_raises(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("mace-mh-1", mace_head="not_a_head")
+        assert "not_a_head" in str(exc.value.exit_code)
+
+    def test_valid_head_passes(self):
+        validate_mlip("mace-mh-1", mace_head="oc20_usemppbe")
+        validate_mlip("mace-mh-0", mace_head="omat_pbe")
+
+    def test_plain_mace_rejects_a_head(self):
+        # MACE-MP-0 is a single-head model, like a single-task SevenNet tag.
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("mace", mace_head="omat_pbe")
+        assert "no selectable head" in str(exc.value.exit_code)
+
+    def test_plain_mace_without_a_head_passes(self):
+        validate_mlip("mace")
+
+
+class TestBuildCalculatorGuardsTheHead:
+    """validate_mlip only runs on the CLI path. Direct API callers --
+    fa2i-mtc's batch_relax.py calls setup_calculator(**calc_kwargs) and omits
+    the head entirely when the flag was not given -- would otherwise reach
+    FAIRChem/MACE/SevenNet with no head and fail there instead of here."""
+
+    def test_uma_without_task_raises(self):
+        with pytest.raises(ValueError) as exc:
+            build_calculator("uma-s-1p2", device="cpu")
+        assert "uma_task" in str(exc.value)
+
+    def test_mace_mh_without_head_raises(self):
+        with pytest.raises(ValueError) as exc:
+            build_calculator("mace-mh-1", device="cpu")
+        assert "mace_head" in str(exc.value)
+
+    def test_multi_task_sevennet_without_task_raises(self):
+        with pytest.raises(ValueError) as exc:
+            build_calculator("7net-omni", device="cpu")
+        assert "sevennet_task" in str(exc.value)
+        assert "oc20" in str(exc.value)
+
+    def test_single_task_sevennet_needs_no_task(self):
+        from unittest.mock import MagicMock
+        fake_cls = MagicMock()
+        with patch("mliprun.cli.utils._load_sevenn_calculator",
+                   return_value=fake_cls):
+            build_calculator("7net-0", device="cpu")
+        fake_cls.assert_called_once_with("7net-0", device="cpu")
+
+    def test_plain_mace_needs_no_head(self):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        with patch("mliprun.cli.utils._load_mace_mp", return_value=fake):
+            build_calculator("mace", device="cpu")
+        fake.assert_called_once_with(model="medium", device="cpu")

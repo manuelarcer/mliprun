@@ -24,16 +24,22 @@ MLIP_HELP = (
 )
 
 MACE_HEAD_HELP = (
-    "Head selection for multi-head MACE foundation models (mace-mh-*). One of "
-    "'omat_pbe' (default; PBE bulk inorganic), 'oc20_usemppbe' (catalysis on "
-    "surfaces), 'matpes_r2scan' (r2SCAN materials), 'mp_pbe_refit_add', "
-    "'omol' (molecules), 'spice_wB97M' (organic). Ignored for non-MH MACE."
+    "Head selection for multi-head MACE foundation models (mace-mh-*). "
+    "Required for those models, with no default: the heads are independent "
+    "fine-tunes with independent energy zeros. One of 'omat_pbe' (PBE bulk "
+    "inorganic), 'oc20_usemppbe' (catalysis on surfaces), 'matpes_r2scan' "
+    "(r2SCAN materials), 'mp_pbe_refit_add', 'omol' (molecules), "
+    "'spice_wB97M' (organic). Rejected for plain 'mace', which is "
+    "single-head, and ignored for non-MACE models."
 )
 
 UMA_TASK_HELP = (
-    "UMA task head: 'omat' (default; bulk inorganic materials), 'oc20' "
-    "(catalysis on surfaces), 'omol' (molecules), or 'odac' (ODAC dataset). "
-    "Ignored for non-UMA models."
+    "UMA task head. Required for every 'uma-*' model, with no default: the "
+    "heads are independent fine-tunes with independent energy zeros, so a "
+    "guessed head silently changes the level of theory. One of 'omat' (bulk "
+    "inorganic materials), 'omc' (molecular crystals), 'omol' (molecules), "
+    "'oc20' (catalysis on surfaces), 'oc22', 'oc25', or 'odac' (ODAC "
+    "dataset). Ignored for non-UMA models."
 )
 
 SEVENNET_TASK_HELP = (
@@ -172,6 +178,24 @@ _SEVENNET_MODELS: dict[str, tuple[str, ...]] = {
     "7net-0": (),
     "7net-0_22may2024": (),
 }
+
+#: UMA task heads, read from uma-s-1p2's own task registry on 2026-09-01
+#: (fairchem-core 2.19.0): the set of datasets across `predict_unit.tasks`.
+#: The previous --uma-task help listed only omat/oc20/omol/odac; the model
+#: carries three more. Like SevenNet tasks and MACE heads, these are
+#: independent fine-tunes with independent energy zeros (CANON C1/C3), so
+#: the task is required and never defaulted.
+_UMA_TASKS = ("omat", "omc", "omol", "oc20", "oc22", "oc25", "odac")
+
+#: UMA tags whose task list is known to match `_UMA_TASKS`. A `uma-*` tag
+#: outside this set still requires a task, but its value is forwarded
+#: unvalidated -- a newer checkpoint may carry heads this table has not seen.
+_KNOWN_UMA_MODELS = ("uma-s-1p2", "uma-s-1p1", "uma-m-1p1")
+
+#: Heads carried by the multi-head MACE foundation checkpoints, read from
+#: mace-mh-1's `heads` attribute on 2026-09-01 (mace-torch 0.3.15).
+_MACE_MH_HEADS = ("omat_pbe", "mp_pbe_refit_add", "matpes_r2scan",
+                  "oc20_usemppbe", "omol", "spice_wB97M")
 
 
 def _recipe_for_tag(mlip: str) -> str:
@@ -331,7 +355,71 @@ def _validate_sevennet_task(mlip: str, sevennet_task: Optional[str]) -> None:
         )
 
 
-def validate_mlip(mlip: str, sevennet_task: Optional[str] = None) -> None:
+def _validate_uma_task(mlip: str, uma_task: Optional[str]) -> None:
+    """Check a UMA tag against its task list.
+
+    Every UMA model is multi-head, so the task is always required. The value
+    is only checked for tags whose head list has been verified; a newer
+    checkpoint may carry heads this table has not seen, and rejecting a valid
+    one would be worse than not checking it.
+    """
+    if uma_task is None:
+        raise typer.Exit(
+            f"{mlip} is a multi-head model, so --uma-task is required and "
+            f"has no default: the heads are independent fine-tunes with "
+            f"independent energy zeros, and guessing one would silently "
+            f"change the level of theory. Valid tasks: "
+            f"{', '.join(_UMA_TASKS)}."
+        )
+
+    if mlip not in _KNOWN_UMA_MODELS:
+        typer.echo(
+            f"Warning: '{mlip}' is not a UMA tag mliprun has verified, so "
+            f"the task '{uma_task}' can be validated only by FAIRChem "
+            f"itself. Verified tags: {', '.join(_KNOWN_UMA_MODELS)}."
+        )
+        return
+
+    if uma_task not in _UMA_TASKS:
+        raise typer.Exit(
+            f"Unknown UMA task '{uma_task}' for {mlip}. "
+            f"Valid tasks: {', '.join(_UMA_TASKS)}."
+        )
+
+
+def _validate_mace_head(mlip: str, mace_head: Optional[str]) -> None:
+    """Check a MACE tag against its head list.
+
+    Plain ``mace`` (MACE-MP-0) is single-head and rejects the flag, the same
+    way a single-task SevenNet tag rejects ``--sevennet-task``.
+    """
+    if not mlip.startswith("mace-mh-"):
+        if mace_head is not None:
+            raise typer.Exit(
+                f"{mlip} is a single-head model: it has no selectable head, "
+                f"but --mace-head {mace_head} was given. Drop the flag."
+            )
+        return
+
+    if mace_head is None:
+        raise typer.Exit(
+            f"{mlip} is a multi-head model, so --mace-head is required and "
+            f"has no default: the heads are independent fine-tunes with "
+            f"independent energy zeros, and guessing one would silently "
+            f"change the level of theory. Valid heads: "
+            f"{', '.join(_MACE_MH_HEADS)}."
+        )
+
+    if mace_head not in _MACE_MH_HEADS:
+        raise typer.Exit(
+            f"Unknown MACE head '{mace_head}' for {mlip}. "
+            f"Valid heads: {', '.join(_MACE_MH_HEADS)}."
+        )
+
+
+def validate_mlip(mlip: str, sevennet_task: Optional[str] = None,
+                  uma_task: Optional[str] = None,
+                  mace_head: Optional[str] = None) -> None:
     """Validate that the specified MLIP -- and its task, if any -- is usable.
 
     Parameters
@@ -341,6 +429,11 @@ def validate_mlip(mlip: str, sevennet_task: Optional[str] = None) -> None:
     sevennet_task : str, optional
         SevenNet inference task. Required for multi-task SevenNet tags,
         rejected for single-task ones, ignored for every other MLIP.
+    uma_task : str, optional
+        UMA task head. Required for every ``uma-*`` tag.
+    mace_head : str, optional
+        MACE head. Required for ``mace-mh-*`` tags, rejected for plain
+        ``mace``.
 
     Raises
     ------
@@ -357,14 +450,20 @@ def validate_mlip(mlip: str, sevennet_task: Optional[str] = None) -> None:
         _validate_sevennet_task(mlip, sevennet_task)
         return
 
-    if mlip == "mace" and not MACE_AVAILABLE:
-        raise typer.Exit(_install_message("MACE", mlip))
-    elif mlip.startswith("uma-") and not FAIRCHEM_AVAILABLE:
-        raise typer.Exit(_install_message("UMA", mlip))
-    elif mlip == "chgnet" and not CHGNET_AVAILABLE:
+    if mlip.startswith("uma-"):
+        if not FAIRCHEM_AVAILABLE:
+            raise typer.Exit(_install_message("UMA", mlip))
+        _validate_uma_task(mlip, uma_task)
+        return
+
+    if mlip == "mace" or mlip.startswith("mace-mh-"):
+        if not MACE_AVAILABLE:
+            raise typer.Exit(_install_message("MACE", mlip))
+        _validate_mace_head(mlip, mace_head)
+        return
+
+    if mlip == "chgnet" and not CHGNET_AVAILABLE:
         raise typer.Exit(_install_message("CHGNet", mlip))
-    elif mlip.startswith("mace-mh-") and not MACE_AVAILABLE:
-        raise typer.Exit(_install_message("MACE", mlip))
     elif not (mlip in ["mace", "chgnet"]
               or mlip.startswith("uma-")
               or mlip.startswith("mace-mh-")):
@@ -376,7 +475,9 @@ def validate_mlip(mlip: str, sevennet_task: Optional[str] = None) -> None:
         )
 
 
-def resolve_mlip(mlip: str, sevennet_task: Optional[str] = None) -> str:
+def resolve_mlip(mlip: str, sevennet_task: Optional[str] = None,
+                 uma_task: Optional[str] = None,
+                 mace_head: Optional[str] = None) -> str:
     """Detect or validate MLIP and echo the result.
 
     Combines detect + validate + user echo into a single helper so every
@@ -386,8 +487,8 @@ def resolve_mlip(mlip: str, sevennet_task: Optional[str] = None) -> str:
     ----------
     mlip : str
         MLIP model name or ``"auto"`` for auto-detection.
-    sevennet_task : str, optional
-        SevenNet inference task, forwarded to :func:`validate_mlip`.
+    sevennet_task, uma_task, mace_head : str, optional
+        Head/task selections, forwarded to :func:`validate_mlip`.
 
     Returns
     -------
@@ -400,9 +501,9 @@ def resolve_mlip(mlip: str, sevennet_task: Optional[str] = None) -> str:
         # An auto-detected tag still has to satisfy its own task rules: the
         # SevenNet pick is multi-task, and skipping this would let it through
         # to a far worse error inside SevenNet itself.
-        validate_mlip(mlip, sevennet_task)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
     else:
-        validate_mlip(mlip, sevennet_task)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
         typer.echo(f"Using MLIP: {mlip}")
     return mlip
 
@@ -503,8 +604,9 @@ def _ensure_mace_foundation_checkpoint(tag: str) -> str:
     return target
 
 
-def build_calculator(mlip: str, uma_task: str = "omat",
-                     device: str = "auto", mace_head: str = "omat_pbe",
+def build_calculator(mlip: str, uma_task: Optional[str] = None,
+                     device: str = "auto",
+                     mace_head: Optional[str] = None,
                      sevennet_task: Optional[str] = None):
     """Build and return an ASE calculator for the given MLIP choice.
 
@@ -538,6 +640,14 @@ def build_calculator(mlip: str, uma_task: str = "omat",
     -------
     ase.calculators.calculator.Calculator
         The ready-to-use ASE calculator. Assign it to ``atoms.calc``.
+
+    Raises
+    ------
+    ValueError
+        If a multi-head model is requested with no head. `validate_mlip`
+        catches this earlier on the CLI path, but direct API callers never
+        reach it, so the guard is repeated here rather than left to the
+        upstream package to fail on.
     """
     device = _resolve_device(device)
 
@@ -546,11 +656,27 @@ def build_calculator(mlip: str, uma_task: str = "omat",
         return mace_mp(model="medium", device=device)
 
     elif mlip.startswith("mace-mh-"):
+        if mace_head is None:
+            raise ValueError(
+                f"{mlip} is a multi-head MACE model and needs an explicit "
+                f"head: the heads are independent fine-tunes with independent "
+                f"energy zeros, so one cannot be guessed. Pass mace_head=... "
+                f"(CLI: --mace-head). Valid heads: "
+                f"{', '.join(_MACE_MH_HEADS)}."
+            )
         from mace.calculators import MACECalculator
         ckpt = _ensure_mace_foundation_checkpoint(mlip)
         return MACECalculator(model_paths=ckpt, device=device, head=mace_head)
 
     elif mlip.startswith("7net"):
+        if sevennet_task is None and _SEVENNET_MODELS.get(mlip, ()):
+            raise ValueError(
+                f"{mlip} is a multi-task SevenNet model and needs an explicit "
+                f"task: its tasks are independent fine-tunes with independent "
+                f"energy zeros, so one cannot be guessed. Pass "
+                f"sevennet_task=... (CLI: --sevennet-task). Valid tasks: "
+                f"{', '.join(_SEVENNET_MODELS[mlip])}."
+            )
         SevenNetCalculator = _load_sevenn_calculator()
         if sevennet_task is None:
             # Single-task checkpoints reject `modal`; omit it rather than
@@ -559,6 +685,13 @@ def build_calculator(mlip: str, uma_task: str = "omat",
         return SevenNetCalculator(mlip, modal=sevennet_task, device=device)
 
     elif mlip.startswith("uma-"):
+        if uma_task is None:
+            raise ValueError(
+                f"{mlip} is a multi-head UMA model and needs an explicit "
+                f"task: the heads are independent fine-tunes with independent "
+                f"energy zeros, so one cannot be guessed. Pass uma_task=... "
+                f"(CLI: --uma-task). Valid tasks: {', '.join(_UMA_TASKS)}."
+            )
         pretrained_mlip, FAIRChemCalculator = _load_fairchem()
         predictor = pretrained_mlip.get_predict_unit(mlip, device=device)
         return FAIRChemCalculator(predictor, task_name=uma_task)
@@ -570,8 +703,9 @@ def build_calculator(mlip: str, uma_task: str = "omat",
     return None
 
 
-def setup_calculator(atoms, mlip: str, uma_task: str = "omat",
-                     device: str = "auto", mace_head: str = "omat_pbe",
+def setup_calculator(atoms, mlip: str, uma_task: Optional[str] = None,
+                     device: str = "auto",
+                     mace_head: Optional[str] = None,
                      sevennet_task: Optional[str] = None):
     """Attach a freshly built calculator to ``atoms`` based on MLIP choice.
 

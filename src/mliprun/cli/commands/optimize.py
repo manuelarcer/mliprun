@@ -53,9 +53,9 @@ def run(
     ctx: typer.Context,
     structure: Path = typer.Option(..., prompt=True, help="Structure file (.vasp)"),
     mlip: str = typer.Option("auto", help=MLIP_HELP),
-    uma_task: str = typer.Option("omat", help=UMA_TASK_HELP),
+    uma_task: str = typer.Option(None, help=UMA_TASK_HELP),
     device: str = typer.Option("auto", help=DEVICE_HELP),
-    mace_head: str = typer.Option("omat_pbe", help=MACE_HEAD_HELP),
+    mace_head: str = typer.Option(None, help=MACE_HEAD_HELP),
     sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
     optimizer: str = typer.Option("bfgs", help=f"Optimizer algorithm: {', '.join(OPTIMIZER_MAP.keys())}"),
     fmax: float = typer.Option(0.05, help="Force convergence threshold (eV/Å)"),
@@ -86,9 +86,9 @@ def run(
         mlip = detect_mlip()
         typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
         # An auto-detected tag still has to satisfy its own task rules.
-        validate_mlip(mlip, sevennet_task)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
     else:
-        validate_mlip(mlip, sevennet_task)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
         typer.echo(f"🧠 Using MLIP: {mlip}")
 
     # Validate optimizer
@@ -190,9 +190,9 @@ def batch(
              "own *_final.vasp outputs are ignored). Use e.g. 'POSCAR' or "
              "'init.vasp' for a fixed name."),
     mlip: str = typer.Option("auto", help=MLIP_HELP),
-    uma_task: str = typer.Option("omat", help=UMA_TASK_HELP),
+    uma_task: str = typer.Option(None, help=UMA_TASK_HELP),
     device: str = typer.Option("auto", help=DEVICE_HELP),
-    mace_head: str = typer.Option("omat_pbe", help=MACE_HEAD_HELP),
+    mace_head: str = typer.Option(None, help=MACE_HEAD_HELP),
     sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
     optimizer: str = typer.Option("bfgs", help=f"Optimizer algorithm: {', '.join(OPTIMIZER_MAP.keys())}"),
     fmax: float = typer.Option(0.05, help="Force convergence threshold (eV/Å)"),
@@ -232,9 +232,9 @@ def batch(
         mlip = detect_mlip()
         typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
         # An auto-detected tag still has to satisfy its own task rules.
-        validate_mlip(mlip, sevennet_task)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
     else:
-        validate_mlip(mlip, sevennet_task)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
         typer.echo(f"🧠 Using MLIP: {mlip}")
 
     subdirs = sorted(d for d in parent.iterdir() if d.is_dir())

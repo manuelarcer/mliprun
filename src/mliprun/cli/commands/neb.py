@@ -163,8 +163,10 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
     # Resolve parameters (override or loaded)
     params = {
         "mlip": mlip or loaded_params["mlip"],
-        "uma_task": uma_task or loaded_params.get("uma_task", "omat"),
-        "mace_head": mace_head or loaded_params.get("mace_head", "omat_pbe"),
+        # No "<default>" fallbacks: a head must never be invented on
+        # restart, or the band resumes on a different energy zero (C3).
+        "uma_task": uma_task or loaded_params.get("uma_task"),
+        "mace_head": mace_head or loaded_params.get("mace_head"),
         # No default fallback: a SevenNet task must never be invented on
         # restart, or the band resumes on a different energy zero (C3).
         "sevennet_task": sevennet_task or loaded_params.get("sevennet_task"),
@@ -238,7 +240,6 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
     interp_steps = interp_steps or 100
     fmax = fmax or 0.05
     mlip = mlip or "auto"
-    uma_task = uma_task or "omat"
     log = log or "neb.log"
     k = k or 0.1
     climb = climb if climb is not None else True
@@ -251,7 +252,6 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
     endpoint_optimizer = endpoint_optimizer or "bfgs"
     endpoint_max_steps = endpoint_max_steps or 200
     device = device or "cpu"
-    mace_head = mace_head or "omat_pbe"
 
     atoms_initial = read(initial, format="vasp")
     atoms_final = read(final, format="vasp")
@@ -260,7 +260,7 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
         typer.echo("Error: Initial and final structures must have the same number of atoms.")
         raise typer.Exit(code=1)
 
-    mlip = resolve_mlip(mlip, sevennet_task)
+    mlip = resolve_mlip(mlip, sevennet_task, uma_task, mace_head)
     if mlip.startswith("uma-"):
         typer.echo(f"   UMA task: {uma_task}")
     if mlip.startswith("mace-mh-"):
