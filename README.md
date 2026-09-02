@@ -98,8 +98,8 @@ pip install mace-torch
 # UMA models (FAIRChem) - most accurate, but gated on Hugging Face
 pip install fairchem-core
 
-# SevenNet
-pip install sevenn
+# SevenNet (7net-omni recommended; needs --sevennet-task)
+pip install torch_geometric sevenn
 
 # CHGNet
 pip install chgnet
@@ -112,7 +112,7 @@ mlip doctor
 
 Reports Python/package versions, asetools health, installed MLIP packages, what `--mlip auto` resolves to, and torch/CUDA status. Exits non-zero if no MLIP is installed, so it can be scripted.
 
-> **Note**: With `--mlip auto` (the default), the CLI picks the first available in the order **UMA → MACE → SevenNet → CHGNet**, or you can pass `--mlip <name>` to force a specific one. Prefer one MLIP per environment: the packages pin mutually incompatible torch/e3nn versions, so installing several into one env can silently break — see [ADR 0001](docs/adr/0001-per-mlip-envs.md). UMA is preferred when installed (it is the most accurate), but it is gated on Hugging Face and unusable without an access request — so MACE is placed ahead of SevenNet/CHGNet as the readily-usable fallback. A fresh environment with only `pip install mace-torch` lands on a working model with no access request. UMA's Hugging Face setup is covered in [UMA_USAGE_GUIDE.md](docs/UMA_USAGE_GUIDE.md#2-hugging-face-access).
+> **Note**: With `--mlip auto` (the default), the CLI picks the first available in the order **UMA → MACE → SevenNet → CHGNet**, or you can pass `--mlip <name>` to force a specific one. Note that a SevenNet-only environment resolves to `7net-omni`, which is multi-task and then stops for a missing `--sevennet-task` — deliberately, since guessing a task would silently change the level of theory. Prefer one MLIP per environment: the packages pin mutually incompatible torch/e3nn versions, so installing several into one env can silently break — see [ADR 0001](docs/adr/0001-per-mlip-envs.md). UMA is preferred when installed (it is the most accurate), but it is gated on Hugging Face and unusable without an access request — so MACE is placed ahead of SevenNet/CHGNet as the readily-usable fallback. A fresh environment with only `pip install mace-torch` lands on a working model with no access request. UMA's Hugging Face setup is covered in [UMA_USAGE_GUIDE.md](docs/UMA_USAGE_GUIDE.md#2-hugging-face-access).
 
 ### Windows Setup
 
@@ -133,9 +133,10 @@ The package installs the following entry points:
 
 These apply to `optimize`, `md`, `neb`, `autoneb`, and `benchmark`:
 
-- `--mlip`: Model tag. `auto` (default) picks the first installed in order **UMA → MACE → SevenNet → CHGNet** (UMA preferred when present, MACE as the readily-usable fallback), or pass an explicit tag: any `uma-*` (e.g. `uma-s-1p2`), `mace` (MACE-MP-0), `mace-mh-1` (multi-head foundation), `7net-mf-ompa`, `chgnet`.
+- `--mlip`: Model tag. `auto` (default) picks the first installed in order **UMA → MACE → SevenNet → CHGNet** (UMA preferred when present, MACE as the readily-usable fallback), or pass an explicit tag: any `uma-*` (e.g. `uma-s-1p2`), `mace` (MACE-MP-0), `mace-mh-1` (multi-head foundation), any `7net-*` tag (e.g. `7net-omni`, which requires `--sevennet-task`), `chgnet`.
 - `--uma-task`: Task head for UMA models — `omat` (default, bulk inorganic), `oc20` (catalysis/surfaces), `omol` (molecules), `odac`. Ignored for non-UMA models.
 - `--mace-head`: Head for multi-head MACE models (`mace-mh-*`) — `omat_pbe` (default), `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`. Ignored for plain `mace`.
+- `--sevennet-task`: Inference task for SevenNet models (`modal` in SevenNet's API). **No default** — a multi-task tag without one is an error listing the valid tasks, because the tasks are independent fine-tunes with independent energy zeros. `7net-omni`/`-i8`/`-i12`: `mpa` (PBE+U, general), `oc20` (RPBE, surfaces), `oc22`, `omat24`, `matpes_pbe`, `odac23`, `omol25_low`, `omol25_high`, `spice`, `qcml`, `pet_mad`, `mp_r2scan`, `matpes_r2scan`. `7net-mf-ompa`: `omat24`, `mpa`. `7net-mf-0`: `PBE`, `R2SCAN` (uppercase; names are matched exactly). Rejected for single-task tags (`7net-omat`, `7net-l3i5`, `7net-0`). Ignored for non-SevenNet models.
 - `--device`: `auto` (default; cuda if available, else cpu), `cuda`, or `cpu`. On multi-GPU nodes set `CUDA_VISIBLE_DEVICES` to choose the GPU. (`neb` is the exception: it defaults to `cpu`, so pass `--device cuda` explicitly for GPU NEB runs.)
 - `--plot / --no-plot`: write PNG figures of the results. **Off by default** (plotting is opt-in) — the CSV data is always written, so pass `--plot` only when you want the figures. Applies to `optimize`, `md`, and `neb`.
 
@@ -150,7 +151,7 @@ optimize run --structure path/to/structure.vasp
 ```
 
 **Key options:**
-- `--mlip`: Model choice (default: `auto`; explicit options include `uma-s-1p2`, `mace`, `7net-mf-ompa`, `chgnet`)
+- `--mlip`: Model choice (default: `auto`; explicit options include `uma-s-1p2`, `mace`, `7net-omni`, `chgnet`)
 - `--optimizer`: Algorithm (default: `bfgs`; also `fire`, `lbfgs`, `bfgsls`, `gpmin`, `mdmin`)
 - `--fmax`: Force convergence threshold in eV/Å (default: `0.05`)
 - `--max-steps`: Maximum optimization steps (default: `200`)
@@ -328,7 +329,7 @@ Extract and visualize results from a completed AutoNEB calculation:
 benchmark run --structure path/to/structure.vasp
 ```
 
-Times a single ``get_potential_energy()`` call for each MLIP installed in the current environment (UMA, SevenNet, MACE, CHGNet). Runs in-process — no working-directory or external script dependency.
+Times a single ``get_potential_energy()`` call for each MLIP installed in the current environment (UMA, SevenNet, MACE, CHGNet). SevenNet joins the auto-detected list only when `--sevennet-task` is given; without one it is skipped with a printed note, rather than benchmarked under an assumed task. Runs in-process — no working-directory or external script dependency.
 
 **Key options:**
 - `--models`: Comma-separated MLIP tags to benchmark (default: every installed MLIP).

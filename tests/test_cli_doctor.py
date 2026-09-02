@@ -190,3 +190,35 @@ class TestTorchInfoBranches:
         version, cuda = doctor_cmd._torch_info()
         assert version == "2.5.0"
         assert "CPU only" in cuda
+
+
+class TestDoctorAgreesWithDetectMlip:
+    """doctor keeps its own (distribution, tag) table for the `--mlip auto`
+    line. It drifted once already: after auto-detect moved to 7net-omni,
+    doctor still reported 7net-mf-ompa, so the diagnostic tool contradicted
+    the tool it diagnoses. This test ties the two together."""
+
+    def test_every_doctor_tag_matches_what_detect_mlip_returns(self):
+        from unittest.mock import patch
+        from mliprun.cli.commands.doctor import _MLIP_PACKAGES
+        from mliprun.cli.utils import detect_mlip
+
+        flag_for = {
+            "fairchem-core": "FAIRCHEM_AVAILABLE",
+            "mace-torch": "MACE_AVAILABLE",
+            "sevenn": "SEVENN_AVAILABLE",
+            "chgnet": "CHGNET_AVAILABLE",
+        }
+        for dist, tag in _MLIP_PACKAGES:
+            patches = {name: (name == flag_for[dist])
+                       for name in flag_for.values()}
+            with patch.multiple("mliprun.cli.utils", **patches):
+                assert detect_mlip() == tag, (
+                    f"doctor reports '{tag}' for a {dist}-only env, but "
+                    f"detect_mlip() returns '{detect_mlip()}'"
+                )
+
+    def test_doctor_table_covers_every_availability_flag(self):
+        from mliprun.cli.commands.doctor import _MLIP_PACKAGES
+        assert {d for d, _ in _MLIP_PACKAGES} == {
+            "fairchem-core", "mace-torch", "sevenn", "chgnet"}

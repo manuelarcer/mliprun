@@ -37,11 +37,11 @@ setup_calculator(atoms, mlip="uma-s-1p2", uma_task="omat")  # mutates atoms.calc
 
 - `mlip="mace"` → MACE-MP-0 medium
 - `mlip="mace-mh-1"` (or any `mace-mh-*`) → multi-head MACE foundation model; `mace_head` selects the head (`omat_pbe` default, `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`)
-- `mlip="7net-mf-ompa"` → SevenNet 7net-mf-ompa (mpa modal)
+- `mlip="7net-omni"` (or any `7net-*`) → SevenNet; `sevennet_task` selects the task, which SevenNet's API calls the `modal`. Required for multi-task checkpoints (`7net-omni`, `7net-omni-i8`, `7net-omni-i12`, `7net-mf-ompa`, `7net-mf-0`) and rejected for single-task ones (`7net-omat`, `7net-l3i5`, `7net-0`). No default: the tasks have independent energy zeros.
 - `mlip="uma-..."` → any FAIRChem UMA tag, with `uma_task` selecting the head (`omat`, `oc20`, `omol`, `odac`)
 - `mlip="chgnet"` → CHGNet default model
 
-`device` selects the compute device (`"auto"` → cuda if available else cpu, or force `"cuda"` / `"cpu"`). `mace_head` is ignored for non-MH models; `uma_task` is ignored for non-UMA models.
+`device` selects the compute device (`"auto"` → cuda if available else cpu, or force `"cuda"` / `"cpu"`). `mace_head` is ignored for non-MH models; `uma_task` is ignored for non-UMA models; `sevennet_task` is ignored for non-SevenNet models.
 
 To relax or evaluate **many** structures, load the model once with `build_calculator` and reuse the returned calculator, instead of calling `setup_calculator` (which rebuilds it) per structure. This is what `optimize batch` does internally:
 
@@ -59,7 +59,7 @@ Auto-detection is also exposed:
 ```python
 from mliprun.cli.utils import detect_mlip, resolve_mlip
 
-detect_mlip()              # returns first installed, in order: "uma-s-1p2" / "mace" / "7net-mf-ompa" / "chgnet"
+detect_mlip()              # returns first installed, in order: "uma-s-1p2" / "mace" / "7net-omni" / "chgnet"
 resolve_mlip("auto")       # detect + echo to stdout — convenience wrapper
 resolve_mlip("uma-s-1p2")  # validate availability + echo
 ```
@@ -210,7 +210,7 @@ neb.plot_results(df)
 neb.export_poscars()
 ```
 
-`CustomNEB` itself wires the FAIRChem / MACE / SevenNet / CHGNet calculator onto each image, so you do not need to call `setup_calculator` separately.
+`CustomNEB` itself wires the FAIRChem / MACE / SevenNet / CHGNet calculator onto each image, so you do not need to call `setup_calculator` separately. For a multi-task SevenNet checkpoint it raises `ValueError` when `sevennet_task` is unset, rather than letting the failure surface from inside SevenNet.
 
 ### Constructor
 
@@ -221,8 +221,9 @@ neb.export_poscars()
 | `interp_fmax` | `0.1` | IDPP interpolation force threshold |
 | `interp_steps` | `1000` | IDPP iteration limit |
 | `fmax` | `0.05` | NEB convergence threshold |
-| `mlip` | `"7net-mf-ompa"` | Pass `"uma-s-1p2"` etc. as needed |
+| `mlip` | `"7net-mf-ompa"` | A historical default, and a multi-task SevenNet tag: leaving it means also passing `sevennet_task`, or the constructor's calculator setup raises. Pass `"uma-s-1p2"` etc. as needed. |
 | `uma_task` | `"omat"` | Used only when `mlip` starts with `"uma-"` |
+| `sevennet_task` | `None` | Used only when `mlip` starts with `"7net"`. Required for multi-task checkpoints — no default, because the tasks have independent energy zeros. |
 | `output_dir` | `"."` | Created if missing |
 | `relax_atoms` | `None` | List of indices to keep mobile (highly-constrained mode). All others are constrained with `FixAtoms`. IDPP is skipped in this mode. |
 | `logfile` | `"neb.log"` | NEB iteration log filename |

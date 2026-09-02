@@ -8,7 +8,7 @@ from ase.optimize import FIRE
 from mliprun.core.neb import CustomNEB
 from mliprun.core.params_io import write_parameters_file, write_endpoint_results
 from mliprun.core.run_record import RunContext
-from mliprun.cli.utils import MACE_HEAD_HELP, MLIP_HELP, UMA_TASK_HELP, param_sources_from_ctx, parse_relax_atoms, resolve_mlip
+from mliprun.cli.utils import MACE_HEAD_HELP, MLIP_HELP, SEVENNET_TASK_HELP, UMA_TASK_HELP, param_sources_from_ctx, parse_relax_atoms, resolve_mlip
 
 app = typer.Typer()
 
@@ -24,6 +24,7 @@ def run(
     mlip: str = typer.Option("auto", help=MLIP_HELP),
     uma_task: str = typer.Option("omat", help=UMA_TASK_HELP),
     mace_head: str = typer.Option("omat_pbe", help=MACE_HEAD_HELP),
+    sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
     climb: bool = typer.Option(True, help="Enable climbing image NEB"),
     k: float = typer.Option(0.1, help="Spring constant"),
     space_energy_ratio: float = typer.Option(0.5, help="Preference for geometric (1.0) vs energy (0.0) gaps"),
@@ -49,11 +50,13 @@ def run(
         typer.echo("Error: Initial and final structures must have the same number of atoms.")
         raise typer.Exit(code=1)
 
-    mlip = resolve_mlip(mlip)
+    mlip = resolve_mlip(mlip, sevennet_task)
     if mlip.startswith("uma-"):
         typer.echo(f"   UMA task: {uma_task}")
     if mlip.startswith("mace-mh-"):
         typer.echo(f"   MACE head: {mace_head}")
+    if mlip.startswith("7net"):
+        typer.echo(f"   SevenNet task: {sevennet_task}")
 
     output_dir = Path.cwd()
 
@@ -88,6 +91,7 @@ def run(
         "MLIP model:": mlip,
         **({f"UMA task:": uma_task} if mlip.startswith("uma-") else {}),
         **({f"MACE head:": mace_head} if mlip.startswith("mace-mh-") else {}),
+        **({f"SevenNet task:": sevennet_task} if mlip.startswith("7net") else {}),
         "Initial:": str(initial),
         "Final:": str(final),
         "n_max:": n_max,
@@ -116,6 +120,7 @@ def run(
         initial=atoms_initial, final=atoms_final,
         num_images=5,  # Dummy value, not used by AutoNEB
         fmax=fmax, mlip=mlip, uma_task=uma_task, mace_head=mace_head,
+        sevennet_task=sevennet_task,
         output_dir=output_dir, relax_atoms=relax_indices,
     )
 

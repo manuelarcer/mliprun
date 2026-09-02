@@ -39,9 +39,15 @@ Rules that are easy to get wrong:
 3. **UMA is gated.** fairchem-core needs a Hugging Face access request before
    any UMA model runs — see `docs/UMA_USAGE_GUIDE.md`. MACE works immediately,
    which is why `--mlip auto` falls back to it (order: UMA → MACE → SevenNet
-   → CHGNet).
-4. **Model weights download on first use** into `~/.cache/mace/` (and the
-   Hugging Face cache for UMA). Air-gapped compute nodes need the checkpoint
+   → CHGNet). **The "a fresh env lands on a runnable default" promise does not
+   hold for SevenNet**, deliberately: a SevenNet-only env resolves to
+   `7net-omni`, which is multi-task, and the run then stops for a missing
+   `--sevennet-task`. SevenNet tasks are independent fine-tunes with
+   independent energy zeros, so guessing one would silently change the level
+   of theory; a loud stop is recoverable where a wrong energy zero is not.
+4. **Model weights download on first use** into `~/.cache/mace/` (the Hugging
+   Face cache for UMA; for SevenNet, into the installed package itself under
+   `site-packages/sevenn/pretrained_potentials/`, ~103 MB per checkpoint). Air-gapped compute nodes need the checkpoint
    pre-fetched — commands are in the install recipes.
 
 `mlip doctor` reports all of the above states (versions, asetools health,

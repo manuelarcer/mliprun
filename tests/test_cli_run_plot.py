@@ -108,7 +108,7 @@ class TestNebRunPlot:
         # NEB builds a calculator per image via CustomNEB.setup_calculator(),
         # and resolves the MLIP name up front; mock both so no model is needed.
         monkeypatch.setattr(CustomNEB, "setup_calculator", lambda self, *a, **k: EMT())
-        monkeypatch.setattr(neb_cmd, "resolve_mlip", lambda m=None: "mace")
+        monkeypatch.setattr(neb_cmd, "resolve_mlip", lambda m=None, *a, **k: "mace")
 
     def _pair(self, tmp_path):
         initial = bulk("Cu", "fcc", a=3.6) * (2, 2, 2)
