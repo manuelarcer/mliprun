@@ -468,3 +468,41 @@ class TestValidateMaceHead:
 
     def test_plain_mace_without_a_head_passes(self):
         validate_mlip("mace")
+
+
+class TestBuildCalculatorGuardsTheHead:
+    """validate_mlip only runs on the CLI path. Direct API callers --
+    fa2i-mtc's batch_relax.py calls setup_calculator(**calc_kwargs) and omits
+    the head entirely when the flag was not given -- would otherwise reach
+    FAIRChem/MACE/SevenNet with no head and fail there instead of here."""
+
+    def test_uma_without_task_raises(self):
+        with pytest.raises(ValueError) as exc:
+            build_calculator("uma-s-1p2", device="cpu")
+        assert "uma_task" in str(exc.value)
+
+    def test_mace_mh_without_head_raises(self):
+        with pytest.raises(ValueError) as exc:
+            build_calculator("mace-mh-1", device="cpu")
+        assert "mace_head" in str(exc.value)
+
+    def test_multi_task_sevennet_without_task_raises(self):
+        with pytest.raises(ValueError) as exc:
+            build_calculator("7net-omni", device="cpu")
+        assert "sevennet_task" in str(exc.value)
+        assert "oc20" in str(exc.value)
+
+    def test_single_task_sevennet_needs_no_task(self):
+        from unittest.mock import MagicMock
+        fake_cls = MagicMock()
+        with patch("mliprun.cli.utils._load_sevenn_calculator",
+                   return_value=fake_cls):
+            build_calculator("7net-0", device="cpu")
+        fake_cls.assert_called_once_with("7net-0", device="cpu")
+
+    def test_plain_mace_needs_no_head(self):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        with patch("mliprun.cli.utils._load_mace_mp", return_value=fake):
+            build_calculator("mace", device="cpu")
+        fake.assert_called_once_with(model="medium", device="cpu")

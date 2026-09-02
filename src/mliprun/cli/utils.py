@@ -640,6 +640,14 @@ def build_calculator(mlip: str, uma_task: Optional[str] = None,
     -------
     ase.calculators.calculator.Calculator
         The ready-to-use ASE calculator. Assign it to ``atoms.calc``.
+
+    Raises
+    ------
+    ValueError
+        If a multi-head model is requested with no head. `validate_mlip`
+        catches this earlier on the CLI path, but direct API callers never
+        reach it, so the guard is repeated here rather than left to the
+        upstream package to fail on.
     """
     device = _resolve_device(device)
 
@@ -648,11 +656,27 @@ def build_calculator(mlip: str, uma_task: Optional[str] = None,
         return mace_mp(model="medium", device=device)
 
     elif mlip.startswith("mace-mh-"):
+        if mace_head is None:
+            raise ValueError(
+                f"{mlip} is a multi-head MACE model and needs an explicit "
+                f"head: the heads are independent fine-tunes with independent "
+                f"energy zeros, so one cannot be guessed. Pass mace_head=... "
+                f"(CLI: --mace-head). Valid heads: "
+                f"{', '.join(_MACE_MH_HEADS)}."
+            )
         from mace.calculators import MACECalculator
         ckpt = _ensure_mace_foundation_checkpoint(mlip)
         return MACECalculator(model_paths=ckpt, device=device, head=mace_head)
 
     elif mlip.startswith("7net"):
+        if sevennet_task is None and _SEVENNET_MODELS.get(mlip, ()):
+            raise ValueError(
+                f"{mlip} is a multi-task SevenNet model and needs an explicit "
+                f"task: its tasks are independent fine-tunes with independent "
+                f"energy zeros, so one cannot be guessed. Pass "
+                f"sevennet_task=... (CLI: --sevennet-task). Valid tasks: "
+                f"{', '.join(_SEVENNET_MODELS[mlip])}."
+            )
         SevenNetCalculator = _load_sevenn_calculator()
         if sevennet_task is None:
             # Single-task checkpoints reject `modal`; omit it rather than
@@ -661,6 +685,13 @@ def build_calculator(mlip: str, uma_task: Optional[str] = None,
         return SevenNetCalculator(mlip, modal=sevennet_task, device=device)
 
     elif mlip.startswith("uma-"):
+        if uma_task is None:
+            raise ValueError(
+                f"{mlip} is a multi-head UMA model and needs an explicit "
+                f"task: the heads are independent fine-tunes with independent "
+                f"energy zeros, so one cannot be guessed. Pass uma_task=... "
+                f"(CLI: --uma-task). Valid tasks: {', '.join(_UMA_TASKS)}."
+            )
         pretrained_mlip, FAIRChemCalculator = _load_fairchem()
         predictor = pretrained_mlip.get_predict_unit(mlip, device=device)
         return FAIRChemCalculator(predictor, task_name=uma_task)
