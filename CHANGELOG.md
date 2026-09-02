@@ -51,6 +51,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   fact, a failed launch is. The same rule now applies to `--mlip auto`, to
   library callers (`CustomNEB` raises `ValueError`), and to `benchmark run`,
   where UMA joins the auto-detected list only when a task is given.
+  Verified on cos-cluster (NVIDIA L40S) against the real `fairchem-core`
+  2.19.0 and `mace-torch` 0.3.15 environments: all three error paths exit
+  non-zero (UMA with no task, `mace-mh-1` with no head, plain `mace` given a
+  head), and `optimize run` completes with `--uma-task oc20` and with
+  `--mace-head oc20_usemppbe`, each run record carrying its own head and
+  nulling the other two.
 - **The `--uma-task` list was wrong.** It advertised `omat`, `oc20`, `omol`,
   `odac`; `uma-s-1p2`'s own task registry (fairchem-core 2.19.0) also carries
   `omc`, `oc22` and `oc25`. All seven are accepted and documented. The MACE
