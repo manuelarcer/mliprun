@@ -16,6 +16,13 @@
 # warns, it does not refuse), but the spread it reports becomes a comparison
 # BETWEEN levels of theory, not an error bar. The example below is
 # deliberately same-level: every member is RPBE/OC20.
+#
+# Each member's tag/head/task combination is checked when this file is read,
+# by the same rule `mlip optimize run` applies: a head on single-head `mace`,
+# a task on a single-task `7net-*` tag, or a missing or unknown head/task on a
+# multi-head tag is rejected here, naming the member. The calculator would
+# otherwise ignore the extra key while the member's name, its CSV column and
+# its provenance all described a head that never ran.
 
 members:
   - env:  /scratchb/juar/envs/uma

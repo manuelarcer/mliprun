@@ -124,7 +124,8 @@ config = load_committee("committee.yaml")
 members = [
     RemoteMember(spec.name, spec.python_exe, mlip=spec.mlip,
                  uma_task=spec.uma_task, mace_head=spec.mace_head,
-                 sevennet_task=spec.sevennet_task, gpu=spec.gpu,
+                 sevennet_task=spec.sevennet_task,
+                 device=spec.device, gpu=spec.gpu,
                  log_path=f"committee_{spec.name}.log")
     for spec in config.members
 ]
@@ -140,6 +141,12 @@ with CommitteeCalculator(members, mixed_theory=config.mixed_theory,
                       model_name="committee", committee=committee,
                       committee_config=config)
 ```
+
+Pass every field of the `spec` through, `device=spec.device` included.
+`RemoteMember` defaults `device` to `"auto"`, so dropping it silently discards
+a per-member `device:` from `committee.yaml` while the run record still reports
+the declared value — a record that says `cpu` for a member that ran on the
+default device.
 
 The `with` block is the teardown contract, not a convenience: each member is
 a subprocess holding a loaded model (and, on GPU, a CUDA context). A
@@ -158,11 +165,25 @@ rejects (fairchem's UMA calculator raises `MixedPBCError` on a
 should fail in the first seconds, not deep into an overnight run.
 
 `load_committee` raises `mliprun.core.committee.config.CommitteeConfigError`
-for anything wrong with the file itself (missing env, unknown key, fewer
-than two members). It does not re-check whether a tag needs a task or head:
-that is enforced inside each member's own env when it builds its
-calculator, so a missing task fails at member start with the same message a
-single-model run would print.
+for anything wrong with the file itself (missing env, unknown key, fewer than
+two members) **and** for any head/task combination the CLI's `validate_mlip`
+rejects: a head on single-head `mace`, a task on a single-task `7net-*` tag, a
+missing or unknown head on `mace-mh-*`, a missing or unknown task on a
+verified `uma-*` tag. Those combinations used to be accepted and then ignored
+by the calculator, which named the member, its CSV column and its provenance
+block after a head or task that never ran. Unregistered `uma-*` and `7net-*`
+tags still forward their task unchecked, exactly as the CLI does, so a newer
+checkpoint works without a code change; the level then resolves to `unknown`,
+which flags the committee as mixed. What `load_committee` does *not* check is
+whether the member's MLIP package is installed — only that member's own env
+can answer that, and it does, at member start.
+
+`committee.start()` returns `{member name: versions}` and keeps the same dict
+on `committee.member_versions`: the interpreter, ASE, torch and MLIP package
+each member *measured* inside its own env. `run_optimization` merges it into
+`provenance.committee.members[i].measured`, alongside the declared values from
+the YAML. If you write your own record, read it from there rather than
+assuming the declared version is the one that loaded.
 
 `config.mixed_theory` is `True` when the members span more than one level of
 theory, or when any member's tag/task is not in the level-of-theory table at
@@ -238,8 +259,8 @@ it in — none of them changes the physics — and all are optional:
 |---------|---------|-------|
 | `uma_task` | `None` | The UMA task head this run used. Recorded only when `model_name` starts with `uma-`. |
 | `mace_head` | `None` | The MACE head this run used. Recorded only when `model_name` starts with `mace-mh-`. |
-| `device_requested` | `"auto"` | The device as asked for. |
-| `device_resolved` | `"auto"` | The device actually used (e.g. `"cuda"`). |
+| `device_requested` | `"auto"` | The device as asked for. Ignored on a committee run — see below. |
+| `device_resolved` | `"auto"` | The device actually used (e.g. `"cuda"`). Ignored on a committee run — see below. |
 | `run_context` | `None` | A `RunContext` declaring the command, batch identity, and where each parameter value came from. Without it every parameter is tagged `unspecified` — mliprun never guesses. |
 
 Pass the same head/task you gave `setup_calculator` / `build_calculator`.

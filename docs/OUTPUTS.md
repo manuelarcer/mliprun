@@ -50,7 +50,9 @@ These also follow `--logfile <name>.log`: `<name>_committee.csv`, `<name>_commit
 A committee is two or more MLIPs, each in its own environment, relaxing the
 same structure together (`optimize run --structure POSCAR --committee
 committee.yaml`). The relaxation follows their **mean** force; the outputs
-below report how much they **disagree**, in eV/Å, as a diagnostic. It is
+below report how much they **disagree**, as a diagnostic. Force disagreement
+(every `sigma_*` column) is in eV/Å; energy disagreement
+(`energy_spread_aligned_eV`) is in eV. It is
 never a substitute for DFT validation. Not supported by `optimize batch`,
 `md`, or `neb`/`autoneb`: committees run through `optimize run` only.
 
@@ -104,6 +106,21 @@ more than the convergence tolerance, the located minimum sits inside the
 committee's own noise. When flagged, the CLI prints one warning naming the
 worst atom.
 
+With `--relax-cell`, the two sides of that comparison are not quite the same
+quantity. `fmax_eV_per_A` then includes the cell virials the cell filter emits
+alongside the atomic forces, because that is what the optimizer's convergence
+test uses, while `sigma_max` is disagreement about **atomic forces only**: the
+members are asked for forces, never for a stress. Read a flag on a cell
+relaxation as "the members disagree about the atomic forces by more than the
+combined force/virial tolerance", not as a like-for-like ratio.
+
+On a run that **failed** (a member rejecting the geometry, a member dying),
+`sigma_max_final_eV_per_A` and the other `*_final_*` fields describe the last
+**successful** evaluation, not the final geometry, because there is no
+converged final geometry to describe. When the run failed before any member
+completed an evaluation, every one of those fields is `null` and `flagged` is
+`false`. `n_steps` says how many steps the trace actually holds.
+
 **The default threshold is uncalibrated.** The probe behind this feature
 measured sigma_F (the same per-atom force disagreement as `sigma_max` /
 `sigma_mean` above) only across members at *different* levels of theory:
@@ -122,7 +139,14 @@ startup, because the level-of-theory table it checks against
 tag/task combination it does not recognise resolves to `unknown`, which also
 counts as possibly mixed. Adding a row to that table is a deliberate act
 that changes whether a committee is reported as same-level, not a way to
-silence the warning. A mixed committee's spread is a comparison *between*
+silence the warning. Every edit to the table bumps `LEVEL_TABLE_VERSION` in
+that same file, and the value is stamped into the run record as
+`provenance.committee.level_table_version`. That exists for the table's one
+*silent* failure mode: an incomplete table announces itself through `unknown`,
+but a **wrong** row does not, because two entries carrying the same label for
+genuinely different datasets simply read as same-level. The stored version
+lets a record written under a later-corrected table be re-judged rather than
+trusted blindly. A mixed committee's spread is a comparison *between*
 levels of theory, not an error bar on one of them: the probe behind this
 feature measured `energy_spread_aligned_eV` at 0.363 eV across an RPBE and a
 PBE member, against 0.001-0.019 eV between members sharing one level.
@@ -149,11 +173,27 @@ number: see [The run record](#the-run-record) below):
 
 - `provenance.committee`: one entry per member (`name`, `mlip`, `uma_task`,
   `mace_head`, `sevennet_task`, `env`, `python`, `device`, `gpu`,
-  `level_of_theory`), plus `levels` (the distinct level-of-theory labels
-  present), `mixed_theory`, `config_sha256`, and `config_path`.
+  `level_of_theory`, `measured`), plus `levels` (the distinct level-of-theory
+  labels present), `mixed_theory`, `level_table_version`, `config_sha256`, and
+  `config_path`.
+- **Declared vs measured.** Every member field except `measured` is what
+  `committee.yaml` *declared*. `measured` is what that member's own
+  environment *reported back* once its model had loaded: `python` (a version
+  string, where the declared `python` is an interpreter path), `executable`,
+  `mliprun`, `ase`, `torch`, `package` and `package_version`. Any individual
+  entry can be `null` when the lookup failed there (a CHGNet-only env has no
+  `torch`); `measured` itself is `null` when that member never started. The
+  declared value is the intent and the measured value is the fact, and only
+  the second one answers "which MACE version produced this number".
 - `provenance.committee_config_sha256`: the same SHA-256, promoted to a flat
   field, so a later stage that ran a *different* committee shows up as a
   one-string diff without comparing the full member list.
+- `provenance.device_requested` and `provenance.device_resolved` are both the
+  literal string `"committee"`, not a torch device. The driver process
+  resolves no device at all: by design it imports no torch (ADR 0001), so
+  asking it would answer `"cpu"` even when every member is on its own GPU. The
+  authoritative value is per member, in `provenance.committee.members[i]`
+  (`device` and `gpu`).
 - `results.committee_uncertainty`: `n_steps`, `threshold_eV_per_A`,
   `threshold_source` (`"fmax"` or `"explicit"`), `sigma_max_final_eV_per_A`,
   `sigma_mean_final_eV_per_A`, `sigma_max_peak_eV_per_A`, `peak_step`,
