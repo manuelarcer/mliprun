@@ -25,3 +25,31 @@ Each recipe carries a `_Last verified: YYYY-MM-DD (torch X.Y.Z, Python A.B)_` li
 
 - Add per-MLIP CI smoke (build each recipe's env on PR-touch + weekly, import the calculator, compute one energy on a 2-atom cell). Blocker for v1: UMA's HF gated-license flow needs a project-owned HF account and a `HUGGINGFACE_TOKEN` repo secret. Revisit when the project has more than one active contributor or starts cutting releases on a cadence.
 - Per-MLIP managed envs with a subprocess calculator bridge (see "Considered options"). Revisit only if users start asking for "compare MACE and UMA in one run" workflows.
+
+## 2026-09-07: the revisit trigger fired
+
+The last "Deferred" item's trigger fired: users started asking for exactly
+the "compare MACE and UMA in one run" workflow this ADR named. The response
+was the calculator-in-subprocess bridge described in "Considered options"
+above, a committee of MLIPs, each in its own env, driven together through
+`optimize run --committee` (design:
+[`2026-09-04-committee-uncertainty-design.md`](../superpowers/specs/2026-09-04-committee-uncertainty-design.md),
+plan: [`2026-09-04-committee-uncertainty.md`](../superpowers/plans/2026-09-04-committee-uncertainty.md)).
+It shipped for `optimize` at a fraction of the "multi-month rewrite" estimate
+that got the option rejected here, because managed environments stayed out
+of scope: each committee member is still a plain per-MLIP env the user
+builds by hand from the existing install recipes, addressed over a stdin/
+stdout protocol by a worker subprocess running that env's own interpreter.
+`optimize` itself needed no restructuring: everything downstream only ever
+touches `atoms.calc`.
+
+**This ADR's decision is unchanged.** The bridge does not escape the
+one-MLIP-per-env rule; it relies on it. Every member still needs its own
+env built from a single install recipe, and mixing MLIP packages into one
+env remains unsupported and still breaks at least one of them. What changed
+is that a user who wants several MLIPs' opinions on one structure no longer
+has to run them one env at a time by hand and reconcile the outputs
+themselves.
+
+Not extended to `md` or `neb`/`autoneb`, and no batch form (`optimize batch
+--committee`) exists yet. Out of scope for the first cut, not ruled out.

@@ -66,6 +66,13 @@ MLIP is installed — script against its exit code.
   `neb`/`autoneb` write into the current working directory. Full file
   reference: `docs/OUTPUTS.md`.
 - Python API (for scripts/notebooks): `docs/PYTHON_API.md`.
+- `optimize run --committee committee.yaml` relaxes with several MLIPs at
+  once, one per env, and reports their disagreement as an uncertainty.
+  `mliprun` must be installed (`pip install -e .`) in **every** member env:
+  each runs as a worker subprocess driven by its own interpreter, not the
+  driver's. The bridge is POSIX-only (it uses `select` on a pipe), so
+  committees are not supported on Windows. Supported by `optimize run` only.
+  Details: `docs/OUTPUTS.md#committee-outputs`, `docs/PYTHON_API.md`.
 
 ## Testing
 
@@ -83,6 +90,18 @@ pytest                                             # + integration (needs MLIPs)
 - Every test must assert a numerical value or invariant. Loosening a
   tolerance (recording the observed delta) is acceptable; silently changed
   numerics are not — numerical correctness is this package's top priority.
+- The committee suite (`tests/test_committee_*.py`) runs with **no MLIP
+  installed**: every test drives the worker subprocess with the reserved
+  `emt` tag (ASE's built-in EMT calculator), never a real MLIP package.
+- **Parametrize-id trap**: `tests/conftest.py` auto-skips on
+  `"uma" in item.keywords` (and `mace`, `sevenn`). For a parametrized test,
+  pytest adds the callspec id itself as a keyword key, so a parametrize id
+  of *exactly* `uma`, `mace`, or `sevenn` silently skips the whole case,
+  reported as `skipped` rather than a failure, so it is easy to miss. A full
+  model tag such as `uma-s-1p2` is a safe id; only the bare marker names
+  collide. Use a neutral id (`member_a`, `task_a`) and keep the real tag in
+  the test body. After adding parametrized tests, check for `0 skipped`
+  among the new cases, not just a green run.
 
 ## Contribution conventions
 

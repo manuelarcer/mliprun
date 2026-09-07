@@ -33,13 +33,180 @@ This is not always the same directory the user is sitting in. `optimize` and `md
 
 If you change `--logfile <name>.log`, the convergence CSV / PNG and final POSCAR are renamed accordingly: `<name>.log`, `<name>_convergence.csv`, `<name>_convergence.png`, `<name>_final.vasp`. The `CONTCAR` filename is fixed (it does not follow `--logfile`). The trajectory filename comes from `--trajectory`. **Two relaxations launched in the same directory will overwrite each other** unless you set `--logfile` and `--trajectory` to different names.
 
+With `--committee committee.yaml`, two more files are always written (see [Committee outputs](#committee-outputs) below):
+
+| File | Format | Contents |
+|------|--------|----------|
+| `opt_committee.csv` | CSV | Per-step disagreement trace |
+| `opt_committee_peratom.csv` | CSV | Per-atom disagreement at the final geometry |
+| `committee_<member>.log` | text | One per member: that env's library banners and any remote traceback |
+
+These also follow `--logfile <name>.log`: `<name>_committee.csv`, `<name>_committee_peratom.csv`. With `--plot`, `<name>_convergence.png` gains a third panel (see [Committee outputs](#committee-outputs)).
+
+---
+
+## Committee outputs
+
+A committee is two or more MLIPs, each in its own environment, relaxing the
+same structure together (`optimize run --structure POSCAR --committee
+committee.yaml`). The relaxation follows their **mean** force; the outputs
+below report how much they **disagree**, as a diagnostic. Force disagreement
+(every `sigma_*` column) is in eV/Å; energy disagreement
+(`energy_spread_aligned_eV`) is in eV. It is
+never a substitute for DFT validation. Not supported by `optimize batch`,
+`md`, or `neb`/`autoneb`: committees run through `optimize run` only.
+
+### `<name>_committee.csv`
+
+One row per optimizer step, flushed as it is written, so a run that dies at
+step 300 keeps its first 300 rows.
+
+| Column | Meaning |
+|--------|---------|
+| `step` | Optimizer step index |
+| `energy_mean_eV` | Mean of the members' raw energies (the optimizer's objective) |
+| `energy_spread_aligned_eV` | Standard deviation (`ddof=1`, not a range) across members after each member's own step-0 energy is subtracted |
+| `E_<member>_eV` | One column per member, its raw energy |
+| `fmax_eV_per_A` | Max atomic force at this step (same quantity as `opt_convergence.csv`) |
+| `sigma_max_eV_per_A` | Largest per-atom force disagreement across members at this step |
+| `sigma_mean_eV_per_A` | Mean per-atom force disagreement across members at this step |
+| `worst_atom` | Index of the atom with the largest disagreement at this step |
+| `mixed_theory` | Whether the committee spans more than one level of theory (see below); repeated on every row so a downstream filter needs no terminal output |
+
+`energy_mean_eV` is not comparable in absolute terms across MLIP packages,
+because each package carries its own constant energy offset, but
+*differences* along the trajectory are meaningful. `energy_spread_aligned_eV` removes that
+per-member offset before taking the spread, so it is a real energy
+uncertainty; it is exactly zero on step 0 by construction (that is the row
+each member's offset is measured against).
+
+### `<name>_committee_peratom.csv`
+
+`atom_index`, `symbol`, `sigma_eV_per_A`: the per-atom force disagreement at
+the **final** geometry only (not every step: a per-atom field at every step
+would be a large file for little gain, and `worst_atom` above already traces
+where the disagreement lived during the run). This is usually the most
+diagnostically useful committee output. It names *which* atoms the members
+disagree about, typically the adsorbate or the bond being formed or broken,
+not just that they disagree.
+
+### `committee_<member>.log`
+
+One file per declared member (named after the member's `name` in
+`committee.yaml`), receiving that env's stderr: library import banners and,
+if the member fails, its remote traceback. Referenced by path in any
+committee error message.
+
+### The flagging rule
+
+A configuration is **flagged** when `sigma_max` at the *final* geometry
+exceeds a threshold (`--uncertainty-threshold`, eV/Å). Default: `--fmax`
+itself. The reasoning is that if the members disagree about the forces by
+more than the convergence tolerance, the located minimum sits inside the
+committee's own noise. When flagged, the CLI prints one warning naming the
+worst atom.
+
+With `--relax-cell`, the two sides of that comparison are not quite the same
+quantity. `fmax_eV_per_A` then includes the cell virials the cell filter emits
+alongside the atomic forces, because that is what the optimizer's convergence
+test uses, while `sigma_max` is disagreement about **atomic forces only**: the
+members are asked for forces, never for a stress. Read a flag on a cell
+relaxation as "the members disagree about the atomic forces by more than the
+combined force/virial tolerance", not as a like-for-like ratio.
+
+On a run that **failed** (a member rejecting the geometry, a member dying),
+`sigma_max_final_eV_per_A` and the other `*_final_*` fields describe the last
+**successful** evaluation, not the final geometry, because there is no
+converged final geometry to describe. When the run failed before any member
+completed an evaluation, every one of those fields is `null` and `flagged` is
+`false`. `n_steps` says how many steps the trace actually holds.
+
+**The default threshold is uncalibrated.** The probe behind this feature
+measured sigma_F (the same per-atom force disagreement as `sigma_max` /
+`sigma_mean` above) only across members at *different* levels of theory:
+0.25-0.62 eV/Å across the physical range of a CO-height scan, rising to 3.48
+eV/Å at a deliberately strained geometry. No same-level number exists yet
+to set the threshold from. Treat it as a screening aid, not a physically
+derived criterion, until it has been calibrated against real same-level
+runs; that calibration is a natural first use of the feature.
+
+### Mixed levels of theory
+
+`committee.yaml` lets members mix levels of theory (e.g. an RPBE/OC20 head
+alongside a PBE/OMat24 one). mliprun does not refuse this; it warns once, at
+startup, because the level-of-theory table it checks against
+(`src/mliprun/core/committee/config.py`) is deliberately incomplete: any
+tag/task combination it does not recognise resolves to `unknown`, which also
+counts as possibly mixed. Adding a row to that table is a deliberate act
+that changes whether a committee is reported as same-level, not a way to
+silence the warning. Every edit to the table bumps `LEVEL_TABLE_VERSION` in
+that same file, and the value is stamped into the run record as
+`provenance.committee.level_table_version`. That exists for the table's one
+*silent* failure mode: an incomplete table announces itself through `unknown`,
+but a **wrong** row does not, because two entries carrying the same label for
+genuinely different datasets simply read as same-level. The stored version
+lets a record written under a later-corrected table be re-judged rather than
+trusted blindly. A mixed committee's spread is a comparison *between*
+levels of theory, not an error bar on one of them: the probe behind this
+feature measured `energy_spread_aligned_eV` at 0.363 eV across an RPBE and a
+PBE member, against 0.001-0.019 eV between members sharing one level.
+`mixed_theory=True` is stamped on every CSV row and into the run record
+either way.
+
+### The convergence plot
+
+With `--plot`, a committee run's `<name>_convergence.png` gains a third
+panel plotting `sigma_max` and `sigma_mean` per step, on the same fmax
+reference line as the force panel. Its y-axis adapts to what is actually
+being plotted rather than defaulting to log, because a plain log scale
+silently drops non-positive values. It is linear, with an on-panel note,
+when sigma is exactly zero at every step: an exactly-agreeing committee,
+which does happen and must not be hidden by the axis choice. It is
+`symlog` when some steps agree exactly and others don't, and log when every
+value is a real, positive disagreement.
+
+### The run record (schema 4)
+
+`mliprun_run.json` gains the following, present only when a committee
+actually ran (a single-model record is unchanged apart from the schema
+number: see [The run record](#the-run-record) below):
+
+- `provenance.committee`: one entry per member (`name`, `mlip`, `uma_task`,
+  `mace_head`, `sevennet_task`, `env`, `python`, `device`, `gpu`,
+  `level_of_theory`, `measured`), plus `levels` (the distinct level-of-theory
+  labels present), `mixed_theory`, `level_table_version`, `config_sha256`, and
+  `config_path`.
+- **Declared vs measured.** Every member field except `measured` is what
+  `committee.yaml` *declared*. `measured` is what that member's own
+  environment *reported back* once its model had loaded: `python` (a version
+  string, where the declared `python` is an interpreter path), `executable`,
+  `mliprun`, `ase`, `torch`, `package` and `package_version`. Any individual
+  entry can be `null` when the lookup failed there (a CHGNet-only env has no
+  `torch`); `measured` itself is `null` when that member never started. The
+  declared value is the intent and the measured value is the fact, and only
+  the second one answers "which MACE version produced this number".
+- `provenance.committee_config_sha256`: the same SHA-256, promoted to a flat
+  field, so a later stage that ran a *different* committee shows up as a
+  one-string diff without comparing the full member list.
+- `provenance.device_requested` and `provenance.device_resolved` are both the
+  literal string `"committee"`, not a torch device. The driver process
+  resolves no device at all: by design it imports no torch (ADR 0001), so
+  asking it would answer `"cpu"` even when every member is on its own GPU. The
+  authoritative value is per member, in `provenance.committee.members[i]`
+  (`device` and `gpu`).
+- `results.committee_uncertainty`: `n_steps`, `threshold_eV_per_A`,
+  `threshold_source` (`"fmax"` or `"explicit"`), `sigma_max_final_eV_per_A`,
+  `sigma_mean_final_eV_per_A`, `sigma_max_peak_eV_per_A`, `peak_step`,
+  `worst_atom`, `worst_atom_symbol`, `energy_spread_aligned_final_eV`,
+  `flagged`.
+
 ---
 
 ## `optimize batch`
 
 Relaxes a series of structures in one process, **loading the MLIP model only once** and reusing it across every relaxation (avoids the per-run model-load cost). Discovers one input structure per immediate subdirectory of `--parent` (default `--input-name '*.vasp'`, which expects exactly one `.vasp` file per subdir; the platform's own `*_final.vasp` outputs are ignored). Each structure is optimized in place, producing the same per-directory files as `optimize run` (`opt_final.vasp`, `CONTCAR`, etc.).
 
-A structure that errors or fails to converge is logged and the batch continues. Pass `--skip-existing` to skip subdirectories that already contain a `CONTCAR` (resume a partial batch).
+A structure that errors or fails to converge is logged and the batch continues. Pass `--skip-existing` to skip subdirectories that already contain a `CONTCAR` (resume a partial batch). `optimize batch` has no `--committee` option: committees are supported by `optimize run` only.
 
 | File | Format | Contents |
 |------|--------|----------|
@@ -180,7 +347,7 @@ layer — so a script that calls `run_optimization` directly gets one too.
 
 | Key | Meaning |
 |-----|---------|
-| `schema_version` | Currently `2`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head`; in a version-1 record those keys are simply absent, which is not the same as null. |
+| `schema_version` | Currently `4`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)). |
 | `command` | `optimize`, `md`, `neb` or `autoneb`. |
 | `status` | Status of the **latest** stage: `running`, `converged`, `not_converged` or `failed`. A record left saying `running` means the job died without reporting back. |
 | `run.mode` | `one-off` or `batch`. |

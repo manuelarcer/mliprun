@@ -6,6 +6,40 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Committee evaluation with per-configuration uncertainty**
+  (`optimize run --committee committee.yaml`). Several MLIPs, each in its own
+  Python environment, evaluate the same structure as subprocess workers; the
+  optimization is driven by the consensus energy and mean forces, and every
+  step records how far the members disagree. Disagreement is reported as
+  `sigma`, the per-atom spread of the force vectors in eV/Å (`ddof=1`), with
+  `sigma_max` over atoms as the headline number and the worst atom named.
+  Energies are compared as an *aligned* spread, each member offset by its own
+  first-step energy, because absolute energies from different training sets
+  are not on a common zero and their raw spread is meaningless.
+  New outputs beside the existing convergence CSV: `<stem>_committee.csv`
+  (per-step trace, one energy column per member) and
+  `<stem>_committee_peratom.csv` (final per-atom sigma). The convergence
+  figure gains a third panel; its y-scale adapts so that exact zeros are
+  never silently dropped by a log axis (linear with an annotation when every
+  sigma is zero, `symlog` when only some are, log otherwise).
+  `--uncertainty-threshold` flags a configuration whose final `sigma_max`
+  exceeds it, defaulting to the run's `fmax`. **The threshold is
+  uncalibrated**: it is a screening aid for finding configurations worth a
+  second look, not a physically derived criterion.
+  Committee members are shut down on every exit path, including a failed
+  startup and `KeyboardInterrupt`, so a worker never survives holding a GPU
+  context on a shared node. Mixed levels of theory warn and still run rather
+  than refusing, and the level-of-theory table is deliberately incomplete:
+  any combination it does not list resolves to `unknown`, which marks the
+  committee mixed. Adding a row changes whether a committee reads as
+  same-level, so it is a deliberate act, not a way to silence a warning.
+  Available on `optimize run` only; `optimize batch`, `md` and `neb` are out
+  of scope for now. Verified against a known answer: two members differing by
+  a fixed 2.0 eV/Å force offset give `sigma_max` of exactly 2.0/sqrt(2) =
+  1.4142135624 eV/Å, and every column of a 21-step trace was independently
+  recomputed from the trajectory with zero mismatches at 1e-8.
+  See `examples/committee.yaml` and `docs/OUTPUTS.md`.
+
 - **SevenNet model family and `--sevennet-task`.** The SevenNet backend was a
   stub that had never executed: one hardcoded tag (`7net-mf-ompa`) with
   `modal="mpa"` baked into `build_calculator`, no way to select the task, no
@@ -38,6 +72,39 @@ All notable changes to this project are documented here. Format follows [Keep a 
   reproduces or overrides them like `--climb`/`--k`.
 
 ### Breaking
+
+- **`committee.yaml` now rejects head and task combinations it previously
+  accepted and ignored.** Committee members build their calculator inside
+  their own environment, which skipped the head/task validation the CLI
+  applies, so `mlip: mace` with `mace_head: oc20_usemppbe` ran MACE-MP-0
+  while naming the member `mace@oc20_usemppbe`, writing a CSV column
+  `E_mace@oc20_usemppbe_eV`, and recording that head in the run record — the
+  whole record describing a head that was never used. `7net-omat` with
+  `sevennet_task: oc20` was worse: the level of theory resolved from the tag
+  to `PBE/OMat24` while the calculator was handed `modal="oc20"`, the one
+  path where a well-formed file produced a wrong level label. These files now
+  fail at parse time with an error naming the offending member. **This breaks
+  any existing `committee.yaml` carrying such a combination**, which is the
+  point: a provenance record that names the wrong head is not recoverable
+  after the fact, a rejected config is. The validation tables are imported
+  from the CLI rather than copied, so the two paths cannot drift apart.
+
+- **Run record schema 3 → 4.** Adds a `committee` block (per member: tag,
+  task or head, env, resolved level of theory, GPU, and the versions
+  *measured* inside that member's environment rather than declared in the
+  YAML) plus a flat `committee_config_sha256`. Single-model runs gain no
+  committee keys and are otherwise unchanged. On a committee run,
+  `device_requested` and `device_resolved` now both read `"committee"`
+  instead of the driver environment's resolved device: the driver has no
+  torch by design, so those fields previously asserted `"cpu"` for a run
+  whose members were on GPUs. The authoritative per-member `device` and `gpu`
+  live in the committee block. A `level_table_version` is stamped alongside,
+  so a record written under a later-corrected level-of-theory table can be
+  re-judged rather than silently trusted.
+
+- **`--device` is now rejected together with `--committee`.** Each member's
+  device comes from `committee.yaml`, so the flag was accepted and silently
+  did nothing.
 
 - **`--uma-task` and `--mace-head` are now required, with no defaults.** They
   previously defaulted to `omat` and `omat_pbe` and ran silently when unset —

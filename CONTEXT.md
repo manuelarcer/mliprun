@@ -22,11 +22,21 @@ A per-MLIP markdown file under `docs/install/<tag-or-package>.md` containing tes
 **Calculator**:
 The ASE `Calculator` subclass instantiated from an MLIP package (e.g. `MACECalculator`, `FAIRChemCalculator`, `SevenNetCalculator`, `CHGNetCalculator`). Lives in the **MLIP env**, attached to an `ase.Atoms` object by `setup_calculator()` in `src/mliprun/cli/utils.py`.
 
+**Committee**:
+Two or more **Members** evaluated together against the same structure, driving one relaxation trajectory with their mean force and reporting the members' disagreement as a per-configuration uncertainty (sigma, eV/Å). Declared in a `committee.yaml` and run via `optimize run --committee`; not supported by `optimize batch`, `md`, or `neb`/`autoneb`.
+
+**Member**:
+One **MLIP tag** in one **MLIP env**, addressed by the driver process through a worker subprocess. A **Committee** needs at least two.
+
+**Level of theory**:
+The label a member's tag, together with its task or head, resolves to (a table in `src/mliprun/core/committee/config.py`). Members sharing one label are same-level; a tag/task combination the table does not recognise resolves to `unknown`, which counts as *possibly* mixed rather than assumed same-level.
+
 ## Relationships
 
 - A run command (`optimize`, `md`, `neb`) requires exactly one **MLIP tag**, which resolves to one **Package name**, which lives in one **MLIP env**.
 - An **MLIP env** contains one **Package name** and is documented by one **Install recipe**.
 - An **MLIP tag** that fails `validate_mlip()` produces an error pointing at the relevant **Install recipe**.
+- A **Committee** contains two or more **Members**, each of which is one **MLIP tag** in one **MLIP env**.
 
 ## Example dialogue
 

@@ -11,6 +11,9 @@ The CLI commands wrap a small set of pure-Python functions and one class. This p
 | `mliprun.cli.utils` | `detect_mlip()` / `validate_mlip(name)` / `resolve_mlip(name)` | Auto-detect / validate MLIP availability |
 | `mliprun.core.optimize` | `run_optimization(atoms, ...)` | Geometry optimization with progress logging and plots |
 | `mliprun.core.optimize` | `OPTIMIZER_MAP` | dict of supported ASE optimizers |
+| `mliprun.core.committee.config` | `load_committee(path)` | Parse and validate a `committee.yaml` into a `CommitteeConfig` |
+| `mliprun.core.committee.remote` | `RemoteMember(name, python_exe, ...)` | One committee member's worker subprocess, addressed as a calculator |
+| `mliprun.core.committee.calculator` | `CommitteeCalculator(members, ...)` | ASE calculator over N members: mean force drives the relaxation, their spread is reported |
 | `mliprun.core.md` | `setup_dynamics(atoms, ...)` | Build a configured ASE dynamics object |
 | `mliprun.core.md` | `run_md(atoms, ...)` | Full MD run with logging, CSV, and plots |
 | `mliprun.core.neb` | `CustomNEB(initial, final, ...)` | NEB/AutoNEB orchestration class |
@@ -100,6 +103,99 @@ Side effects (written to `output_dir`):
 
 ---
 
+## Committee evaluation
+
+A committee runs several MLIPs, each in its own environment, against the
+same structure: the relaxation follows their mean force, and their
+disagreement is reported as a per-configuration uncertainty (see
+[OUTPUTS.md](OUTPUTS.md#committee-outputs) for what the numbers mean and the
+CLI's `optimize run --committee` for the equivalent one-liner). Supported by
+`run_optimization` only, not `run_md` or `CustomNEB`.
+
+```python
+from ase.io import read
+
+from mliprun.core.committee.calculator import CommitteeCalculator
+from mliprun.core.committee.config import load_committee
+from mliprun.core.committee.remote import RemoteMember
+from mliprun.core.optimize import run_optimization
+
+config = load_committee("committee.yaml")
+members = [
+    RemoteMember(spec.name, spec.python_exe, mlip=spec.mlip,
+                 uma_task=spec.uma_task, mace_head=spec.mace_head,
+                 sevennet_task=spec.sevennet_task,
+                 device=spec.device, gpu=spec.gpu,
+                 log_path=f"committee_{spec.name}.log")
+    for spec in config.members
+]
+atoms = read("POSCAR")
+with CommitteeCalculator(members, mixed_theory=config.mixed_theory,
+                          levels=config.levels) as committee:
+    committee.start()
+    committee.preflight(atoms)   # evaluate once, up front: members disagree
+                                  # about what input is valid, and that must
+                                  # surface now, not on step 400 tonight
+    atoms.calc = committee
+    run_optimization(atoms, fmax=0.05, output_dir=".",
+                      model_name="committee", committee=committee,
+                      committee_config=config)
+```
+
+Pass every field of the `spec` through, `device=spec.device` included.
+`RemoteMember` defaults `device` to `"auto"`, so dropping it silently discards
+a per-member `device:` from `committee.yaml` while the run record still reports
+the declared value: a record that says `cpu` for a member that ran on the
+default device.
+
+The `with` block is the teardown contract, not a convenience: each member is
+a subprocess holding a loaded model (and, on GPU, a CUDA context). A
+committee that is never closed leaks every one of them. `close()` is
+idempotent and safe to call again in a `finally`, which is what the CLI
+does; call it yourself if you build a `CommitteeCalculator` without the
+context manager.
+
+`committee.start()` loads every member's model, sequentially, and raises
+`mliprun.core.committee.remote.MemberError` naming the failing member if any
+one of them cannot load. It closes every member first, so a failed startup
+never leaves an orphaned worker. `committee.preflight(atoms)` runs one
+evaluation before the optimizer starts, because a geometry one member
+rejects (fairchem's UMA calculator raises `MixedPBCError` on a
+`pbc=(True, True, False)` slab that MACE, SevenNet and CHGNet all accept)
+should fail in the first seconds, not deep into an overnight run.
+
+`load_committee` raises `mliprun.core.committee.config.CommitteeConfigError`
+for anything wrong with the file itself (missing env, unknown key, fewer than
+two members) **and** for any head/task combination the CLI's `validate_mlip`
+rejects: a head on single-head `mace`, a task on a single-task `7net-*` tag, a
+missing or unknown head on `mace-mh-*`, a missing or unknown task on a
+verified `uma-*` tag. Those combinations used to be accepted and then ignored
+by the calculator, which named the member, its CSV column and its provenance
+block after a head or task that never ran. Unregistered `uma-*` and `7net-*`
+tags still forward their task unchecked, exactly as the CLI does, so a newer
+checkpoint works without a code change; the level then resolves to `unknown`,
+which flags the committee as mixed. What `load_committee` does *not* check is
+whether the member's MLIP package is installed. Only that member's own env can
+answer that, and it does, at member start.
+
+`committee.start()` returns `{member name: versions}` and keeps the same dict
+on `committee.member_versions`: the interpreter, ASE, torch and MLIP package
+each member *measured* inside its own env. `run_optimization` merges it into
+`provenance.committee.members[i].measured`, alongside the declared values from
+the YAML. If you write your own record, read it from there rather than
+assuming the declared version is the one that loaded.
+
+`config.mixed_theory` is `True` when the members span more than one level of
+theory, or when any member's tag/task is not in the level-of-theory table at
+all (`unknown` counts as possibly mixed). It does not stop the run: mixing
+levels is allowed, and the flag rides into the run record and every CSV row
+regardless of whether anyone printed it. The CLI prints
+`config.mixed_theory_warning()` once at startup when it is set; a script
+calling `run_optimization` directly should check and print it too, or the
+warning is silent. See [OUTPUTS.md](OUTPUTS.md#mixed-levels-of-theory).
+
+---
+
 ## Molecular dynamics
 
 For an end-to-end run with logging, CSV, and plots:
@@ -163,8 +259,8 @@ it in — none of them changes the physics — and all are optional:
 |---------|---------|-------|
 | `uma_task` | `None` | The UMA task head this run used. Recorded only when `model_name` starts with `uma-`. |
 | `mace_head` | `None` | The MACE head this run used. Recorded only when `model_name` starts with `mace-mh-`. |
-| `device_requested` | `"auto"` | The device as asked for. |
-| `device_resolved` | `"auto"` | The device actually used (e.g. `"cuda"`). |
+| `device_requested` | `"auto"` | The device as asked for. Ignored on a committee run: see below. |
+| `device_resolved` | `"auto"` | The device actually used (e.g. `"cuda"`). Ignored on a committee run: see below. |
 | `run_context` | `None` | A `RunContext` declaring the command, batch identity, and where each parameter value came from. Without it every parameter is tagged `unspecified` — mliprun never guesses. |
 
 Pass the same head/task you gave `setup_calculator` / `build_calculator`.
@@ -173,6 +269,13 @@ and cannot interrogate it for the head, so an omitted `uma_task` is recorded
 as "not determined" rather than guessed — CANON C1: the head is an explicit
 decision, never inferred. The mismatched one is dropped rather than trusted,
 so passing both is harmless.
+
+On a committee run (`committee=` passed to `run_optimization`), both device
+keywords are overridden and recorded as the literal string `"committee"`,
+whatever you pass. The driver process resolves no device at all: it imports no
+torch by design (ADR 0001), so any value it computed would read `"cpu"` even
+with every member on its own GPU. The per-member `device` and `gpu` in
+`provenance.committee.members[i]` are the authoritative record.
 
 The record is what lets you check, later, that two energies you are about to
 subtract came from the same head. Filling these in is the difference between

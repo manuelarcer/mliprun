@@ -53,6 +53,9 @@ dist/
 # Pytest & coverage
 .pytest_cache/
 .coverage
+# parallel = true writes one data file per process (.coverage.<host>.<pid>.<n>),
+# including one per committee worker subprocess, before `coverage combine`.
+.coverage.*
 .cache/
 coverage.xml
 
