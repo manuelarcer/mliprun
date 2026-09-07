@@ -671,14 +671,37 @@ class TestCommitteeProvenance:
         assert prov["mace_head"] is None
         assert prov["sevennet_task"] is None
 
-    def test_a_malformed_committee_block_does_not_raise(self):
-        """collect_provenance must be total: it runs outside RunRecord.begin's
-        try, so anything it raises kills the run."""
+    def test_a_dict_shaped_committee_with_odd_members_still_records(self):
+        """A committee dict with non-list members (e.g. a set) is coerced
+        gracefully by _jsonable and records successfully."""
         prov = collect_provenance(mlip_model="committee",
                                   device_requested="auto",
                                   device_resolved="cpu",
                                   committee={"members": {1, 2, 3}})
         assert "committee" in prov
+        # The set was converted to a list and the happy path succeeded.
+        assert prov["committee"]["members"] == [1, 2, 3]
+        assert prov["committee_config_sha256"] is None  # no config_sha256 key
+
+    def test_a_non_dict_like_committee_triggers_the_guard(self):
+        """collect_provenance must be total: it runs outside RunRecord.begin's
+        try, so anything it raises kills the run. A non-dict committee (e.g.
+        a string or list) cannot be handled and must fall back safely."""
+        # Test with a string.
+        prov_str = collect_provenance(mlip_model="committee",
+                                      device_requested="auto",
+                                      device_resolved="cpu",
+                                      committee="not-a-dict")
+        assert prov_str["committee"] == {"error": "could not record committee"}
+        assert prov_str["committee_config_sha256"] is None
+
+        # Test with a list.
+        prov_list = collect_provenance(mlip_model="committee",
+                                       device_requested="auto",
+                                       device_resolved="cpu",
+                                       committee=["a", "list"])
+        assert prov_list["committee"] == {"error": "could not record committee"}
+        assert prov_list["committee_config_sha256"] is None
 
     def test_a_changed_committee_shows_up_in_an_appended_stage(self, tmp_path):
         RunRecord.begin(tmp_path, command="optimize", stage_kind="optimize",
