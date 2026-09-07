@@ -9,6 +9,11 @@ from ase.io import write
 from ase.io.trajectory import Trajectory
 from ase.optimize import BFGS, FIRE, LBFGS, BFGSLineSearch, GPMin, MDMin
 
+from mliprun.core.committee.calculator import (
+    CommitteeTraceWriter,
+    uncertainty_summary,
+    write_peratom_sigma,
+)
 from mliprun.core.utils import calc_fmax
 from mliprun.core.run_record import RunContext, RunRecord, collect_provenance
 
@@ -38,6 +43,17 @@ def _wrap_for_cell_relaxation(atoms):
     return _Filter(atoms)
 
 
+def _committee_parameters(committee, committee_config, threshold) -> dict:
+    """Committee-only entries for the record's parameter block."""
+    if committee is None:
+        return {}
+    parameters = {"uncertainty_threshold": threshold,
+                  "n_members": len(committee.members)}
+    if committee_config is not None:
+        parameters["committee_file"] = committee_config.source_path
+    return parameters
+
+
 def run_optimization(
     atoms,
     optimizer: str = "bfgs",
@@ -56,6 +72,9 @@ def run_optimization(
     uma_task: Optional[str] = None,
     mace_head: Optional[str] = None,
     sevennet_task: Optional[str] = None,
+    committee=None,
+    committee_config=None,
+    uncertainty_threshold: Optional[float] = None,
 ) -> bool:
     """Run geometry optimization on an ASE Atoms object.
 
@@ -109,6 +128,22 @@ def run_optimization(
     mace_head : str, optional
         MACE head actually used, recorded for provenance. Ignored for
         non-MACE models.
+    committee : CommitteeCalculator, optional
+        The committee driving this relaxation, when there is one. It must
+        already be started and attached as ``atoms.calc``; this function only
+        reads its per-step statistics and writes the trace. Teardown belongs
+        to whoever built it -- an API caller may reuse one loaded committee
+        across many structures, exactly as ``optimize batch`` reuses one
+        calculator.
+    committee_config : CommitteeConfig, optional
+        The parsed ``committee.yaml``, for the run record: member list, envs,
+        resolved levels of theory, and the file's SHA-256.
+    uncertainty_threshold : float, optional
+        sigma_max above which the final configuration is flagged as
+        high-disagreement. Defaults to ``fmax``: if the models disagree about
+        the forces by more than the convergence tolerance, the located
+        minimum sits inside the committee's own noise and the geometry is not
+        resolved. The value applied and where it came from are both recorded.
 
     Returns
     -------
@@ -134,6 +169,17 @@ def run_optimization(
     # asetools can restart from this directory (it reads OUTCAR or CONTCAR).
     contcar_file = output_path / "CONTCAR"
 
+    committee_csv = output_path / f"{logfile_stem}_committee.csv"
+    committee_peratom_csv = output_path / f"{logfile_stem}_committee_peratom.csv"
+
+    # Default threshold is fmax itself -- self-scaling, and physically
+    # motivated. UNCALIBRATED: no same-level sigma_F measurement exists yet
+    # (see the design's "Flagging rule"), so both the value and its origin
+    # travel with the flag.
+    threshold = (float(uncertainty_threshold)
+                 if uncertainty_threshold is not None else float(fmax))
+    threshold_source = "explicit" if uncertainty_threshold is not None else "fmax"
+
     optimizer_name = optimizer.lower()
     if optimizer_name not in OPTIMIZER_MAP:
         raise ValueError(
@@ -156,6 +202,7 @@ def run_optimization(
             "logfile": logfile,
             "plot": plot,
             "verbose": verbose,
+            **_committee_parameters(committee, committee_config, threshold),
         },
         inputs={
             "n_atoms": len(atoms),
@@ -168,6 +215,8 @@ def run_optimization(
             uma_task=uma_task,
             mace_head=mace_head,
             sevennet_task=sevennet_task,
+            committee=(committee_config.as_provenance()
+                       if committee_config is not None else None),
         ),
         run_context=run_context,
     )
@@ -180,6 +229,12 @@ def run_optimization(
 
     log_data = {"step": [], "energy(eV)": [], "fmax(eV/A)": []}
 
+    trace_writer = (
+        CommitteeTraceWriter(committee_csv, committee.member_names,
+                             committee.mixed_theory)
+        if committee is not None else None
+    )
+
     def log_convergence():
         step = opt.nsteps
         energy = atoms.get_potential_energy()
@@ -189,6 +244,11 @@ def run_optimization(
         log_data["step"].append(step)
         log_data["energy(eV)"].append(energy)
         log_data["fmax(eV/A)"].append(fmax_val)
+        if trace_writer is not None and committee.latest is not None:
+            # Both calls above hit the (cached) committee at this geometry, so
+            # `latest` is this step's evaluation. Flushed per row, so a run
+            # that dies at step 300 keeps its first 300 steps.
+            trace_writer.write_step(step, committee.latest, fmax_val)
 
     try:
         if verbose:
@@ -206,20 +266,50 @@ def run_optimization(
         final_energy = atoms.get_potential_energy()
         final_fmax = calc_fmax(opt_target.get_forces())
     except Exception as exc:
-        record.complete(status="failed", results={"error": str(exc)})
+        # Partial results survive: the trace is already on disk, and the
+        # record says what the committee had seen when the run died.
+        results = {"error": str(exc)}
+        if trace_writer is not None:
+            trace_writer.close()
+            results["committee_uncertainty"] = uncertainty_summary(
+                trace_writer.rows, committee.latest, threshold=threshold,
+                threshold_source=threshold_source,
+                symbols=atoms.get_chemical_symbols())
+        record.complete(status="failed", results=results)
         raise
 
     logger.info("Optimization complete (converged=%s, steps=%d, energy=%.6f eV, fmax=%.6f eV/Ang)",
                 converged, opt.nsteps, final_energy, final_fmax)
 
+    results = {
+        "converged": bool(converged),
+        "final_energy_eV": float(final_energy),
+        "final_fmax_eV_per_A": float(final_fmax),
+    }
+    if trace_writer is not None:
+        trace_writer.close()
+        write_peratom_sigma(committee_peratom_csv,
+                            atoms.get_chemical_symbols(),
+                            committee.latest["sigma_per_atom"])
+        summary = uncertainty_summary(
+            trace_writer.rows, committee.latest, threshold=threshold,
+            threshold_source=threshold_source,
+            symbols=atoms.get_chemical_symbols())
+        results["committee_uncertainty"] = summary
+        if summary["flagged"]:
+            logger.warning(
+                "High committee disagreement at the final geometry: "
+                "sigma_max = %.4f eV/Ang > %.4f (%s). The located minimum "
+                "sits inside the committee's own noise; this configuration "
+                "deserves a DFT check. Worst atom: %s (%s).",
+                summary["sigma_max_final_eV_per_A"], threshold,
+                threshold_source, summary["worst_atom"],
+                summary["worst_atom_symbol"])
+
     record.complete(
         status="converged" if converged else "not_converged",
         steps=int(opt.nsteps),
-        results={
-            "converged": bool(converged),
-            "final_energy_eV": float(final_energy),
-            "final_fmax_eV_per_A": float(final_fmax),
-        },
+        results=results,
     )
 
     write(str(final_structure), atoms, format="vasp")

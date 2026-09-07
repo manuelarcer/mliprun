@@ -1,4 +1,6 @@
 """Shared fixtures and configuration for mliprun tests."""
+import sys
+
 import pytest
 import numpy as np
 from pathlib import Path
@@ -121,3 +123,22 @@ def tmp_workdir(tmp_path):
 def fixtures_dir():
     """Path to test fixtures directory."""
     return Path(__file__).parent / "fixtures" / "structures"
+
+
+@pytest.fixture
+def fake_committee_file(tmp_path):
+    """A two-member committee.yaml pointing at the current interpreter.
+
+    Both members are the reserved ``emt`` tag, so the file is usable end to
+    end with no MLIP installed. Returns ``(path, CommitteeConfig)``.
+    """
+    from mliprun.core.committee.config import load_committee
+
+    env = Path(sys.executable).parents[1]
+    path = tmp_path / "committee.yaml"
+    path.write_text(
+        "members:\n"
+        f"  - {{env: {env}, mlip: emt, name: member_a}}\n"
+        f"  - {{env: {env}, mlip: emt, name: member_b}}\n",
+        encoding="utf-8")
+    return path, load_committee(path)
