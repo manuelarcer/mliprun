@@ -145,7 +145,7 @@ with CommitteeCalculator(members, mixed_theory=config.mixed_theory,
 Pass every field of the `spec` through, `device=spec.device` included.
 `RemoteMember` defaults `device` to `"auto"`, so dropping it silently discards
 a per-member `device:` from `committee.yaml` while the run record still reports
-the declared value — a record that says `cpu` for a member that ran on the
+the declared value: a record that says `cpu` for a member that ran on the
 default device.
 
 The `with` block is the teardown contract, not a convenience: each member is
@@ -175,8 +175,8 @@ block after a head or task that never ran. Unregistered `uma-*` and `7net-*`
 tags still forward their task unchecked, exactly as the CLI does, so a newer
 checkpoint works without a code change; the level then resolves to `unknown`,
 which flags the committee as mixed. What `load_committee` does *not* check is
-whether the member's MLIP package is installed — only that member's own env
-can answer that, and it does, at member start.
+whether the member's MLIP package is installed. Only that member's own env can
+answer that, and it does, at member start.
 
 `committee.start()` returns `{member name: versions}` and keeps the same dict
 on `committee.member_versions`: the interpreter, ASE, torch and MLIP package
@@ -259,8 +259,8 @@ it in — none of them changes the physics — and all are optional:
 |---------|---------|-------|
 | `uma_task` | `None` | The UMA task head this run used. Recorded only when `model_name` starts with `uma-`. |
 | `mace_head` | `None` | The MACE head this run used. Recorded only when `model_name` starts with `mace-mh-`. |
-| `device_requested` | `"auto"` | The device as asked for. Ignored on a committee run — see below. |
-| `device_resolved` | `"auto"` | The device actually used (e.g. `"cuda"`). Ignored on a committee run — see below. |
+| `device_requested` | `"auto"` | The device as asked for. Ignored on a committee run: see below. |
+| `device_resolved` | `"auto"` | The device actually used (e.g. `"cuda"`). Ignored on a committee run: see below. |
 | `run_context` | `None` | A `RunContext` declaring the command, batch identity, and where each parameter value came from. Without it every parameter is tagged `unspecified` — mliprun never guesses. |
 
 Pass the same head/task you gave `setup_calculator` / `build_calculator`.
@@ -269,6 +269,13 @@ and cannot interrogate it for the head, so an omitted `uma_task` is recorded
 as "not determined" rather than guessed — CANON C1: the head is an explicit
 decision, never inferred. The mismatched one is dropped rather than trusted,
 so passing both is harmless.
+
+On a committee run (`committee=` passed to `run_optimization`), both device
+keywords are overridden and recorded as the literal string `"committee"`,
+whatever you pass. The driver process resolves no device at all: it imports no
+torch by design (ADR 0001), so any value it computed would read `"cpu"` even
+with every member on its own GPU. The per-member `device` and `gpu` in
+`provenance.committee.members[i]` are the authoritative record.
 
 The record is what lets you check, later, that two energies you are about to
 subtract came from the same head. Filling these in is the difference between
