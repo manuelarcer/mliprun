@@ -94,6 +94,10 @@ def aligned_energy_spread(energies: dict, baseline: dict) -> float:
     ------
     KeyError
         If a member present in ``energies`` has no baseline.
+    ValueError
+        If fewer than two members are given.
     """
+    if len(energies) < 2:
+        raise ValueError("a committee needs at least two members")
     deltas = [energies[name] - baseline[name] for name in energies]
     return float(np.std(np.asarray(deltas, dtype=float), ddof=1))

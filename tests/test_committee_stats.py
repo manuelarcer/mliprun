@@ -87,4 +87,9 @@ class TestAlignedEnergySpread:
 
     def test_missing_baseline_member_is_rejected(self):
         with pytest.raises(KeyError):
-            aligned_energy_spread({"member_a": -1.0}, {"member_b": -1.0})
+            aligned_energy_spread({"member_a": -1.0, "member_b": -2.0}, {"member_b": -1.0})
+
+    def test_one_member_is_rejected(self):
+        """A committee of one has no disagreement to report."""
+        with pytest.raises(ValueError, match="at least two"):
+            aligned_energy_spread({"member_a": -1.0}, {"member_a": -1.0})
