@@ -88,6 +88,9 @@ class TestFailureModes:
         with pytest.raises(MemberError) as excinfo:
             member.start()
         assert "member_a" in str(excinfo.value)
+        # The log was opened (log_path's parent exists) before Popen failed;
+        # it must be released deterministically, not left for GC to close.
+        assert member._log is None
 
     def test_load_failure_carries_the_remote_traceback(self, tmp_path):
         member = RemoteMember("member_a", sys.executable,

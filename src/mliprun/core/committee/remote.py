@@ -177,6 +177,10 @@ class RemoteMember:
                 start_new_session=True,
             )
         except OSError as exc:
+            # The log was already opened above; release it deterministically
+            # rather than leaving it for GC -- Task 5 closes only the
+            # members that started successfully, never this one.
+            self._close_log()
             raise MemberError(
                 self.name,
                 f"could not start worker: {exc} (command: {' '.join(self.argv)})",
