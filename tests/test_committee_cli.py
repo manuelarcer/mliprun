@@ -45,6 +45,18 @@ class TestMutualExclusion:
         assert result.exit_code == 1
         assert "uma-task" in result.output
 
+    def test_committee_with_an_explicit_device_is_rejected(
+            self, structure, fake_committee_file):
+        """Each member's device comes from committee.yaml (spec.device); a
+        stray --device here would silently do nothing rather than apply."""
+        path, _ = fake_committee_file
+        result = runner.invoke(app, ["run", "--structure", str(structure),
+                                     "--committee", str(path),
+                                     "--device", "cuda"])
+        assert result.exit_code == 1
+        assert "--device" in result.output
+        assert "--committee" in result.output
+
     def test_the_default_mlip_value_does_not_trip_the_check(
             self, structure, fake_committee_file):
         """--mlip defaults to 'auto'; only an explicitly typed one conflicts."""
@@ -172,7 +184,11 @@ class TestFlaggedPath:
                                      "--max-steps", "3", "--no-verbose",
                                      "--uncertainty-threshold", "0.01"])
         assert result.exit_code == 0, result.output
-        assert "High committee disagreement" in result.output
+        # Exactly once: `run_optimization`'s own log call is INFO-level and
+        # silent at the default logging configuration, so the CLI echo here
+        # is the *only* channel -- not a duplicate of a WARNING-level record
+        # reaching the terminal via `logging.lastResort`.
+        assert result.output.count("High committee disagreement") == 1
 
         record = json.loads(
             (structure.parent / "mliprun_run.json").read_text())

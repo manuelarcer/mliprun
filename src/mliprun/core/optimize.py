@@ -358,10 +358,12 @@ def run_optimization(
         results = {"error": str(exc)}
         if trace_writer is not None:
             trace_writer.close()
-            results["committee_uncertainty"] = uncertainty_summary(
+            summary = uncertainty_summary(
                 trace_writer.rows, committee.latest, threshold=threshold,
                 threshold_source=threshold_source,
                 symbols=atoms.get_chemical_symbols())
+            results["committee_uncertainty"] = summary
+            committee.latest_uncertainty_summary = summary
         record.complete(status="failed", results=results)
         raise
 
@@ -383,8 +385,17 @@ def run_optimization(
             threshold_source=threshold_source,
             symbols=atoms.get_chemical_symbols())
         results["committee_uncertainty"] = summary
+        committee.latest_uncertainty_summary = summary
         if summary["flagged"]:
-            logger.warning(
+            # INFO, not WARNING: with no logging configured anywhere in this
+            # codebase (confirmed by grep for basicConfig/addHandler/setLevel/
+            # dictConfig/fileConfig), a WARNING-level record reaches the
+            # terminal on its own via `logging.lastResort` -- printing the
+            # same message the CLI already echoes from `results`. This line
+            # stays for anyone running with verbose logging configured; the
+            # CLI echo (reading `committee.latest_uncertainty_summary`, not
+            # this call) is the one terminal report at default settings.
+            logger.info(
                 "High committee disagreement at the final geometry: "
                 "sigma_max = %.4f eV/Ang > %.4f (%s). The located minimum "
                 "sits inside the committee's own noise; this configuration "

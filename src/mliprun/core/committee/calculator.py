@@ -158,6 +158,12 @@ class CommitteeCalculator(Calculator):
         #: Statistics from the most recent evaluation, plus a per-member
         #: ``energies`` dict. The caller reads this to build its trace.
         self.latest = None
+        #: The ``uncertainty_summary(...)`` dict for the last relaxation
+        #: driven through this committee, set by ``run_optimization`` once it
+        #: finishes. A caller (the CLI's flagged-uncertainty echo) reads this
+        #: back instead of recomputing it, so the printed number can never
+        #: diverge from what the run record stored.
+        self.latest_uncertainty_summary = None
         self.n_evaluations = 0
         self._pool = None
 

@@ -7,11 +7,7 @@ from pathlib import Path
 from ase.io import read
 from mliprun.core.optimize import run_optimization, OPTIMIZER_MAP
 from mliprun.core.run_record import BatchInfo, RunContext, new_batch_id
-from mliprun.core.committee.calculator import (
-    CommitteeCalculator,
-    CommitteeError,
-    uncertainty_summary,
-)
+from mliprun.core.committee.calculator import CommitteeCalculator, CommitteeError
 from mliprun.core.committee.config import CommitteeConfigError, load_committee
 from mliprun.core.committee.remote import (
     DEFAULT_CALC_TIMEOUT_S,
@@ -60,8 +56,11 @@ def _find_input_structure(subdir: Path, pattern: str) -> Path:
 
 
 #: Model-selection options the committee file owns. Passing any of them with
-#: --committee is an error rather than a silent precedence rule.
-_COMMITTEE_CONFLICTS = ("mlip", "uma_task", "mace_head", "sevennet_task")
+#: --committee is an error rather than a silent precedence rule. ``device``
+#: is included because each member's device comes from committee.yaml
+#: (``spec.device``); a stray ``--device`` here would silently do nothing.
+_COMMITTEE_CONFLICTS = ("mlip", "uma_task", "mace_head", "sevennet_task",
+                        "device")
 
 
 def _reject_conflicting_options(ctx) -> None:
@@ -110,34 +109,35 @@ def _build_committee(config, output_dir: Path,
                                levels=config.levels)
 
 
-def _report_flagged_uncertainty(committee_calc, atoms, fmax: float,
-                                uncertainty_threshold) -> None:
+def _report_flagged_uncertainty(committee_calc) -> None:
     """Echo a warning when the final geometry trips the disagreement flag.
 
-    ``run_optimization`` already writes this into the run record and logs it
-    (``mliprun.core.optimize``'s own logger), but a ``logging`` call is not
-    guaranteed to reach the terminal -- the driver may run under a harness
-    that captures logging elsewhere. The flag is this feature's headline
-    claim, so the CLI reports it directly rather than relying on that.
+    This is the single terminal report of the flag at default settings:
+    ``run_optimization``'s own log call is INFO-level (silent unless a
+    caller configures logging below WARNING), precisely so this echo is not
+    a duplicate of it.
+
+    Reads ``committee_calc.latest_uncertainty_summary`` -- the exact
+    ``uncertainty_summary(...)`` dict ``run_optimization`` already computed
+    and stored in the run record -- rather than recomputing it. Recomputing
+    here from a fabricated ``rows=[]`` would happen to match today (the
+    fields this function prints only ever read ``latest``, not ``rows``),
+    but would silently diverge from the recorded number the moment a future
+    change derived anything here from ``rows``.
     """
-    if committee_calc is None or committee_calc.latest is None:
+    if committee_calc is None:
         return
-    threshold = (float(uncertainty_threshold)
-                 if uncertainty_threshold is not None else float(fmax))
-    threshold_source = ("explicit" if uncertainty_threshold is not None
-                        else "fmax")
-    summary = uncertainty_summary(
-        [], committee_calc.latest, threshold=threshold,
-        threshold_source=threshold_source,
-        symbols=atoms.get_chemical_symbols())
-    if summary["flagged"]:
-        typer.echo(
-            f"\n⚠️  High committee disagreement at the final geometry: "
-            f"sigma_max = {summary['sigma_max_final_eV_per_A']:.4f} eV/Å > "
-            f"{threshold:.4f} ({threshold_source}). The located minimum sits "
-            f"inside the committee's own noise; this configuration deserves "
-            f"a DFT check. Worst atom: {summary['worst_atom_symbol']} "
-            f"(#{summary['worst_atom']}).")
+    summary = committee_calc.latest_uncertainty_summary
+    if summary is None or not summary["flagged"]:
+        return
+    typer.echo(
+        f"\n⚠️  High committee disagreement at the final geometry: "
+        f"sigma_max = {summary['sigma_max_final_eV_per_A']:.4f} eV/Å > "
+        f"{summary['threshold_eV_per_A']:.4f} "
+        f"({summary['threshold_source']}). The located minimum sits inside "
+        f"the committee's own noise; this configuration deserves a DFT "
+        f"check. Worst atom: {summary['worst_atom_symbol']} "
+        f"(#{summary['worst_atom']}).")
 
 
 @app.command()
@@ -340,8 +340,7 @@ def run(
         typer.echo("   - Relaxing fmax threshold")
         typer.echo("   - Trying a different optimizer")
 
-    _report_flagged_uncertainty(committee_calc, atoms, fmax,
-                                uncertainty_threshold)
+    _report_flagged_uncertainty(committee_calc)
 
 
 @app.command()
