@@ -177,9 +177,13 @@ class RemoteMember:
                 start_new_session=True,
             )
         except OSError as exc:
-            # The log was already opened above; release it deterministically
-            # rather than leaving it for GC -- Task 5 closes only the
-            # members that started successfully, never this one.
+            # Release the log deterministically rather than leaving it for
+            # GC. This member never joined _LIVE (that happens only after
+            # Popen succeeds, below), but CommitteeCalculator.start() closes
+            # every member in its list -- including this one -- once this
+            # exception propagates, so close() must tolerate a member whose
+            # _proc is still None: it does, by returning after re-closing
+            # the (already-closed) log.
             self._close_log()
             raise MemberError(
                 self.name,

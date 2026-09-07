@@ -21,6 +21,7 @@ Supports **UMA** (FAIRChem), **MACE**, **SevenNet** (7net), and **CHGNet** model
 - Auto-detection of available MLIP models (UMA > MACE > SevenNet > CHGNet)
 - UMA model support with multiple task types (OMat, OC20, OMol, ODAC)
 - MACE multi-head foundation models (`mace-mh-*`) with selectable heads (`omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, …)
+- Committee evaluation: relax with several MLIPs at once and report their disagreement as a per-configuration uncertainty (`optimize run --committee`)
 - GPU/CPU selection via `--device` (`auto`/`cuda`/`cpu`) on all run commands
 - Geometry optimization with multiple optimizers (FIRE, BFGS, LBFGS, BFGSLineSearch, GPMin, MDMin)
 - MD with NVE, NVT, and NPT ensembles
@@ -137,7 +138,7 @@ These apply to `optimize`, `md`, `neb`, `autoneb`, and `benchmark`:
 - `--uma-task`: Task head for UMA models. **No default and required for every `uma-*` model** — the heads are independent fine-tunes with independent energy zeros, so a guessed head silently changes the level of theory. One of `omat` (bulk inorganic), `omc` (molecular crystals), `omol` (molecules), `oc20` (catalysis/surfaces), `oc22`, `oc25`, `odac`. Ignored for non-UMA models.
 - `--mace-head`: Head for multi-head MACE models (`mace-mh-*`). **No default and required for those models**, for the same reason as `--uma-task`. One of `omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`. Rejected for plain `mace`, which is single-head.
 - `--sevennet-task`: Inference task for SevenNet models (`modal` in SevenNet's API). **No default** — a multi-task tag without one is an error listing the valid tasks, because the tasks are independent fine-tunes with independent energy zeros. `7net-omni`/`-i8`/`-i12`: `mpa` (PBE+U, general), `oc20` (RPBE, surfaces), `oc22`, `omat24`, `matpes_pbe`, `odac23`, `omol25_low`, `omol25_high`, `spice`, `qcml`, `pet_mad`, `mp_r2scan`, `matpes_r2scan`. `7net-mf-ompa`: `omat24`, `mpa`. `7net-mf-0`: `PBE`, `R2SCAN` (uppercase; names are matched exactly). Rejected for single-task tags (`7net-omat`, `7net-l3i5`, `7net-0`). Ignored for non-SevenNet models.
-- `--device`: `auto` (default; cuda if available, else cpu), `cuda`, or `cpu`. On multi-GPU nodes set `CUDA_VISIBLE_DEVICES` to choose the GPU. (`neb` is the exception: it defaults to `cpu`, so pass `--device cuda` explicitly for GPU NEB runs.)
+- `--device`: `auto` (default; cuda if available, else cpu), `cuda`, or `cpu`. On multi-GPU nodes set `CUDA_VISIBLE_DEVICES` to choose the GPU. (`neb` is the exception: it defaults to `cpu`, so pass `--device cuda` explicitly for GPU NEB runs. Rejected together with `--committee`: see [Committee evaluation](#committee-evaluation) below.)
 - `--plot / --no-plot`: write PNG figures of the results. **Off by default** (plotting is opt-in) — the CSV data is always written, so pass `--plot` only when you want the figures. Applies to `optimize`, `md`, and `neb`.
 
 **Example (multi-head MACE on a catalysis surface, forced to GPU):**
@@ -184,6 +185,20 @@ optimize batch --parent runs/ --mlip uma-s-1p2 --fmax 0.05
 - `--skip-existing`: skip subdirs that already have a `CONTCAR` (resume a partial batch).
 - `--plot`: also write the per-structure convergence PNG for every relaxation (off by default — skipping it gives a measured ~3x speedup on frozen-surface site scans, where the plot cost more per job than the model load).
 - A structure that errors or fails to converge is logged and the batch continues; results are summarized in `batch_summary.csv` written into `--parent`.
+
+---
+
+### Committee evaluation
+
+Run several MLIPs, each in its own environment, against the same structure. The relaxation follows their **mean** force; their disagreement is reported as a per-atom force spread, sigma (eV/Å), and the final configuration is flagged when it exceeds a threshold. That threshold is a screening aid, not a physically calibrated error bar: the default is uncalibrated (see [OUTPUTS.md](docs/OUTPUTS.md#committee-outputs)).
+
+```bash
+optimize run --structure POSCAR --committee committee.yaml --fmax 0.05
+```
+
+`committee.yaml` declares two or more members, each with its own env, MLIP tag, and task/head: see [examples/committee.yaml](examples/committee.yaml). `--committee` replaces `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, and `--device`: passing any of those alongside it is an error, since the file already owns model selection and each member's device. Members may sit at different levels of theory (e.g. an RPBE/OC20 head next to a PBE/OMat24 one); mliprun does not refuse this, but the reported spread then becomes a comparison *between* levels of theory rather than an error bar within one, and mliprun warns loudly when it detects the mismatch. Supported by `optimize run` only, not `optimize batch`, `md`, or `neb`/`autoneb`.
+
+**Outputs (in addition to the usual `optimize run` files):** `opt_committee.csv` (per-step disagreement trace), `opt_committee_peratom.csv` (per-atom disagreement at the final geometry), `committee_<member>.log` (one per member). Full column reference: [OUTPUTS.md](docs/OUTPUTS.md#committee-outputs).
 
 ---
 

@@ -1,0 +1,47 @@
+# A committee: several MLIPs, each in its own env, evaluated together.
+#
+#   mlip optimize run --structure POSCAR --committee committee.yaml --fmax 0.05
+#
+# The relaxation is driven by the members' MEAN force; their disagreement is
+# reported as a per-configuration uncertainty (sigma, in eV/A). Every member
+# needs its own environment with mliprun installed in it
+# (pip install -e /path/to/mliprun) plus exactly one MLIP package -- see
+# docs/install/README.md. --committee replaces --mlip, the head/task options
+# and --device on the command line: passing any of those alongside
+# --committee is rejected, because the file below already owns model
+# selection and each member's device.
+#
+# CANON C3: heads and tasks are independent fine-tunes with independent
+# energy zeros. A committee spanning two levels of theory still runs (it
+# warns, it does not refuse), but the spread it reports becomes a comparison
+# BETWEEN levels of theory, not an error bar. The example below is
+# deliberately same-level: every member is RPBE/OC20.
+
+members:
+  - env:  /scratchb/juar/envs/uma
+    mlip: uma-s-1p2
+    uma_task: oc20
+    gpu: 0
+
+  - env:  /scratchb/juar/envs/sevenn
+    mlip: 7net-omni
+    sevennet_task: oc20
+    gpu: 1
+
+  - env:  /scratchb/juar/envs/mace
+    mlip: mace-mh-1
+    mace_head: oc20_usemppbe
+    gpu: 2
+
+# Optional per member:
+#   name:   column header in <logfile-stem>_committee.csv and the worker
+#           log filename (committee_<name>.log). Defaults to
+#           "<mlip>@<task-or-head>".
+#   device: auto (default) | cuda | cpu, resolved inside that member's own
+#           env -- there is no committee-wide --device flag.
+#   gpu:    sets CUDA_VISIBLE_DEVICES for that member's process only.
+#           Omitted, the member inherits the driver's environment.
+#
+# The reserved tag `emt` builds ASE's built-in EMT calculator and needs no
+# MLIP at all. It is a toy potential for a handful of metals. Use it to
+# smoke-test the bridge on a new machine; never for science.

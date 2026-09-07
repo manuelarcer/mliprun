@@ -11,6 +11,9 @@ The CLI commands wrap a small set of pure-Python functions and one class. This p
 | `mliprun.cli.utils` | `detect_mlip()` / `validate_mlip(name)` / `resolve_mlip(name)` | Auto-detect / validate MLIP availability |
 | `mliprun.core.optimize` | `run_optimization(atoms, ...)` | Geometry optimization with progress logging and plots |
 | `mliprun.core.optimize` | `OPTIMIZER_MAP` | dict of supported ASE optimizers |
+| `mliprun.core.committee.config` | `load_committee(path)` | Parse and validate a `committee.yaml` into a `CommitteeConfig` |
+| `mliprun.core.committee.remote` | `RemoteMember(name, python_exe, ...)` | One committee member's worker subprocess, addressed as a calculator |
+| `mliprun.core.committee.calculator` | `CommitteeCalculator(members, ...)` | ASE calculator over N members: mean force drives the relaxation, their spread is reported |
 | `mliprun.core.md` | `setup_dynamics(atoms, ...)` | Build a configured ASE dynamics object |
 | `mliprun.core.md` | `run_md(atoms, ...)` | Full MD run with logging, CSV, and plots |
 | `mliprun.core.neb` | `CustomNEB(initial, final, ...)` | NEB/AutoNEB orchestration class |
@@ -97,6 +100,78 @@ Side effects (written to `output_dir`):
 - `opt_final.vasp` — final relaxed structure
 
 `OPTIMIZER_MAP` is the canonical dict of supported optimizer names; access it if you need to validate or list options programmatically.
+
+---
+
+## Committee evaluation
+
+A committee runs several MLIPs, each in its own environment, against the
+same structure: the relaxation follows their mean force, and their
+disagreement is reported as a per-configuration uncertainty (see
+[OUTPUTS.md](OUTPUTS.md#committee-outputs) for what the numbers mean and the
+CLI's `optimize run --committee` for the equivalent one-liner). Supported by
+`run_optimization` only, not `run_md` or `CustomNEB`.
+
+```python
+from ase.io import read
+
+from mliprun.core.committee.calculator import CommitteeCalculator
+from mliprun.core.committee.config import load_committee
+from mliprun.core.committee.remote import RemoteMember
+from mliprun.core.optimize import run_optimization
+
+config = load_committee("committee.yaml")
+members = [
+    RemoteMember(spec.name, spec.python_exe, mlip=spec.mlip,
+                 uma_task=spec.uma_task, mace_head=spec.mace_head,
+                 sevennet_task=spec.sevennet_task, gpu=spec.gpu,
+                 log_path=f"committee_{spec.name}.log")
+    for spec in config.members
+]
+atoms = read("POSCAR")
+with CommitteeCalculator(members, mixed_theory=config.mixed_theory,
+                          levels=config.levels) as committee:
+    committee.start()
+    committee.preflight(atoms)   # evaluate once, up front: members disagree
+                                  # about what input is valid, and that must
+                                  # surface now, not on step 400 tonight
+    atoms.calc = committee
+    run_optimization(atoms, fmax=0.05, output_dir=".",
+                      model_name="committee", committee=committee,
+                      committee_config=config)
+```
+
+The `with` block is the teardown contract, not a convenience: each member is
+a subprocess holding a loaded model (and, on GPU, a CUDA context). A
+committee that is never closed leaks every one of them. `close()` is
+idempotent and safe to call again in a `finally`, which is what the CLI
+does; call it yourself if you build a `CommitteeCalculator` without the
+context manager.
+
+`committee.start()` loads every member's model, sequentially, and raises
+`mliprun.core.committee.remote.MemberError` naming the failing member if any
+one of them cannot load. It closes every member first, so a failed startup
+never leaves an orphaned worker. `committee.preflight(atoms)` runs one
+evaluation before the optimizer starts, because a geometry one member
+rejects (fairchem's UMA calculator raises `MixedPBCError` on a
+`pbc=(True, True, False)` slab that MACE, SevenNet and CHGNet all accept)
+should fail in the first seconds, not deep into an overnight run.
+
+`load_committee` raises `mliprun.core.committee.config.CommitteeConfigError`
+for anything wrong with the file itself (missing env, unknown key, fewer
+than two members). It does not re-check whether a tag needs a task or head:
+that is enforced inside each member's own env when it builds its
+calculator, so a missing task fails at member start with the same message a
+single-model run would print.
+
+`config.mixed_theory` is `True` when the members span more than one level of
+theory, or when any member's tag/task is not in the level-of-theory table at
+all (`unknown` counts as possibly mixed). It does not stop the run: mixing
+levels is allowed, and the flag rides into the run record and every CSV row
+regardless of whether anyone printed it. The CLI prints
+`config.mixed_theory_warning()` once at startup when it is set; a script
+calling `run_optimization` directly should check and print it too, or the
+warning is silent. See [OUTPUTS.md](OUTPUTS.md#mixed-levels-of-theory).
 
 ---
 
