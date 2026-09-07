@@ -42,6 +42,9 @@ dependencies = [
     "pandas",
     "matplotlib",
     "scipy",
+    # Committee declarations (committee.yaml). Pure-Python fallback exists,
+    # so this adds no build burden on a login node.
+    "pyyaml",
 ]
 
 [project.optional-dependencies]
