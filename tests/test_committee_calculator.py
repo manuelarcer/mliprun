@@ -131,6 +131,20 @@ class TestArithmeticWithFakeMembers:
         assert committee.n_evaluations == 1
         committee.close()
 
+    def test_start_keeps_the_measured_versions_it_returns(self):
+        """Every call site used to discard `start()`'s return value, so the
+        versions each member measured in its own env never reached the run
+        record. They are kept on the calculator now."""
+        members = [FakeMember("member_a", -1.0, np.zeros((2, 3)).tolist()),
+                   FakeMember("member_b", -1.0, np.zeros((2, 3)).tolist())]
+        committee = CommitteeCalculator(members)
+        assert committee.member_versions == {}
+        returned = committee.start()
+        assert returned == {"member_a": {"ase": "fake"},
+                            "member_b": {"ase": "fake"}}
+        assert committee.member_versions == returned
+        committee.close()
+
 
 class TestRealSubprocessRoundTrip:
     def test_identical_members_give_zero_sigma_and_the_single_model_energy(

@@ -1,7 +1,10 @@
 """run_optimization driven by a committee."""
 import csv
 import json
+import math
+import platform
 import sys
+from importlib.metadata import version
 from pathlib import Path
 
 import pytest
@@ -10,10 +13,14 @@ from ase.calculators.emt import EMT
 from ase.optimize import BFGS
 
 from mliprun.core.committee.calculator import CommitteeCalculator, CommitteeError
+from mliprun.core.committee.config import LEVEL_TABLE_VERSION
 from mliprun.core.committee.remote import RemoteMember
 from mliprun.core.optimize import run_optimization
 
 STUB_DIR = Path(__file__).parent / "committee_stubs"
+
+#: Must match tests/committee_stubs/biased_worker.py.
+BIAS_EV_PER_A = 2.0
 
 
 def _rattled():
@@ -22,14 +29,35 @@ def _rattled():
     return atoms
 
 
-def _committee(tmp_path, n=2, argv=None):
+def _committee(tmp_path, n=2, argv=None, names=None):
+    names = list(names) if names else [f"member_{i}" for i in range(n)]
     members = [
-        RemoteMember(f"member_{i}", sys.executable, mlip="emt",
-                     log_path=tmp_path / f"committee_member_{i}.log",
+        RemoteMember(name, sys.executable, mlip="emt",
+                     log_path=tmp_path / f"committee_{name}.log",
                      timeout=60.0, argv=argv)
-        for i in range(n)
+        for name in names
     ]
     return CommitteeCalculator(members, mixed_theory=True,
+                               levels=("unknown",))
+
+
+def _disagreeing_committee(tmp_path):
+    """One plain-EMT member and one with a fixed force bias.
+
+    Two members with a constant offset on one force component give
+    sigma_per_atom = BIAS / sqrt(2) exactly (``ddof=1``) on every atom, so the
+    uncertainty a run reports is a known, large, non-zero number rather than
+    the identically-zero sigma of an all-EMT committee. That is what makes a
+    stale value copied from a previous structure unmistakable.
+    """
+    argvs = [None, [sys.executable, str(STUB_DIR / "biased_worker.py")]]
+    members = [
+        RemoteMember(name, sys.executable, mlip="emt",
+                     log_path=tmp_path / f"committee_{name}.log",
+                     timeout=60.0, argv=argv)
+        for name, argv in zip(("plain", "biased"), argvs)
+    ]
+    return CommitteeCalculator(members, mixed_theory=False,
                                levels=("unknown",))
 
 
@@ -207,6 +235,191 @@ class TestPartialResults:
             _record(tmp_path)["stages"][0]["results"]["error"])
 
 
+class TestReusedCommittee:
+    """A committee may be reused across structures; its statistics may not.
+
+    ``run_optimization``'s own docstring invites reuse ("an API caller may
+    reuse one loaded committee across many structures"), and until this was
+    fixed the calculator's ``latest`` still held the PREVIOUS structure's
+    evaluation. A structure that failed before its first successful
+    evaluation therefore had the previous structure's sigma, atom index and
+    flag written into its own persisted record, wearing its own element
+    symbols.
+    """
+
+    def test_a_failed_run_records_no_uncertainty_from_the_previous_structure(
+            self, tmp_path):
+        first_dir = tmp_path / "cu"
+        second_dir = tmp_path / "fe"
+        committee = _disagreeing_committee(tmp_path)
+        committee.start()
+        try:
+            copper = _rattled()
+            copper.calc = committee
+            run_optimization(copper, fmax=0.05, max_steps=3,
+                             output_dir=first_dir, model_name="committee",
+                             verbose=False, committee=committee)
+
+            # Iron has no EMT potential, so EVERY member rejects the geometry
+            # on the first evaluation: this run never produces a statistic of
+            # its own.
+            iron = bulk("Fe", "bcc", a=2.87)
+            iron.calc = committee
+            with pytest.raises(CommitteeError):
+                run_optimization(iron, fmax=0.05, max_steps=3,
+                                 output_dir=second_dir,
+                                 model_name="committee", verbose=False,
+                                 committee=committee)
+        finally:
+            committee.close()
+
+        # The numbers the leak would have copied forward: real, large, and
+        # attached to a Cu atom.
+        first = _record(first_dir)["stages"][0]["results"][
+            "committee_uncertainty"]
+        assert first["sigma_max_final_eV_per_A"] == pytest.approx(
+            BIAS_EV_PER_A / math.sqrt(2.0), rel=1e-9)
+        assert first["worst_atom_symbol"] == "Cu"
+        assert first["flagged"] is True
+
+        second_record = _record(second_dir)
+        assert second_record["status"] == "failed"
+        second = second_record["stages"][0]["results"][
+            "committee_uncertainty"]
+        assert second["n_steps"] == 0
+        assert second["sigma_max_final_eV_per_A"] is None
+        assert second["sigma_mean_final_eV_per_A"] is None
+        assert second["sigma_max_peak_eV_per_A"] is None
+        assert second["peak_step"] is None
+        assert second["worst_atom"] is None
+        assert second["worst_atom_symbol"] is None
+        assert second["energy_spread_aligned_final_eV"] is None
+        assert second["flagged"] is False
+        # The trace file exists but holds only its header: zero steps ran.
+        assert _read_csv(second_dir / "opt_committee.csv") == []
+
+    def test_the_flag_echo_is_cleared_too(self, tmp_path):
+        """``latest_uncertainty_summary`` is what the CLI echoes.
+
+        Left stale, a failed run would print the previous structure's
+        high-disagreement warning as if it were this structure's.
+        """
+        committee = _disagreeing_committee(tmp_path)
+        committee.start()
+        try:
+            copper = _rattled()
+            copper.calc = committee
+            run_optimization(copper, fmax=0.05, max_steps=3,
+                             output_dir=tmp_path / "cu",
+                             model_name="committee", verbose=False,
+                             committee=committee)
+            assert committee.latest_uncertainty_summary["flagged"] is True
+
+            iron = bulk("Fe", "bcc", a=2.87)
+            iron.calc = committee
+            with pytest.raises(CommitteeError):
+                run_optimization(iron, fmax=0.05, max_steps=3,
+                                 output_dir=tmp_path / "fe",
+                                 model_name="committee", verbose=False,
+                                 committee=committee)
+        finally:
+            committee.close()
+
+        assert committee.latest is None
+        assert committee.latest_uncertainty_summary["flagged"] is False
+        assert (committee.latest_uncertainty_summary[
+            "sigma_max_final_eV_per_A"] is None)
+
+
+class TestMeasuredProvenance:
+    """What actually loaded, not only what committee.yaml declared."""
+
+    def test_each_member_records_the_versions_its_own_env_reported(
+            self, tmp_path, fake_committee_file):
+        _path, config = fake_committee_file
+        names = [m.name for m in config.members]
+        atoms = _rattled()
+        committee = _committee(tmp_path, names=names)
+        committee.start()
+        atoms.calc = committee
+        try:
+            run_optimization(atoms, fmax=0.05, max_steps=5,
+                             output_dir=tmp_path, model_name="committee",
+                             verbose=False, committee=committee,
+                             committee_config=config)
+        finally:
+            committee.close()
+
+        members = _record(tmp_path)["provenance"]["committee"]["members"]
+        assert [m["name"] for m in members] == names
+        for block, spec in zip(members, config.members):
+            measured = block["measured"]
+            # Measured: reported back over the bridge from inside the member's
+            # own interpreter. These tests run every member on this same
+            # interpreter, so the values are exactly checkable.
+            assert measured["python"] == platform.python_version()
+            assert measured["executable"] == sys.executable
+            assert measured["ase"] == version("ase")
+            assert measured["mliprun"] == version("mliprun")
+            assert "torch" in measured
+            # 'emt' is ASE's built-in, not an MLIP distribution.
+            assert measured["package"] is None
+            assert measured["package_version"] is None
+            # Declared: what the YAML asked for, in its own namespace. The
+            # declared 'python' is an interpreter PATH, the measured one a
+            # version string; they must not be conflated.
+            assert block["python"] == spec.python_exe
+            assert block["env"] == spec.env
+
+    def test_the_level_table_version_is_stamped_into_the_record(
+            self, tmp_path, fake_committee_file):
+        _path, config = fake_committee_file
+        atoms = _rattled()
+        committee = _committee(tmp_path,
+                               names=[m.name for m in config.members])
+        committee.start()
+        atoms.calc = committee
+        try:
+            run_optimization(atoms, fmax=0.05, max_steps=3,
+                             output_dir=tmp_path, model_name="committee",
+                             verbose=False, committee=committee,
+                             committee_config=config)
+        finally:
+            committee.close()
+
+        block = _record(tmp_path)["provenance"]["committee"]
+        assert block["level_table_version"] == LEVEL_TABLE_VERSION
+
+    def test_measured_is_null_when_no_member_ever_started(
+            self, tmp_path, fake_committee_file):
+        """A record built from the config alone says "unknown", not "empty"."""
+        _path, config = fake_committee_file
+        block = config.as_provenance()
+        assert [m["measured"] for m in block["members"]] == [None, None]
+
+
+class TestDeviceOnACommitteeRun:
+    def test_both_device_fields_say_committee(self, tmp_path):
+        """The driver env has no torch by design (ADR 0001), so its resolved
+        device is "cpu" even when every member sits on its own GPU. The record
+        must not make that claim."""
+        atoms = _rattled()
+        committee = _committee(tmp_path)
+        committee.start()
+        atoms.calc = committee
+        try:
+            run_optimization(atoms, fmax=0.05, max_steps=3,
+                             output_dir=tmp_path, model_name="committee",
+                             verbose=False, committee=committee,
+                             device_requested="auto", device_resolved="cpu")
+        finally:
+            committee.close()
+
+        provenance = _record(tmp_path)["provenance"]
+        assert provenance["device_requested"] == "committee"
+        assert provenance["device_resolved"] == "committee"
+
+
 class TestSingleModelUnchanged:
     def test_no_committee_files_without_a_committee(self, tmp_path):
         atoms = _rattled()
@@ -216,3 +429,15 @@ class TestSingleModelUnchanged:
         assert not (tmp_path / "opt_committee.csv").exists()
         assert not (tmp_path / "opt_committee_peratom.csv").exists()
         assert "committee" not in _record(tmp_path)["provenance"]
+
+    def test_the_device_fields_are_untouched_without_a_committee(
+            self, tmp_path):
+        """The committee override must not reach the single-model path."""
+        atoms = _rattled()
+        atoms.calc = EMT()
+        run_optimization(atoms, fmax=0.05, max_steps=5, output_dir=tmp_path,
+                         model_name="emt", verbose=False,
+                         device_requested="auto", device_resolved="cpu")
+        provenance = _record(tmp_path)["provenance"]
+        assert provenance["device_requested"] == "auto"
+        assert provenance["device_resolved"] == "cpu"

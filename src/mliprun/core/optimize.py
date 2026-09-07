@@ -54,6 +54,28 @@ def _committee_parameters(committee, committee_config, threshold) -> dict:
     return parameters
 
 
+def _committee_provenance(committee, committee_config):
+    """The ``provenance.committee`` block, declared values plus measured ones.
+
+    ``committee_config`` carries only what ``committee.yaml`` DECLARED. The
+    versions each member reported from inside its own env once it had loaded
+    -- interpreter, ASE, torch, MLIP package and its version -- are collected
+    by ``worker._versions``, returned by ``CommitteeCalculator.start()`` and
+    kept on ``member_versions``. Merging them here is the only reason a
+    committee record can say what actually ran rather than what was asked
+    for; without it a committee record carries no MLIP version at all, where
+    a single-model record carries three.
+
+    ``getattr`` rather than an attribute access: ``run_optimization`` accepts
+    any object with the committee protocol, and the test doubles in this
+    repo's suite predate ``member_versions``.
+    """
+    if committee_config is None:
+        return None
+    return committee_config.as_provenance(
+        measured_versions=getattr(committee, "member_versions", None))
+
+
 def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
     """Build the convergence figure.
 
@@ -204,8 +226,12 @@ def run_optimization(
         parameter tagged ``unspecified``.
     device_requested : str
         The device as asked for (e.g. ``'auto'``), recorded for provenance.
+        Ignored on a committee run: both device fields become the string
+        ``'committee'``, because the driver process resolves no device at all
+        and each member's own ``device``/``gpu`` is recorded per member.
     device_resolved : str
-        The device actually used (e.g. ``'cuda'``).
+        The device actually used (e.g. ``'cuda'``). See ``device_requested``
+        for the committee case.
     uma_task : str, optional
         UMA task actually used, recorded for provenance. Ignored for
         non-UMA models.
@@ -276,6 +302,30 @@ def run_optimization(
 
     OptimizerClass = OPTIMIZER_MAP[optimizer_name]
 
+    if committee is not None:
+        # A committee may be reused across structures (the docstring above
+        # invites exactly that), and it still carries the PREVIOUS structure's
+        # statistics. If this run fails before its first successful evaluation
+        # -- a member rejecting the geometry, which is the failure preflight
+        # exists for -- the exception handler below would otherwise write the
+        # previous structure's sigma, its atom index and its flag into THIS
+        # run's record, wearing this structure's element symbols. Clearing here
+        # is safe: `log_convergence` guards on `latest is not None`, the
+        # optimizer's first `get_potential_energy()` repopulates it before the
+        # observer fires, and `uncertainty_summary(rows=[], latest=None)`
+        # returns all-null with `flagged: False`, which is the honest output.
+        committee.latest = None
+        committee.latest_uncertainty_summary = None
+
+        # The driver process is designed to have no torch at all (ADR 0001), so
+        # `resolve_device("auto")` returns "cpu" here on ImportError even when
+        # every member is on its own GPU. Recording that would be a false claim
+        # about what hardware ran the calculation. The authoritative per-member
+        # `device` and `gpu` live in the committee provenance block; these two
+        # fields say only that device selection happened per member.
+        device_requested = "committee"
+        device_resolved = "committee"
+
     record = RunRecord.begin(
         output_path,
         command="optimize",
@@ -302,8 +352,7 @@ def run_optimization(
             uma_task=uma_task,
             mace_head=mace_head,
             sevennet_task=sevennet_task,
-            committee=(committee_config.as_provenance()
-                       if committee_config is not None else None),
+            committee=_committee_provenance(committee, committee_config),
         ),
         run_context=run_context,
     )

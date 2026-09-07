@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from mliprun.core.committee.config import (
+    LEVEL_TABLE_VERSION,
     CommitteeConfigError,
     load_committee,
     python_for_env,
@@ -320,6 +321,239 @@ class TestMixedTheoryWarning:
         for member in config.members:
             assert member.name in warning
             assert member.level_of_theory in warning
+
+
+class TestHeadAndTaskRules:
+    """committee.yaml obeys the same head/task rules `mlip optimize run` does.
+
+    Each rejection below is one the CLI's ``validate_mlip`` already makes.
+    Before this, a committee member went straight to ``build_calculator``,
+    which guards only a MISSING head or task on the multi-head tags, so the
+    combinations here ran silently with the wrong model while the member's
+    name, its CSV column header and its provenance block all described the
+    head or task that was ignored.
+
+    Only the head/task half of ``validate_mlip`` applies. Its availability
+    half is deliberately NOT used: it asks whether the package is importable
+    in the DRIVER env, which for a committee is the wrong env by design.
+    """
+
+    def test_a_head_on_single_head_mace_is_rejected(self, tmp_path, fake_env):
+        """`mace` is MACE-MP-0 medium: the head is ignored by the calculator,
+        so accepting it names the member, its CSV column and its provenance
+        after an RPBE/OC20 head that never ran."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: chgnet}}
+              - {{env: {b}, mlip: mace, mace_head: oc20_usemppbe}}
+        """)
+        with pytest.raises(CommitteeConfigError) as excinfo:
+            load_committee(path)
+        assert "member 1" in str(excinfo.value)
+        assert "single-head" in str(excinfo.value)
+        assert "oc20_usemppbe" in str(excinfo.value)
+
+    def test_a_task_on_a_single_task_sevennet_tag_is_rejected(self, tmp_path,
+                                                              fake_env):
+        """`7net-omat` resolves its level from the TAG (PBE/OMat24) while the
+        calculator would be handed modal='oc20': a well-formed file yielding a
+        wrong level-of-theory label."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: chgnet}}
+              - {{env: {b}, mlip: 7net-omat, sevennet_task: oc20}}
+        """)
+        with pytest.raises(CommitteeConfigError) as excinfo:
+            load_committee(path)
+        assert "member 1" in str(excinfo.value)
+        assert "single-task" in str(excinfo.value)
+
+    def test_an_unknown_head_on_a_multi_head_tag_is_rejected(self, tmp_path,
+                                                             fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: mace-mh-1, mace_head: not_a_head}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        with pytest.raises(CommitteeConfigError) as excinfo:
+            load_committee(path)
+        assert "member 0" in str(excinfo.value)
+        assert "unknown mace_head" in str(excinfo.value)
+
+    def test_an_unknown_task_on_a_verified_uma_tag_is_rejected(self, tmp_path,
+                                                               fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: uma-s-1p2, uma_task: not_a_task}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        with pytest.raises(CommitteeConfigError) as excinfo:
+            load_committee(path)
+        assert "member 0" in str(excinfo.value)
+        assert "unknown uma_task" in str(excinfo.value)
+
+    def test_a_missing_uma_task_is_rejected(self, tmp_path, fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: uma-s-1p2}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        with pytest.raises(CommitteeConfigError, match="uma_task is required"):
+            load_committee(path)
+
+    def test_a_missing_mace_head_is_rejected(self, tmp_path, fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: mace-mh-1}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        with pytest.raises(CommitteeConfigError,
+                           match="mace_head is required"):
+            load_committee(path)
+
+    def test_a_missing_sevennet_task_is_rejected(self, tmp_path, fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: 7net-omni}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        with pytest.raises(CommitteeConfigError,
+                           match="sevennet_task is required"):
+            load_committee(path)
+
+    def test_an_unknown_sevennet_task_is_rejected(self, tmp_path, fake_env):
+        """SevenNet task names are matched exactly: 7net-mf-0 spells its tasks
+        in uppercase where every other model uses lowercase, so a case-folded
+        match would send the checkpoint a task it does not have."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: 7net-mf-0, sevennet_task: pbe}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        with pytest.raises(CommitteeConfigError) as excinfo:
+            load_committee(path)
+        assert "unknown sevennet_task" in str(excinfo.value)
+        assert "PBE" in str(excinfo.value)
+
+    def test_a_head_or_task_on_the_reserved_emt_tag_is_rejected(self, tmp_path,
+                                                                fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: emt, uma_task: omat}}
+              - {{env: {b}, mlip: emt}}
+        """)
+        with pytest.raises(CommitteeConfigError) as excinfo:
+            load_committee(path)
+        assert "member 0" in str(excinfo.value)
+        assert "EMT" in str(excinfo.value)
+
+    def test_the_reserved_emt_tag_still_parses_on_its_own(self, tmp_path,
+                                                          fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: emt}}
+              - {{env: {b}, mlip: emt}}
+        """)
+        config = load_committee(path)
+        assert [m.mlip for m in config.members] == ["emt", "emt"]
+
+    def test_an_unregistered_uma_tag_forwards_its_task_unchecked(
+            self, tmp_path, fake_env):
+        """A newer checkpoint may carry heads this table has not seen;
+        rejecting a valid one would be worse than not checking it. Nothing is
+        silent about it: the level resolves to 'unknown', which flags the
+        committee as mixed."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: uma-x-9p9, uma_task: brand_new}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        config = load_committee(path)
+        assert config.members[0].uma_task == "brand_new"
+        assert config.members[0].level_of_theory == "unknown"
+        assert config.mixed_theory is True
+
+    def test_an_unregistered_sevennet_tag_forwards_its_task_unchecked(
+            self, tmp_path, fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: 7net-brand-new, sevennet_task: whatever}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        config = load_committee(path)
+        assert config.members[0].sevennet_task == "whatever"
+        assert config.members[0].level_of_theory == "unknown"
+
+    def test_the_shipped_example_file_is_still_valid(self):
+        """examples/committee.yaml is the file users copy. Its head/task
+        combinations must survive the rule this class adds. Checked through
+        the validator directly rather than load_committee, because the
+        example's env paths are cos-cluster paths that do not exist here."""
+        import yaml
+
+        from mliprun.core.committee.config import _validate_head_task
+
+        example = (Path(__file__).resolve().parents[1] / "examples"
+                   / "committee.yaml")
+        entries = yaml.safe_load(example.read_text(encoding="utf-8"))["members"]
+        assert len(entries) == 3
+        for index, entry in enumerate(entries):
+            _validate_head_task(index, entry["mlip"], entry.get("uma_task"),
+                                entry.get("mace_head"),
+                                entry.get("sevennet_task"))
+
+
+class TestLevelTableVersion:
+    def test_the_table_version_reaches_provenance(self, tmp_path, fake_env):
+        """A wrong ROW in the level-of-theory table fails silently: two
+        entries with the same label for different datasets read as same-level
+        with no signal anywhere. The stamped version is what makes a record
+        written under a later-corrected table re-judgeable."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: chgnet}}
+              - {{env: {b}, mlip: mace}}
+        """)
+        provenance = load_committee(path).as_provenance()
+        assert provenance["level_table_version"] == LEVEL_TABLE_VERSION
+        assert isinstance(LEVEL_TABLE_VERSION, int)
+        assert LEVEL_TABLE_VERSION >= 1
+
+    def test_measured_versions_merge_in_by_member_name(self, tmp_path,
+                                                       fake_env):
+        """`as_provenance` echoes what the YAML declared; the measured block
+        is what each member's own env reported back. A member with no measured
+        entry records null, not an empty dict, so "never started" stays
+        distinguishable from "started and reported nothing"."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: chgnet, name: first}}
+              - {{env: {b}, mlip: mace, name: second}}
+        """)
+        config = load_committee(path)
+        provenance = config.as_provenance(measured_versions={
+            "first": {"ase": "3.29.0", "torch": "2.6.0",
+                      "package": "chgnet", "package_version": "0.4.0"},
+        })
+        first, second = provenance["members"]
+        assert first["measured"]["torch"] == "2.6.0"
+        assert first["measured"]["package_version"] == "0.4.0"
+        assert first["mlip"] == "chgnet"        # declared, unchanged
+        assert second["measured"] is None
 
 
 class TestPythonForEnv:

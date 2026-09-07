@@ -164,6 +164,12 @@ class CommitteeCalculator(Calculator):
         #: back instead of recomputing it, so the printed number can never
         #: diverge from what the run record stored.
         self.latest_uncertainty_summary = None
+        #: ``{member name: versions dict}`` as MEASURED inside each member's
+        #: own env by ``worker._versions`` -- the interpreter, ASE, torch and
+        #: MLIP package that actually loaded, which is not the same fact as
+        #: what committee.yaml declared. Populated by :meth:`start`; empty
+        #: until then. ``run_optimization`` merges it into the run record.
+        self.member_versions: dict = {}
         self.n_evaluations = 0
         self._pool = None
 
@@ -181,6 +187,10 @@ class CommitteeCalculator(Calculator):
         several members share a device. A member that fails to load closes
         every member -- including the one that just failed -- so a failed
         startup leaves no orphans holding CUDA contexts.
+
+        The returned block is also stored on :attr:`member_versions`, because
+        it is what the run record needs and every caller of this method used
+        to discard the return value.
         """
         started = []
         try:
@@ -192,7 +202,9 @@ class CommitteeCalculator(Calculator):
             raise
         self._pool = ThreadPoolExecutor(max_workers=len(self.members),
                                         thread_name_prefix="committee")
-        return {m.name: getattr(m, "versions", {}) for m in self.members}
+        self.member_versions = {m.name: dict(getattr(m, "versions", {}) or {})
+                                for m in self.members}
+        return self.member_versions
 
     def close(self) -> None:
         """Tear every member down. Idempotent.
