@@ -388,15 +388,15 @@ class TestHeadProvenance:
 
 
 class TestSchemaVersion:
-    def test_schema_version_is_three(self):
-        """2 added uma_task/mace_head; 3 adds sevennet_task. The bump lets a
-        reader tell 'no sevennet_task key because the record predates the
-        field' from 'sevennet_task is null because it was MACE'."""
-        assert SCHEMA_VERSION == 3
+    def test_schema_version_is_four(self):
+        """2 added uma_task/mace_head; 3 adds sevennet_task; 4 adds the
+        committee block, because collect_provenance took a single
+        mlip_model and a committee needs a list."""
+        assert SCHEMA_VERSION == 4
 
     def test_written_record_carries_the_new_version(self, tmp_path):
         _begin(tmp_path)
-        assert _read(tmp_path)["schema_version"] == 3
+        assert _read(tmp_path)["schema_version"] == 4
 
 
 class TestHeadInStageProvenance:
@@ -604,3 +604,98 @@ class TestSevenNetTaskProvenance:
         changed, new = _split_provenance(incoming, top)
         assert changed == {}
         assert new == {"sevennet_task": "mpa"}
+
+
+class TestCommitteeProvenance:
+    """Schema 4: a committee run records a list of members, not one model."""
+
+    def _committee(self):
+        return {
+            "members": [
+                {"name": "uma-s-1p2@oc20", "mlip": "uma-s-1p2",
+                 "uma_task": "oc20", "mace_head": None, "sevennet_task": None,
+                 "env": "/scratchb/juar/.venv/uma",
+                 "python": "/scratchb/juar/.venv/uma/bin/python",
+                 "device": "auto", "gpu": 0,
+                 "level_of_theory": "RPBE/OC20"},
+                {"name": "7net-omni@oc20", "mlip": "7net-omni",
+                 "uma_task": None, "mace_head": None,
+                 "sevennet_task": "oc20",
+                 "env": "/scratchb/juar/.venv/sevenn",
+                 "python": "/scratchb/juar/.venv/sevenn/bin/python",
+                 "device": "auto", "gpu": 1,
+                 "level_of_theory": "RPBE/OC20"},
+            ],
+            "levels": ["RPBE/OC20"],
+            "mixed_theory": False,
+            "config_sha256": "a" * 64,
+            "config_path": "/work/committee.yaml",
+        }
+
+    def test_the_committee_block_is_recorded_verbatim(self):
+        prov = collect_provenance(mlip_model="committee",
+                                  device_requested="auto",
+                                  device_resolved="cuda",
+                                  committee=self._committee())
+        assert len(prov["committee"]["members"]) == 2
+        assert prov["committee"]["members"][0]["level_of_theory"] == "RPBE/OC20"
+        assert prov["committee"]["mixed_theory"] is False
+        assert prov["committee_config_sha256"] == "a" * 64
+
+    def test_the_config_hash_is_promoted_to_a_flat_field(self):
+        """Flat, so an appended stage can report 'the committee changed' as
+        one string rather than diffing a nested member list."""
+        prov = collect_provenance(mlip_model="committee",
+                                  device_requested="auto",
+                                  device_resolved="cuda",
+                                  committee=self._committee())
+        assert prov["committee_config_sha256"] == prov["committee"][
+            "config_sha256"]
+
+    def test_a_single_model_run_gains_no_committee_keys(self):
+        """Single-model runs keep writing exactly what they write today."""
+        prov = collect_provenance(mlip_model="uma-s-1p2",
+                                  device_requested="auto",
+                                  device_resolved="cuda", uma_task="oc20")
+        assert "committee" not in prov
+        assert "committee_config_sha256" not in prov
+
+    def test_head_gating_still_applies_to_a_committee_run(self):
+        """model tag 'committee' is not a UMA/MACE/SevenNet tag, so the
+        top-level head fields stay null -- the heads live per member."""
+        prov = collect_provenance(mlip_model="committee",
+                                  device_requested="auto",
+                                  device_resolved="cpu", uma_task="oc20",
+                                  committee=self._committee())
+        assert prov["uma_task"] is None
+        assert prov["mace_head"] is None
+        assert prov["sevennet_task"] is None
+
+    def test_a_malformed_committee_block_does_not_raise(self):
+        """collect_provenance must be total: it runs outside RunRecord.begin's
+        try, so anything it raises kills the run."""
+        prov = collect_provenance(mlip_model="committee",
+                                  device_requested="auto",
+                                  device_resolved="cpu",
+                                  committee={"members": {1, 2, 3}})
+        assert "committee" in prov
+
+    def test_a_changed_committee_shows_up_in_an_appended_stage(self, tmp_path):
+        RunRecord.begin(tmp_path, command="optimize", stage_kind="optimize",
+                        parameters={}, inputs={},
+                        provenance=collect_provenance(
+                            mlip_model="committee", device_requested="auto",
+                            device_resolved="cpu",
+                            committee=self._committee())).complete(
+                                status="converged")
+        changed = self._committee()
+        changed["config_sha256"] = "b" * 64
+        RunRecord.begin(tmp_path, command="optimize", stage_kind="optimize",
+                        parameters={}, inputs={},
+                        provenance=collect_provenance(
+                            mlip_model="committee", device_requested="auto",
+                            device_resolved="cpu", committee=changed),
+                        append=True).complete(status="converged")
+
+        stage = _read(tmp_path)["stages"][1]
+        assert stage["stage_provenance"]["committee_config_sha256"] == "b" * 64

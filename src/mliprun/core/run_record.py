@@ -30,7 +30,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 RECORD_FILENAME = "mliprun_run.json"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 #: Model-tag prefix -> installed distribution name. Longest prefix wins, so
 #: ``mace-mh-1`` resolves before the bare ``mace`` entry.
@@ -49,10 +49,13 @@ VALID_PARAM_SOURCES = frozenset({"user", "default", "env", "prompt", "unspecifie
 
 #: Provenance fields compared between the run's origin and an appended
 #: stage. Only these fields are meaningful to call out as "what changed" --
-#: see I2 in .superpowers/sdd/task-1-fixes.md.
+#: see I2 in .superpowers/sdd/task-1-fixes.md. The committee is represented
+#: here by its config hash, not the nested member list: a one-string diff
+#: says "a different committee ran" without copying every member into the
+#: stage.
 _PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved",
                            "mlip_model", "uma_task", "mace_head",
-                           "sevennet_task")
+                           "sevennet_task", "committee_config_sha256")
 
 #: Stage key for diff fields the incoming provenance carries but the stored
 #: top-level provenance has no slot for at all -- see `_split_provenance`.
@@ -166,7 +169,8 @@ def _mlip_package(mlip_model: Any) -> dict:
 def collect_provenance(*, mlip_model: Any, device_requested: str,
                         device_resolved: str, uma_task: Optional[str] = None,
                         mace_head: Optional[str] = None,
-                        sevennet_task: Optional[str] = None) -> dict:
+                        sevennet_task: Optional[str] = None,
+                        committee: Optional[dict] = None) -> dict:
     """Gather environment and version facts for the record.
 
     ``device_requested`` and ``device_resolved`` are kept apart because
@@ -197,6 +201,16 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
     Values are recorded verbatim. SevenNet's ``7net-mf-0`` names its tasks in
     uppercase (``PBE``, ``R2SCAN``) where every other model uses lowercase, so
     normalising the case here would record a task name no checkpoint has.
+
+    ``committee`` is the block from
+    :meth:`~mliprun.core.committee.config.CommitteeConfig.as_provenance` --
+    one entry per member with its tag, task or head, env, resolved level of
+    theory and GPU, plus the levels present, the ``mixed_theory`` flag and a
+    SHA-256 of the ``committee.yaml``. It is added only when a committee
+    actually ran, so a single-model record is byte-identical to what schema 3
+    wrote apart from the version number. Like everything else here it is
+    individually guarded: a committee block that cannot be serialized must
+    not cost the run its record.
     """
     try:
         mliprun_version = version("mliprun")
@@ -219,7 +233,7 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
     except Exception:  # noqa: BLE001 -- fails on some HPC/container setups
         hostname = None
     tag = mlip_model if isinstance(mlip_model, str) else ""
-    return {
+    provenance = {
         "mliprun_version": mliprun_version,
         "ase_version": ase_version,
         "mlip_package": mlip_package,
@@ -235,6 +249,15 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
         "finished_at": None,
         "walltime_s": None,
     }
+    if committee is not None:
+        try:
+            provenance["committee"] = _jsonable(committee)
+            provenance["committee_config_sha256"] = committee.get(
+                "config_sha256")
+        except Exception:  # noqa: BLE001 -- never cost the run its record
+            provenance["committee"] = {"error": "could not record committee"}
+            provenance["committee_config_sha256"] = None
+    return provenance
 
 
 @dataclass
