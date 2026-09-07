@@ -155,6 +155,21 @@ idempotent and safe to call again in a `finally`, which is what the CLI
 does; call it yourself if you build a `CommitteeCalculator` without the
 context manager.
 
+**Signals are yours to handle.** The library installs no signal handlers, so
+that a caller who installs their own keeps them. That matters for `SIGTERM`
+in particular: its default disposition terminates the interpreter *without*
+unwinding the stack, so a plain `kill` on your driver runs neither the `with`
+block above nor the `atexit` backstop, and leaves every member running and
+holding its CUDA context. `mlip optimize run --committee` handles this itself
+by routing `SIGTERM` into a `KeyboardInterrupt` for the committee's whole
+lifetime; a Python API caller who wants the same protection must do the
+equivalent. `SIGKILL` cannot be handled at all, so the worker covers that end
+itself: it polls its parent pid every 2 s and exits `3` once the driver is
+gone (`mliprun.core.committee.worker.ORPHAN_POLL_S`). That poll exists
+because the worker's other defence — seeing EOF when the driver's pipe closes
+— is only reachable *between* calculations, and a member spends nearly all of
+a relaxation inside one.
+
 `committee.start()` loads every member's model, sequentially, and raises
 `mliprun.core.committee.remote.MemberError` naming the failing member if any
 one of them cannot load. It closes every member first, so a failed startup

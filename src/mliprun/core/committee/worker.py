@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 import traceback
 
@@ -24,6 +25,53 @@ from mliprun.core.committee import protocol
 #: committee.yaml -- on a machine with no MLIP installed at all. EMT is a
 #: toy potential for a handful of metals: never use it for science.
 EMT_TAG = "emt"
+
+#: How often the worker checks that its driver is still alive. Cheap enough
+#: to be invisible next to a model forward pass.
+ORPHAN_POLL_S = 2.0
+
+#: Exit status for a worker that outlived its driver, so a worker log tells
+#: this apart from a model that crashed.
+ORPHAN_EXIT_CODE = 3
+
+
+def _exit_when_orphaned(poll_s: float = ORPHAN_POLL_S) -> threading.Thread:
+    """Quit if the driver that spawned this worker disappears.
+
+    The driver's death normally arrives as EOF on stdin, in ``main()``. That
+    covers only an *idle* worker: inside a calculation -- where a committee
+    member spends nearly all of a relaxation's wall clock -- this process is
+    not reading stdin and cannot see the pipe close at all. Without this
+    poll, a driver that dies with no chance to clean up (SIGKILL, an OOM
+    kill, a failed node) leaves the worker running and holding its CUDA
+    context, which makes the GPU look busy to everyone else on a shared node.
+
+    A driver killed with SIGTERM tears its workers down itself; this is the
+    case where it never gets to run any code.
+
+    ``os._exit`` rather than an exception: this runs on a thread, the main
+    thread is deep inside a model's forward pass, and the point is to release
+    the GPU now rather than to unwind tidily.
+    """
+    original_parent = os.getppid()
+
+    def _watch() -> None:
+        while True:
+            time.sleep(poll_s)
+            # Compared against the pid recorded at start, not against 1: on
+            # a system with a subreaper the orphan is inherited by that,
+            # not by init.
+            if os.getppid() != original_parent:
+                sys.stderr.write(
+                    f"committee worker {os.getpid()}: driver "
+                    f"{original_parent} is gone, exiting\n")
+                sys.stderr.flush()
+                os._exit(ORPHAN_EXIT_CODE)
+
+    thread = threading.Thread(target=_watch, name="orphan-watchdog",
+                              daemon=True)
+    thread.start()
+    return thread
 
 
 def _protect_stdout():
@@ -132,7 +180,8 @@ def _handle_calc(calc, request: dict) -> dict:
 
 
 def main(argv=None) -> int:
-    """Serve requests until ``quit`` or the driver closes the pipe."""
+    """Serve requests until ``quit``, or the driver goes away."""
+    _exit_when_orphaned()
     out = _protect_stdout()
     stdin = sys.stdin.buffer
     calc = None

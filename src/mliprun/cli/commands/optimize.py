@@ -1,5 +1,8 @@
+import contextlib
 import csv
+import signal
 import sys
+import threading
 import time
 import traceback
 import typer
@@ -107,6 +110,93 @@ def _build_committee(config, output_dir: Path,
     ]
     return CommitteeCalculator(members, mixed_theory=config.mixed_theory,
                                levels=config.levels)
+
+
+class _Terminated(KeyboardInterrupt):
+    """SIGTERM, raised in the main thread so the stack actually unwinds.
+
+    A subclass of ``KeyboardInterrupt`` deliberately: Ctrl+C teardown is the
+    path that is already tested and was re-confirmed on cos-cluster, so
+    SIGTERM joins it rather than opening a second one.
+    """
+
+
+@contextlib.contextmanager
+def _sigterm_as_interrupt():
+    """Make SIGTERM unwind the stack instead of killing the process outright.
+
+    SIGTERM's default disposition terminates the interpreter *without*
+    unwinding, so a plain ``kill`` on a committee driver skips both the
+    teardown around the run and the ``atexit`` backstop in
+    ``committee.remote``. The workers are left running, holding their CUDA
+    contexts, and cos-cluster has no scheduler to reap them (verified by pid
+    on 2026-09-07: driver dead, two workers still holding 2948 MiB).
+
+    The worker's own defence -- exiting when the driver closes its end of the
+    pipe -- does not cover this, because a worker only reaches
+    ``stdin.readline()`` *between* calculations. During a relaxation it
+    spends nearly all of its wall clock inside the model's forward pass,
+    where the driver's death is invisible to it.
+
+    Installed here, in the CLI, and removed on the way out:
+    ``run_optimization`` is also a Python API entry point, and must not
+    change signal behaviour for a caller who installs their own handler.
+
+    Exit code 143 is 128 + SIGTERM, so a shell still reads a terminated run
+    as terminated rather than as a clean exit.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        # Only the main thread may install a handler, and only the main
+        # thread ever runs one. A caller driving this command from a worker
+        # thread keeps the process's existing disposition.
+        yield
+        return
+
+    def _raise(signum, frame):
+        raise _Terminated("terminated by SIGTERM")
+
+    previous = signal.signal(signal.SIGTERM, _raise)
+    try:
+        yield
+    except _Terminated:
+        # Teardown already ran, on the way out of the inner block.
+        typer.echo("\n⛔ Terminated (SIGTERM). Committee workers shut down.")
+        raise typer.Exit(143) from None
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+@contextlib.contextmanager
+def _started_committee(config, output_dir: Path, member_timeout: float,
+                       atoms):
+    """Start every member, and guarantee teardown on every exit path.
+
+    Every path out of this block closes the workers: a failed load, a failed
+    preflight, an error mid-relaxation, Ctrl+C, and -- through
+    :func:`_sigterm_as_interrupt` -- a plain ``kill``. The guard is armed
+    before the first worker is spawned, because a model load is a long
+    window (22.8 s for UMA in the 2026-09-04 probe) in which a member is
+    already holding GPU memory.
+    """
+    with _sigterm_as_interrupt():
+        calc = _build_committee(config, output_dir, member_timeout)
+        try:
+            typer.echo("⚙️  Starting committee members "
+                       "(one model load each)...")
+            try:
+                calc.start()
+                # Every member evaluates the input geometry once, up front:
+                # members disagree about what input is valid (fairchem's UMA
+                # calculator rejects a pbc=(T,T,F) slab that the others
+                # accept), and that must surface now, not on step 400
+                # tonight.
+                calc.preflight(atoms)
+            except (MemberError, CommitteeError) as exc:
+                typer.echo(f"❌ {exc}")
+                raise typer.Exit(1)
+            yield calc
+        finally:
+            calc.close()
 
 
 def _report_flagged_uncertainty(committee_calc) -> None:
@@ -230,52 +320,45 @@ def run(
     # Output directory
     output_dir = structure.parent
 
-    if committee_config is not None:
-        committee_calc = _build_committee(committee_config, output_dir,
-                                          member_timeout)
-        typer.echo("⚙️  Starting committee members (one model load each)...")
-        try:
-            committee_calc.start()
-            # Every member evaluates the input geometry once, up front:
-            # members disagree about what input is valid (fairchem's UMA
-            # calculator rejects a pbc=(T,T,F) slab that the others accept),
-            # and that must surface now, not on step 400 tonight.
-            committee_calc.preflight(atoms)
-        except (MemberError, CommitteeError) as exc:
-            committee_calc.close()
-            typer.echo(f"❌ {exc}")
-            raise typer.Exit(1)
-        atoms.calc = committee_calc
-    else:
-        # Assign calculator
-        typer.echo(f"⚙️  Attaching {mlip} calculator (device={device})...")
-        if mlip.startswith("uma-"):
-            typer.echo(f"   UMA task: {uma_task}")
-        if mlip.startswith("mace-mh-"):
-            typer.echo(f"   MACE head: {mace_head}")
-        if mlip.startswith("7net"):
-            typer.echo(f"   SevenNet task: {sevennet_task}")
-        atoms = setup_calculator(atoms, mlip, uma_task, device=device,
-                                  mace_head=mace_head,
-                                  sevennet_task=sevennet_task)
+    # A leaked worker holds a CUDA context that makes the GPU look busy to
+    # everyone else on the node, and cos-cluster has no scheduler to reap
+    # orphans. So the committee's whole lifetime -- model loads included --
+    # lives in one scope that closes it on every exit path, SIGTERM included.
+    with contextlib.ExitStack() as committee_session:
+        if committee_config is not None:
+            committee_calc = committee_session.enter_context(
+                _started_committee(committee_config, output_dir,
+                                   member_timeout, atoms))
+            atoms.calc = committee_calc
+        else:
+            # Assign calculator
+            typer.echo(f"⚙️  Attaching {mlip} calculator (device={device})...")
+            if mlip.startswith("uma-"):
+                typer.echo(f"   UMA task: {uma_task}")
+            if mlip.startswith("mace-mh-"):
+                typer.echo(f"   MACE head: {mace_head}")
+            if mlip.startswith("7net"):
+                typer.echo(f"   SevenNet task: {sevennet_task}")
+            atoms = setup_calculator(atoms, mlip, uma_task, device=device,
+                                     mace_head=mace_head,
+                                     sevennet_task=sevennet_task)
 
-    # Run optimization
-    typer.echo(f"\n🔧 Optimizer: {optimizer.upper()}")
-    typer.echo(f"   fmax = {fmax} eV/Å")
-    typer.echo(f"   max_steps = {max_steps}")
-    typer.echo(f"   Output dir: {output_dir.resolve()}\n")
+        # Run optimization
+        typer.echo(f"\n🔧 Optimizer: {optimizer.upper()}")
+        typer.echo(f"   fmax = {fmax} eV/Å")
+        typer.echo(f"   max_steps = {max_steps}")
+        typer.echo(f"   Output dir: {output_dir.resolve()}\n")
 
-    run_context = RunContext(
-        command="optimize",
-        mode="one-off",
-        param_sources=param_sources_from_ctx(ctx),
-    )
-    run_context.extra_inputs = {
-        "structure": structure.name,
-        "structure_abspath": str(structure.resolve()),
-    }
+        run_context = RunContext(
+            command="optimize",
+            mode="one-off",
+            param_sources=param_sources_from_ctx(ctx),
+        )
+        run_context.extra_inputs = {
+            "structure": structure.name,
+            "structure_abspath": str(structure.resolve()),
+        }
 
-    try:
         converged = run_optimization(
             atoms=atoms,
             optimizer=optimizer,
@@ -298,12 +381,6 @@ def run(
             committee_config=committee_config,
             uncertainty_threshold=uncertainty_threshold,
         )
-    finally:
-        # A leaked worker holds a CUDA context that makes the GPU look busy
-        # to everyone else on the node, and cos-cluster has no scheduler to
-        # reap orphans.
-        if committee_calc is not None:
-            committee_calc.close()
 
     # Save parameters
     _write_params(output_dir / "opt_params.txt", mlip, uma_task, mace_head,
