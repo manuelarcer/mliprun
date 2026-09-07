@@ -7,6 +7,17 @@ from pathlib import Path
 from ase.io import read
 from mliprun.core.optimize import run_optimization, OPTIMIZER_MAP
 from mliprun.core.run_record import BatchInfo, RunContext, new_batch_id
+from mliprun.core.committee.calculator import (
+    CommitteeCalculator,
+    CommitteeError,
+    uncertainty_summary,
+)
+from mliprun.core.committee.config import CommitteeConfigError, load_committee
+from mliprun.core.committee.remote import (
+    DEFAULT_CALC_TIMEOUT_S,
+    MemberError,
+    RemoteMember,
+)
 from mliprun.cli.utils import (
     DEVICE_HELP,
     MACE_HEAD_HELP,
@@ -48,6 +59,87 @@ def _find_input_structure(subdir: Path, pattern: str) -> Path:
     return candidates[0]
 
 
+#: Model-selection options the committee file owns. Passing any of them with
+#: --committee is an error rather than a silent precedence rule.
+_COMMITTEE_CONFLICTS = ("mlip", "uma_task", "mace_head", "sevennet_task")
+
+
+def _reject_conflicting_options(ctx) -> None:
+    """Fail if a model-selection option was typed alongside --committee.
+
+    Checked against the *parameter source*, not the value: --mlip defaults to
+    'auto', so comparing values would either miss a typed 'auto' or reject
+    every committee run.
+    """
+    sources = param_sources_from_ctx(ctx)
+    typed = [name for name in _COMMITTEE_CONFLICTS
+             if sources.get(name) == "user"]
+    if typed:
+        flags = ", ".join("--" + name.replace("_", "-") for name in typed)
+        typer.echo(
+            f"❌ {flags} cannot be combined with --committee.\n"
+            f"   The committee file declares the model, task and head for "
+            f"every member; a flag here would silently do nothing.")
+        raise typer.Exit(1)
+
+
+def _build_committee(config, output_dir: Path,
+                     member_timeout: float) -> CommitteeCalculator:
+    """Turn a parsed committee.yaml into a started CommitteeCalculator.
+
+    Each member gets its own worker log next to the run's other outputs --
+    that is where library banners and remote tracebacks land, and every error
+    message points at it.
+    """
+    members = [
+        RemoteMember(
+            spec.name,
+            spec.python_exe,
+            mlip=spec.mlip,
+            uma_task=spec.uma_task,
+            mace_head=spec.mace_head,
+            sevennet_task=spec.sevennet_task,
+            device=spec.device,
+            gpu=spec.gpu,
+            log_path=output_dir / f"committee_{spec.name}.log",
+            timeout=member_timeout,
+        )
+        for spec in config.members
+    ]
+    return CommitteeCalculator(members, mixed_theory=config.mixed_theory,
+                               levels=config.levels)
+
+
+def _report_flagged_uncertainty(committee_calc, atoms, fmax: float,
+                                uncertainty_threshold) -> None:
+    """Echo a warning when the final geometry trips the disagreement flag.
+
+    ``run_optimization`` already writes this into the run record and logs it
+    (``mliprun.core.optimize``'s own logger), but a ``logging`` call is not
+    guaranteed to reach the terminal -- the driver may run under a harness
+    that captures logging elsewhere. The flag is this feature's headline
+    claim, so the CLI reports it directly rather than relying on that.
+    """
+    if committee_calc is None or committee_calc.latest is None:
+        return
+    threshold = (float(uncertainty_threshold)
+                 if uncertainty_threshold is not None else float(fmax))
+    threshold_source = ("explicit" if uncertainty_threshold is not None
+                        else "fmax")
+    summary = uncertainty_summary(
+        [], committee_calc.latest, threshold=threshold,
+        threshold_source=threshold_source,
+        symbols=atoms.get_chemical_symbols())
+    if summary["flagged"]:
+        typer.echo(
+            f"\n⚠️  High committee disagreement at the final geometry: "
+            f"sigma_max = {summary['sigma_max_final_eV_per_A']:.4f} eV/Å > "
+            f"{threshold:.4f} ({threshold_source}). The located minimum sits "
+            f"inside the committee's own noise; this configuration deserves "
+            f"a DFT check. Worst atom: {summary['worst_atom_symbol']} "
+            f"(#{summary['worst_atom']}).")
+
+
 @app.command()
 def run(
     ctx: typer.Context,
@@ -57,6 +149,25 @@ def run(
     device: str = typer.Option("auto", help=DEVICE_HELP),
     mace_head: str = typer.Option(None, help=MACE_HEAD_HELP),
     sevennet_task: str = typer.Option(None, help=SEVENNET_TASK_HELP),
+    committee: Path = typer.Option(
+        None, "--committee",
+        help="Path to a committee.yaml declaring two or more MLIP members, "
+             "each in its own env. Drives the relaxation with their mean "
+             "force and reports their disagreement as a per-configuration "
+             "uncertainty. Mutually exclusive with --mlip and the head/task "
+             "options: the file owns model selection."),
+    member_timeout: float = typer.Option(
+        DEFAULT_CALC_TIMEOUT_S, "--member-timeout",
+        help="Seconds a single committee member may take per single-point "
+             "before it is killed and the run aborts. Model loading has its "
+             "own, much longer budget."),
+    uncertainty_threshold: float = typer.Option(
+        None, "--uncertainty-threshold",
+        help="Flag the final configuration when the committee's per-atom "
+             "force disagreement exceeds this (eV/Å). Defaults to --fmax: if "
+             "the models disagree by more than the convergence tolerance, "
+             "the minimum sits inside the committee's own noise. "
+             "UNCALIBRATED default -- see docs/OUTPUTS.md."),
     optimizer: str = typer.Option("bfgs", help=f"Optimizer algorithm: {', '.join(OPTIMIZER_MAP.keys())}"),
     fmax: float = typer.Option(0.05, help="Force convergence threshold (eV/Å)"),
     max_steps: int = typer.Option(200, help="Maximum optimization steps"),
@@ -81,15 +192,34 @@ def run(
     typer.echo(f"📂 Loaded structure: {structure.name}")
     typer.echo(f"   Atoms: {len(atoms)}, Formula: {atoms.get_chemical_formula()}")
 
-    # Detect or validate MLIP
-    if mlip == "auto":
-        mlip = detect_mlip()
-        typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
-        # An auto-detected tag still has to satisfy its own task rules.
-        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
+    committee_config = None
+    committee_calc = None
+    if committee is not None:
+        _reject_conflicting_options(ctx)
+        try:
+            committee_config = load_committee(committee)
+        except CommitteeConfigError as exc:
+            typer.echo(f"❌ {exc}")
+            raise typer.Exit(1)
+        mlip = "committee"
+        typer.echo(f"🧠 Committee of {len(committee_config.members)} members "
+                   f"from {committee}")
+        for spec in committee_config.members:
+            typer.echo(f"   {spec.name}: {spec.mlip} "
+                       f"[{spec.level_of_theory}] gpu={spec.gpu} "
+                       f"env={spec.env}")
+        if committee_config.mixed_theory:
+            typer.echo(f"\n⚠️  {committee_config.mixed_theory_warning()}\n")
     else:
-        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
-        typer.echo(f"🧠 Using MLIP: {mlip}")
+        # Detect or validate MLIP
+        if mlip == "auto":
+            mlip = detect_mlip()
+            typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
+            # An auto-detected tag still has to satisfy its own task rules.
+            validate_mlip(mlip, sevennet_task, uma_task, mace_head)
+        else:
+            validate_mlip(mlip, sevennet_task, uma_task, mace_head)
+            typer.echo(f"🧠 Using MLIP: {mlip}")
 
     # Validate optimizer
     if optimizer.lower() not in OPTIMIZER_MAP:
@@ -97,20 +227,37 @@ def run(
         typer.echo(f"   Available: {', '.join(OPTIMIZER_MAP.keys())}")
         raise typer.Exit(1)
 
-    # Assign calculator
-    typer.echo(f"⚙️  Attaching {mlip} calculator (device={device})...")
-    if mlip.startswith("uma-"):
-        typer.echo(f"   UMA task: {uma_task}")
-    if mlip.startswith("mace-mh-"):
-        typer.echo(f"   MACE head: {mace_head}")
-    if mlip.startswith("7net"):
-        typer.echo(f"   SevenNet task: {sevennet_task}")
-    atoms = setup_calculator(atoms, mlip, uma_task, device=device,
-                              mace_head=mace_head,
-                              sevennet_task=sevennet_task)
-
     # Output directory
     output_dir = structure.parent
+
+    if committee_config is not None:
+        committee_calc = _build_committee(committee_config, output_dir,
+                                          member_timeout)
+        typer.echo("⚙️  Starting committee members (one model load each)...")
+        try:
+            committee_calc.start()
+            # Every member evaluates the input geometry once, up front:
+            # members disagree about what input is valid (fairchem's UMA
+            # calculator rejects a pbc=(T,T,F) slab that the others accept),
+            # and that must surface now, not on step 400 tonight.
+            committee_calc.preflight(atoms)
+        except (MemberError, CommitteeError) as exc:
+            committee_calc.close()
+            typer.echo(f"❌ {exc}")
+            raise typer.Exit(1)
+        atoms.calc = committee_calc
+    else:
+        # Assign calculator
+        typer.echo(f"⚙️  Attaching {mlip} calculator (device={device})...")
+        if mlip.startswith("uma-"):
+            typer.echo(f"   UMA task: {uma_task}")
+        if mlip.startswith("mace-mh-"):
+            typer.echo(f"   MACE head: {mace_head}")
+        if mlip.startswith("7net"):
+            typer.echo(f"   SevenNet task: {sevennet_task}")
+        atoms = setup_calculator(atoms, mlip, uma_task, device=device,
+                                  mace_head=mace_head,
+                                  sevennet_task=sevennet_task)
 
     # Run optimization
     typer.echo(f"\n🔧 Optimizer: {optimizer.upper()}")
@@ -128,31 +275,43 @@ def run(
         "structure_abspath": str(structure.resolve()),
     }
 
-    converged = run_optimization(
-        atoms=atoms,
-        optimizer=optimizer,
-        fmax=fmax,
-        max_steps=max_steps,
-        trajectory=trajectory,
-        logfile=logfile,
-        output_dir=output_dir,
-        model_name=mlip,
-        verbose=verbose,
-        relax_cell=relax_cell,
-        plot=plot,
-        run_context=run_context,
-        device_requested=device,
-        device_resolved=_resolve_device(device),
-        uma_task=uma_task,
-        mace_head=mace_head,
-        sevennet_task=sevennet_task,
-    )
+    try:
+        converged = run_optimization(
+            atoms=atoms,
+            optimizer=optimizer,
+            fmax=fmax,
+            max_steps=max_steps,
+            trajectory=trajectory,
+            logfile=logfile,
+            output_dir=output_dir,
+            model_name=mlip,
+            verbose=verbose,
+            relax_cell=relax_cell,
+            plot=plot,
+            run_context=run_context,
+            device_requested=device,
+            device_resolved=_resolve_device(device),
+            uma_task=uma_task,
+            mace_head=mace_head,
+            sevennet_task=sevennet_task,
+            committee=committee_calc,
+            committee_config=committee_config,
+            uncertainty_threshold=uncertainty_threshold,
+        )
+    finally:
+        # A leaked worker holds a CUDA context that makes the GPU look busy
+        # to everyone else on the node, and cos-cluster has no scheduler to
+        # reap orphans.
+        if committee_calc is not None:
+            committee_calc.close()
 
     # Save parameters
     _write_params(output_dir / "opt_params.txt", mlip, uma_task, mace_head,
                   device, relax_cell, structure.name, optimizer, fmax,
                   max_steps, converged, output_dir,
-                  sevennet_task=sevennet_task)
+                  sevennet_task=sevennet_task,
+                  committee_config=committee_config,
+                  uncertainty_threshold=uncertainty_threshold)
 
     # Print output summary
     typer.echo("\n✅ Optimization complete. Output files:")
@@ -167,6 +326,9 @@ def run(
         "CONTCAR",
         "opt_params.txt"
     ]
+    if committee_config is not None:
+        output_files.insert(3, f"{logfile_stem}_committee.csv")
+        output_files.insert(4, f"{logfile_stem}_committee_peratom.csv")
     if plot:
         output_files.insert(3, f"{logfile_stem}_convergence.png")
     for file in output_files:
@@ -177,6 +339,9 @@ def run(
         typer.echo("   - Increasing max_steps")
         typer.echo("   - Relaxing fmax threshold")
         typer.echo("   - Trying a different optimizer")
+
+    _report_flagged_uncertainty(committee_calc, atoms, fmax,
+                                uncertainty_threshold)
 
 
 @app.command()
@@ -361,12 +526,26 @@ def batch(
 
 def _write_params(param_file, mlip, uma_task, mace_head, device, relax_cell,
                   structure_name, optimizer, fmax, max_steps, converged,
-                  output_dir, sevennet_task=None):
+                  output_dir, sevennet_task=None, committee_config=None,
+                  uncertainty_threshold=None):
     """Write the per-structure opt_params.txt (matches ``optimize run``)."""
     with open(param_file, "w", encoding="utf-8") as f:
         f.write("Geometry Optimization Parameters\n")
         f.write("=================================\n")
         f.write(f"MLIP model:        {mlip}\n")
+        if committee_config is not None:
+            f.write(f"Committee:         {committee_config.source_path}\n")
+            f.write(f"  sha256:          {committee_config.sha256}\n")
+            f.write(f"  mixed theory:    {committee_config.mixed_theory}\n")
+            for spec in committee_config.members:
+                f.write(f"  - {spec.name}: {spec.mlip} "
+                        f"[{spec.level_of_theory}] gpu={spec.gpu} "
+                        f"env={spec.env}\n")
+            threshold = (uncertainty_threshold
+                         if uncertainty_threshold is not None else fmax)
+            source = ("explicit" if uncertainty_threshold is not None
+                      else "fmax")
+            f.write(f"Uncertainty thr.:  {threshold} ({source})\n")
         if mlip.startswith("uma-"):
             f.write(f"UMA task:          {uma_task}\n")
         if mlip.startswith("mace-mh-"):
