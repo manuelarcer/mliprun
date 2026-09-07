@@ -92,11 +92,12 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
     if committee_rows:
         ax3 = axes[2]
         steps = [row["step"] for row in committee_rows]
-        ax3.plot(steps, [row["sigma_max_eV_per_A"] for row in committee_rows],
-                 marker="o", markersize=4, linewidth=1.5,
+        sigma_max = [row["sigma_max_eV_per_A"] for row in committee_rows]
+        sigma_mean = [row["sigma_mean_eV_per_A"] for row in committee_rows]
+        ax3.plot(steps, sigma_max, marker="o", markersize=4, linewidth=1.5,
                  label="sigma_max")
-        ax3.plot(steps, [row["sigma_mean_eV_per_A"] for row in committee_rows],
-                 marker="s", markersize=3, linewidth=1.0, label="sigma_mean")
+        ax3.plot(steps, sigma_mean, marker="s", markersize=3, linewidth=1.0,
+                 label="sigma_mean")
         ax3.axhline(y=fmax, color="r", linestyle="--",
                     label=f"fmax target = {fmax}")
         ax3.set_xlabel("Optimization Step")
@@ -104,7 +105,37 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
         ax3.set_title("Committee Disagreement")
         ax3.legend()
         ax3.grid(True, alpha=0.3)
-        ax3.set_yscale("log")
+
+        # sigma is non-negative by construction. A plain log scale silently
+        # drops every non-positive value with no warning (matplotlib just
+        # excludes them from autoscaling), so an exactly-agreeing committee
+        # -- sigma identically 0, this project's own sanity check -- would
+        # render as an empty panel. Never clamp a true zero to a fake
+        # epsilon: that falsifies the figure. Instead pick the scale from
+        # what is actually being plotted.
+        positive_values = [v for v in sigma_max + sigma_mean if v > 0]
+        if not positive_values:
+            # No disagreement at any step: linear keeps both flat-zero
+            # traces on screen, and the annotation says why the panel is
+            # flat rather than leaving the reader to guess.
+            ax3.set_yscale("linear")
+            ax3.text(0.5, 0.5,
+                     "sigma is identically zero: committee members agree "
+                     "exactly at every step",
+                     transform=ax3.transAxes, ha="center", va="center",
+                     fontsize=9, style="italic",
+                     bbox=dict(boxstyle="round", facecolor="white",
+                               alpha=0.85))
+        elif len(positive_values) < len(sigma_max) + len(sigma_mean):
+            # Mixed: some steps agree exactly, others don't. A log scale
+            # would drop precisely the exact-agreement steps while plotting
+            # the rest normally -- more misleading than an empty panel,
+            # since it looks like clean data. symlog keeps every point by
+            # treating |sigma| <= linthresh linearly.
+            ax3.set_yscale("symlog", linthresh=min(positive_values))
+        else:
+            # Normal case: every value is a real, positive disagreement.
+            ax3.set_yscale("log")
 
     fig.tight_layout()
     return fig
