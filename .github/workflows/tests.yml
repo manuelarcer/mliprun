@@ -25,7 +25,26 @@ jobs:
           # [neb] pulls the real asetools from GitHub (PyPI's "asetools" is unrelated).
           pip install -e ".[dev,neb]"
 
+      # `mliprun.core.committee.worker` never runs in the pytest process: it is
+      # spawned as `<member-env>/bin/python -m mliprun.core.committee.worker`,
+      # one process per committee member. coverage.py does not follow a
+      # subprocess on its own, so the module that talks to every MLIP measured
+      # 0.0% while being exercised by every committee test. This .pth arms
+      # coverage in any Python process started while COVERAGE_PROCESS_START is
+      # set (the step below sets it). Recent coverage releases ship an
+      # equivalent .pth of their own; `process_startup()` is idempotent, so
+      # writing ours costs nothing and removes the dependency on which coverage
+      # version pip happened to resolve.
+      - name: Arm coverage inside spawned worker subprocesses
+        run: |
+          python -c "import pathlib,sysconfig; p=pathlib.Path(sysconfig.get_paths()['purelib'])/'mliprun-subprocess-coverage.pth'; p.write_text('import coverage; coverage.process_startup()\n'); print('wrote', p)"
+
       - name: Run test suite with coverage
+        env:
+          # Points the .pth above at [tool.coverage.run] in pyproject.toml,
+          # which sets parallel = true so each worker writes its own data file.
+          # pytest-cov runs `coverage combine` before writing the report.
+          COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
         run: pytest --cov=mliprun --cov-report=xml
 
       - name: Diff coverage gate (>= 90% on changed lines)

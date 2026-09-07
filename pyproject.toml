@@ -60,6 +60,10 @@ neb = [
 dev = [
     "pytest",
     "pytest-cov",
+    # Named explicitly (pytest-cov would pull it in anyway) because the
+    # [tool.coverage.*] config lives in this file: the [toml] extra adds the
+    # tomli backport that coverage needs to read it on Python < 3.11.
+    "coverage[toml]",
     "diff-cover",
     # mutmut 3.x dropped the --paths-to-mutate CLI flag and reads config from
     # pyproject.toml ([tool.mutmut] below); pinned <3 for the flag-based CLI.
@@ -90,3 +94,35 @@ where = ["src"]
 
 [tool.mutmut]
 paths_to_mutate = "src/mliprun/"
+
+# Coverage measurement, including the committee worker SUBPROCESSES.
+#
+# `mliprun.core.committee.worker` never runs in the test process: it is spawned
+# as `<member-env>/bin/python -m mliprun.core.committee.worker`, one process per
+# committee member. Plain coverage.py does not follow a subprocess, so the
+# module that talks to every MLIP measured 0.0% while being exercised by every
+# protocol, remote and CLI committee test. That is unmeasured, not unrun, and
+# excluding the file from the gate would make a green check a lie about the
+# riskiest module in the package.
+#
+# The measurement needs all three of these together:
+#   1. `parallel = true` below, so each process writes its own data file
+#      (`.coverage.<host>.<pid>.<random>`) instead of racing for one.
+#   2. `COVERAGE_PROCESS_START=<this file>` in the environment. coverage ships a
+#      site-packages `.pth` that calls `coverage.process_startup()` when that
+#      variable is set, which is what arms the child. `RemoteMember.start()`
+#      copies `os.environ` into the worker, so it propagates.
+#   3. `coverage combine` before `coverage xml` (pytest-cov does this for you).
+#
+# See .github/workflows/tests.yml for the exact CI invocation.
+#
+# worker.py will not reach 100% however it is measured: the timeout and hang
+# tests SIGKILL their worker, and a SIGKILLed process flushes no coverage data.
+[tool.coverage.run]
+source = ["mliprun"]
+parallel = true
+
+[tool.coverage.paths]
+# Collapse the driver's path and any worker's path onto one file, so combine
+# does not report the same module twice.
+source = ["src/mliprun", "*/mliprun"]
