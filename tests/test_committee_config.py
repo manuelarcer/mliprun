@@ -1,5 +1,6 @@
 """Parsing and validating committee.yaml."""
 import hashlib
+import os
 import sys
 import textwrap
 from pathlib import Path
@@ -106,12 +107,20 @@ class TestValidFile:
                                                  monkeypatch):
         a, b = fake_env("a"), fake_env("b")
         monkeypatch.setenv("MLIPRUN_TEST_ROOT", str(a))
+        # A genuine `~` case: .expanduser() is a separate code path from
+        # $VAR expansion and needs its own coverage, or it could be deleted
+        # without any test noticing.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        home_env = fake_env("home_env")
         path = _write(tmp_path, f"""
             members:
               - {{env: "$MLIPRUN_TEST_ROOT", mlip: chgnet}}
               - {{env: {b}, mlip: mace}}
+              - {{env: "~/home_env", mlip: chgnet}}
         """)
-        assert load_committee(path).members[0].env == str(a)
+        config = load_committee(path)
+        assert config.members[0].env == str(a)
+        assert config.members[2].env == str(home_env)
 
     def test_provenance_block_carries_every_member(self, tmp_path, fake_env):
         a, b = fake_env("a"), fake_env("b")
@@ -160,6 +169,26 @@ class TestRejections:
         path = _write(tmp_path, "members: [unclosed\n")
         with pytest.raises(CommitteeConfigError, match="could not parse"):
             load_committee(path)
+
+    def test_an_unreadable_file(self, tmp_path, fake_env):
+        """is_file() only proves the path is a regular file. A
+        permission-denied committee.yaml must not propagate a raw OSError
+        past load_committee -- the CLI catches only CommitteeConfigError."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: chgnet}}
+              - {{env: {b}, mlip: mace}}
+        """)
+        os.chmod(path, 0o000)
+        if os.geteuid() == 0:
+            pytest.skip("root ignores file permissions; chmod cannot deny "
+                        "the owner")
+        try:
+            with pytest.raises(CommitteeConfigError, match="could not read"):
+                load_committee(path)
+        finally:
+            os.chmod(path, 0o644)
 
     def test_a_top_level_list(self, tmp_path):
         path = _write(tmp_path, "- one\n- two\n")
@@ -218,7 +247,7 @@ class TestRejections:
               - {{env: {empty}, mlip: chgnet}}
               - {{env: {b}, mlip: mace}}
         """)
-        with pytest.raises(CommitteeConfigError, match="interpreter"):
+        with pytest.raises(CommitteeConfigError, match=r"member 0.*interpreter"):
             load_committee(path)
 
     def test_duplicate_explicit_names(self, tmp_path, fake_env):
@@ -251,6 +280,46 @@ class TestRejections:
         """)
         with pytest.raises(CommitteeConfigError, match="gpu"):
             load_committee(path)
+
+    def test_a_boolean_gpu(self, tmp_path, fake_env):
+        """bool is a subclass of int: `gpu: true` must not silently become
+        device index 1."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: chgnet, gpu: true}}
+              - {{env: {b}, mlip: mace}}
+        """)
+        with pytest.raises(CommitteeConfigError, match="gpu"):
+            load_committee(path)
+
+
+class TestMixedTheoryWarning:
+    def test_a_same_level_committee_has_no_warning(self, tmp_path, fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: chgnet}}
+              - {{env: {b}, mlip: chgnet}}
+        """)
+        assert load_committee(path).mixed_theory_warning() == ""
+
+    def test_a_mixed_level_committee_names_every_member(self, tmp_path,
+                                                         fake_env):
+        """Assert on the member names and resolved levels, not the prose --
+        the surrounding wording may be reworded later."""
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: chgnet}}
+              - {{env: {b}, mlip: mace}}
+        """)
+        config = load_committee(path)
+        warning = config.mixed_theory_warning()
+        assert warning != ""
+        for member in config.members:
+            assert member.name in warning
+            assert member.level_of_theory in warning
 
 
 class TestPythonForEnv:

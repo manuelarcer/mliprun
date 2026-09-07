@@ -234,6 +234,12 @@ def _parse_member(entry, index: int) -> dict:
             raise CommitteeConfigError(
                 f"member {index} is missing required key '{required}'")
     gpu = entry.get("gpu")
+    if isinstance(gpu, bool):
+        # bool is a subclass of int -- `gpu: true` must not silently become
+        # device index 1.
+        raise CommitteeConfigError(
+            f"member {index}: gpu must be an integer device index, got "
+            f"{gpu!r}")
     if gpu is not None and not isinstance(gpu, int):
         raise CommitteeConfigError(
             f"member {index}: gpu must be an integer device index, got "
@@ -259,9 +265,14 @@ def load_committee(path) -> CommitteeConfig:
     path = Path(path)
     if not path.is_file():
         raise CommitteeConfigError(f"committee file not found: {path}")
-    raw = path.read_bytes()
     try:
+        raw = path.read_bytes()
         document = yaml.safe_load(raw.decode("utf-8"))
+    except OSError as exc:
+        # is_file() only proves the path is a regular file -- a
+        # permission-denied (or otherwise unreadable) committee.yaml must
+        # not propagate a raw OSError past this module.
+        raise CommitteeConfigError(f"could not read {path}: {exc}") from exc
     except (yaml.YAMLError, UnicodeDecodeError) as exc:
         raise CommitteeConfigError(
             f"could not parse {path}: {exc}") from exc
@@ -303,10 +314,19 @@ def load_committee(path) -> CommitteeConfig:
         used_names.add(name)
 
         env = str(Path(os.path.expandvars(str(entry["env"]))).expanduser())
+        try:
+            python_exe = str(python_for_env(env))
+        except CommitteeConfigError as exc:
+            # python_for_env's own message names only the env path; with
+            # several members pointing at similarly-named env directories
+            # the reader needs the member index too. Not changed on
+            # python_for_env itself -- it is a public interface exercised
+            # directly by TestPythonForEnv.
+            raise CommitteeConfigError(f"member {index}: {exc}") from exc
         members.append(MemberSpec(
             name=name,
             env=env,
-            python_exe=str(python_for_env(env)),
+            python_exe=python_exe,
             mlip=mlip,
             uma_task=entry.get("uma_task"),
             mace_head=entry.get("mace_head"),
