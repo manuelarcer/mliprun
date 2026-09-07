@@ -6,6 +6,7 @@ Design: docs/superpowers/specs/2026-09-04-committee-uncertainty-design.md
 """
 from __future__ import annotations
 
+import csv
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -293,3 +294,170 @@ class CommitteeCalculator(Calculator):
                     f"member '{member.name}' returned a non-finite energy")
             stacked.append(array)
         return np.stack(stacked)
+
+
+class CommitteeTraceWriter:
+    """Append-as-you-go writer for ``<stem>_committee.csv``.
+
+    One row per optimizer step, flushed as it is written: a committee run
+    that dies at step 300 keeps its first 300 steps of disagreement data.
+
+    Column meanings
+    ---------------
+    energy_mean_eV
+        Mean of the members' raw energies -- the optimizer's objective. Its
+        absolute value is meaningless across packages (the four-member probe
+        saw a 4.81 eV spread at one fixed geometry, almost all of it
+        per-model offset); differences along a trajectory are not.
+    energy_spread_aligned_eV
+        Standard deviation (``ddof=1``, not a range) of the members' energies
+        after each member's own step-0 energy is removed. Composition is
+        fixed during a relaxation, so the offset cancels exactly and this is
+        a real energy uncertainty. Zero by construction on the first row.
+    E_<member>_eV
+        Each member's raw energy.
+    sigma_max_eV_per_A, sigma_mean_eV_per_A, worst_atom
+        Per-atom force disagreement, reduced.
+    mixed_theory
+        The warn-don't-refuse flag, repeated on every row so downstream
+        analysis can filter on it without having read the terminal.
+    """
+
+    def __init__(self, path, member_names, mixed_theory: bool):
+        member_names = list(member_names)
+        for name in member_names:
+            if "," in name or any(c.isspace() for c in name):
+                raise ValueError(
+                    f"member name {name!r} is not usable as a CSV column "
+                    f"header")
+        self.path = str(path)
+        self.member_names = member_names
+        self.mixed_theory = bool(mixed_theory)
+        self.rows: list = []
+        self._baseline: dict = {}
+        self._fieldnames = (
+            ["step", "energy_mean_eV", "energy_spread_aligned_eV"]
+            + [f"E_{name}_eV" for name in member_names]
+            + ["fmax_eV_per_A", "sigma_max_eV_per_A", "sigma_mean_eV_per_A",
+               "worst_atom", "mixed_theory"]
+        )
+        self._handle = open(self.path, "w", newline="", encoding="utf-8")
+        self._writer = csv.DictWriter(self._handle,
+                                      fieldnames=self._fieldnames)
+        self._writer.writeheader()
+        self._handle.flush()
+
+    def write_step(self, step: int, latest: dict, fmax_value: float) -> dict:
+        """Append one optimizer step. Returns the row it wrote."""
+        energies = latest["energies"]
+        if not self._baseline:
+            self._baseline = dict(energies)
+        row = {
+            "step": int(step),
+            "energy_mean_eV": float(latest["energy_mean"]),
+            "energy_spread_aligned_eV": aligned_energy_spread(
+                energies, self._baseline),
+            "fmax_eV_per_A": float(fmax_value),
+            "sigma_max_eV_per_A": float(latest["sigma_max"]),
+            "sigma_mean_eV_per_A": float(latest["sigma_mean"]),
+            "worst_atom": int(latest["worst_atom"]),
+            "mixed_theory": self.mixed_theory,
+        }
+        for name in self.member_names:
+            row[f"E_{name}_eV"] = float(energies[name])
+        self._writer.writerow(row)
+        self._handle.flush()
+        self.rows.append(row)
+        return row
+
+    def close(self) -> None:
+        """Close the file. Idempotent."""
+        if self._handle is not None:
+            try:
+                self._handle.close()
+            finally:
+                self._handle = None
+
+
+def write_peratom_sigma(path, symbols, sigma_per_atom) -> None:
+    """Write the final geometry's per-atom force disagreement.
+
+    Final geometry only: a per-atom field at every step would be a large file
+    for little gain, and ``worst_atom`` already traces where the disagreement
+    lives during the run. This file is the most diagnostically useful output
+    -- it says *which* atoms the models disagree about, which is usually the
+    adsorbate or the reacting bond.
+    """
+    symbols = list(symbols)
+    sigma_per_atom = np.asarray(sigma_per_atom, dtype=float).reshape(-1)
+    if len(symbols) != sigma_per_atom.size:
+        raise ValueError(
+            f"{len(symbols)} symbols but {sigma_per_atom.size} sigma values")
+    with open(path, "w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["atom_index", "symbol", "sigma_eV_per_A"])
+        for index, (symbol, sigma) in enumerate(zip(symbols, sigma_per_atom)):
+            writer.writerow([index, symbol, float(sigma)])
+
+
+def uncertainty_summary(rows, latest, *, threshold: float,
+                        threshold_source: str, symbols=None) -> dict:
+    """Reduce a committee run to the block the run record stores.
+
+    The flagging rule: a configuration is flagged when ``sigma_max`` at the
+    **final** geometry exceeds ``threshold``. Self-scaling and physically
+    motivated -- if the models disagree about the forces by more than the
+    convergence tolerance, the located minimum sits inside the committee's
+    own noise and the geometry is not resolved. A path that passed through a
+    strained geometry but converged to a well-constrained minimum is not
+    flagged, which is why the peak is reported separately.
+
+    **The default threshold is uncalibrated.** The 2026-09-04 probe measured
+    sigma_F only across four mixed-level members, so there is no same-level
+    number yet. Calibrating it is a natural first use of the feature; until
+    then the threshold and its source travel with the flag so a later reader
+    knows what was applied.
+
+    Parameters
+    ----------
+    rows : list of dict
+        The trace rows, as written by :class:`CommitteeTraceWriter`.
+    latest : dict or None
+        The final evaluation's statistics. ``None`` when the run died before
+        evaluating anything.
+    threshold : float
+        The sigma_max above which the configuration is flagged.
+    threshold_source : {"fmax", "explicit"}
+        Where the threshold came from.
+    symbols : sequence of str, optional
+        Chemical symbols, used to name the worst atom.
+    """
+    summary = {
+        "n_steps": len(rows),
+        "threshold_eV_per_A": float(threshold),
+        "threshold_source": threshold_source,
+        "sigma_max_final_eV_per_A": None,
+        "sigma_mean_final_eV_per_A": None,
+        "sigma_max_peak_eV_per_A": None,
+        "peak_step": None,
+        "worst_atom": None,
+        "worst_atom_symbol": None,
+        "energy_spread_aligned_final_eV": None,
+        "flagged": False,
+    }
+    if rows:
+        peak = max(rows, key=lambda r: r["sigma_max_eV_per_A"])
+        summary["sigma_max_peak_eV_per_A"] = float(peak["sigma_max_eV_per_A"])
+        summary["peak_step"] = int(peak["step"])
+        summary["energy_spread_aligned_final_eV"] = float(
+            rows[-1]["energy_spread_aligned_eV"])
+    if latest is not None:
+        sigma_max = float(latest["sigma_max"])
+        worst = int(latest["worst_atom"])
+        summary["sigma_max_final_eV_per_A"] = sigma_max
+        summary["sigma_mean_final_eV_per_A"] = float(latest["sigma_mean"])
+        summary["worst_atom"] = worst
+        if symbols is not None and worst < len(symbols):
+            summary["worst_atom_symbol"] = symbols[worst]
+        summary["flagged"] = bool(sigma_max > threshold)
+    return summary
