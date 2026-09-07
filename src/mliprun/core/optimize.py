@@ -54,6 +54,62 @@ def _committee_parameters(committee, committee_config, threshold) -> dict:
     return parameters
 
 
+def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
+    """Build the convergence figure.
+
+    Two panels normally -- energy and max force. A committee run gets a third
+    carrying the per-atom force disagreement, on the same log scale as the
+    force panel so the two are read against each other: where sigma_max
+    approaches fmax, the minimum sits inside the committee's own noise.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The caller saves and closes it.
+    """
+    n_panels = 3 if committee_rows else 2
+    fig, axes = plt.subplots(n_panels, 1, figsize=(8, 4 * n_panels))
+    ax1, ax2 = axes[0], axes[1]
+
+    ax1.plot(df["step"], df["energy(eV)"], marker="o", markersize=4,
+             linewidth=1.5)
+    ax1.set_xlabel("Optimization Step")
+    ax1.set_ylabel("Energy (eV)")
+    ax1.set_title(f"Energy Convergence ({optimizer.upper()})")
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(df["step"], df["fmax(eV/A)"], marker="o", markersize=4,
+             linewidth=1.5, color="orange")
+    ax2.axhline(y=fmax, color="r", linestyle="--",
+                label=f"fmax target = {fmax}")
+    ax2.set_xlabel("Optimization Step")
+    ax2.set_ylabel("Max Force (eV/Ang)")
+    ax2.set_title("Force Convergence")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_yscale("log")
+
+    if committee_rows:
+        ax3 = axes[2]
+        steps = [row["step"] for row in committee_rows]
+        ax3.plot(steps, [row["sigma_max_eV_per_A"] for row in committee_rows],
+                 marker="o", markersize=4, linewidth=1.5,
+                 label="sigma_max")
+        ax3.plot(steps, [row["sigma_mean_eV_per_A"] for row in committee_rows],
+                 marker="s", markersize=3, linewidth=1.0, label="sigma_mean")
+        ax3.axhline(y=fmax, color="r", linestyle="--",
+                    label=f"fmax target = {fmax}")
+        ax3.set_xlabel("Optimization Step")
+        ax3.set_ylabel("Force disagreement (eV/Ang)")
+        ax3.set_title("Committee Disagreement")
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        ax3.set_yscale("log")
+
+    fig.tight_layout()
+    return fig
+
+
 def run_optimization(
     atoms,
     optimizer: str = "bfgs",
@@ -321,25 +377,11 @@ def run_optimization(
     # Plot convergence (skippable: the figure + savefig is per-structure IO that
     # dominates short relaxations; the CSV above retains the same data).
     if plot:
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 8))
-
-        ax1.plot(df["step"], df["energy(eV)"], marker="o", markersize=4, linewidth=1.5)
-        ax1.set_xlabel("Optimization Step")
-        ax1.set_ylabel("Energy (eV)")
-        ax1.set_title(f"Energy Convergence ({optimizer.upper()})")
-        ax1.grid(True, alpha=0.3)
-
-        ax2.plot(df["step"], df["fmax(eV/A)"], marker="o", markersize=4, linewidth=1.5, color="orange")
-        ax2.axhline(y=fmax, color="r", linestyle="--", label=f"fmax target = {fmax}")
-        ax2.set_xlabel("Optimization Step")
-        ax2.set_ylabel("Max Force (eV/Ang)")
-        ax2.set_title("Force Convergence")
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
-        ax2.set_yscale("log")
-
-        plt.tight_layout()
-        plt.savefig(convergence_plot, dpi=150)
-        plt.close()
+        figure = _plot_convergence(
+            df, fmax, optimizer,
+            committee_rows=(trace_writer.rows if trace_writer is not None
+                            else None))
+        figure.savefig(convergence_plot, dpi=150)
+        plt.close(figure)
 
     return converged
