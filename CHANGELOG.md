@@ -171,6 +171,32 @@ All notable changes to this project are documented here. Format follows [Keep a 
   which claims the value *changed* — so a same-head resume of a legacy run
   wrongly asserted the head had switched. `schema_version` is left as stage 0
   wrote it; see [docs/OUTPUTS.md](docs/OUTPUTS.md#stages).
+- **Breaking:** the committee's `sigma_max` and `sigma_mean` now exclude
+  constrained force components, so they are taken over the same atoms as
+  ASE's `fmax`. Previously a frozen slab atom could carry the reported
+  maximum: 8 of 17 atoms were fixed in one measured O/Pt(111) relaxation, 32
+  of 82 in a CH/FeNi one. The unmasked values are kept as `sigma_max_all` /
+  `sigma_mean_all` / `worst_atom_all`. Only `FixAtoms` and `FixCartesian` are
+  masked — the only stock ASE constraints whose `adjust_forces` is a pure
+  component mask; every other constraint type leaves its atoms counted as
+  free (sigma over-reported, never under-reported) and its type name is
+  recorded in `unhandled_constraints`.
+- **Breaking:** `--uncertainty-threshold` no longer defaults to `--fmax`.
+  With no threshold the run still reports `sigma_max`, `sigma_mean`, the
+  worst atom, and their ratio to fmax (`sigma_max_over_fmax_final`), but
+  asserts no verdict, and `flagged` is `null` rather than `false`. The old
+  default fired on ordinary healthy relaxations (same-level committees
+  measured 0.11-0.15 eV/Å against convergence targets of 0.02-0.05).
+  `flagged` is now tri-state: `true`/`false` when a threshold was checked,
+  `null` when none was applied *or* when a threshold was set but the run
+  died before its first evaluation — `null` is not the same as `false`.
+- **Breaking: run record schema 4 → 5.** `results.committee_uncertainty`
+  gains `sigma_max_all_final_eV_per_A`, `n_free_atoms`,
+  `unhandled_constraints` and `sigma_max_over_fmax_final`; `threshold_source`
+  is now `"explicit"` or `"none"` (`"fmax"` can no longer be produced).
+- `<stem>_committee.csv` gains `sigma_max_all_eV_per_A` and `n_free_atoms`;
+  `<stem>_committee_peratom.csv` gains `sigma_free_eV_per_A` and
+  `free_components`, and still lists every atom, constrained ones included.
 
 ### Fixed
 
