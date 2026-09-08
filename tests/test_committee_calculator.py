@@ -1,4 +1,5 @@
 """CommitteeCalculator: fan-out, abort behaviour, and use as an ASE calculator."""
+import logging
 import os
 import sys
 from pathlib import Path
@@ -8,7 +9,7 @@ import pytest
 from ase import Atoms
 from ase.build import bulk
 from ase.calculators.emt import EMT
-from ase.constraints import FixAtoms
+from ase.constraints import FixAtoms, FixBondLengths
 from ase.optimize import BFGS
 
 from mliprun.core.committee.calculator import CommitteeCalculator, CommitteeError
@@ -287,3 +288,21 @@ class TestConstraintsReachTheStatistic:
             calc.start()
             stats = calc.preflight(atoms)
         assert stats["sigma_max"] == pytest.approx(0.1, abs=1e-9)
+
+    def test_an_unhandled_constraint_leaves_atoms_free_and_warns_once(
+            self, caplog):
+        """FixBondLengths projects rather than masks, so its atoms fall back
+        to counted-as-free -- sigma over-reported, the safe direction. The
+        warning must not repeat every evaluation: a 400-step relaxation
+        would otherwise print it 400 times and bury the thing it says."""
+        atoms = self._atoms()
+        atoms.set_constraint(FixBondLengths([(0, 1)]))
+        with CommitteeCalculator(self._members(1.0, 0.0)) as calc:
+            calc.start()
+            with caplog.at_level(logging.WARNING):
+                calc.preflight(atoms)
+                calc.preflight(atoms)
+        assert calc.latest["unhandled_constraints"] == ["FixBondLengths"]
+        assert calc.latest["n_free_atoms"] == 2
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 1

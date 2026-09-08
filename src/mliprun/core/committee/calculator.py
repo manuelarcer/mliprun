@@ -256,6 +256,11 @@ class CommitteeCalculator(Calculator):
         self.member_versions: dict = {}
         self.n_evaluations = 0
         self._pool = None
+        #: Distinct ``unhandled_constraints`` tuples already logged, so the
+        #: warning fires once per kind of unmasked constraint rather than
+        #: once per force evaluation (``_evaluate`` runs every optimizer
+        #: step).
+        self._warned_unhandled: set = set()
 
     @property
     def member_names(self) -> list:
@@ -375,7 +380,12 @@ class CommitteeCalculator(Calculator):
         # time the run writes it.
         stats["free_mask"] = free_mask
         stats["unhandled_constraints"] = unhandled
-        if unhandled:
+        # Once per distinct set, not once per evaluation: `_evaluate` runs on
+        # every force call, so an unconditional warning would repeat itself
+        # several hundred times in one relaxation and bury the thing it is
+        # trying to say.
+        if unhandled and tuple(unhandled) not in self._warned_unhandled:
+            self._warned_unhandled.add(tuple(unhandled))
             logger.warning(
                 "committee sigma: constraint type(s) %s are not masked, so "
                 "their atoms are counted as free and sigma is over-reported",

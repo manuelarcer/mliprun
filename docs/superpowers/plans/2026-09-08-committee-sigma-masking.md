@@ -380,7 +380,13 @@ In `CommitteeCalculator._evaluate`, replace the `stats = committee_statistics(or
         # time the run writes it.
         stats["free_mask"] = free_mask
         stats["unhandled_constraints"] = unhandled
-        if unhandled:
+        # Once per distinct set, not once per evaluation: `_evaluate` runs on
+        # every force call, so an unconditional warning would repeat itself
+        # several hundred times in one relaxation and bury the thing it is
+        # trying to say. Requires `self._warned_unhandled = set()` in
+        # `__init__`.
+        if unhandled and tuple(unhandled) not in self._warned_unhandled:
+            self._warned_unhandled.add(tuple(unhandled))
             logger.warning(
                 "committee sigma: constraint type(s) %s are not masked, so "
                 "their atoms are counted as free and sigma is over-reported",
