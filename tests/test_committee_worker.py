@@ -3,8 +3,11 @@
 Exercised through a real subprocess under the current interpreter, building
 ASE's EMT. No MLIP is needed.
 """
+import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -132,3 +135,135 @@ class TestStdoutProtection:
         log = log_path.read_text(encoding="utf-8", errors="replace")
         assert "BANNER: loading model weights" in log
         assert "more chatter from the library" in log
+
+
+#: A driver that starts one real worker, holds it inside a calculation, and
+#: then waits to be killed. Written as a script rather than driven in-process
+#: because the whole point is that the *parent* dies.
+_ORPHANING_DRIVER = """
+import os, sys
+os.environ["PYTHONPATH"] = {patch_dir!r} + os.pathsep + os.environ.get("PYTHONPATH", "")
+os.environ["MLIPRUN_TEST_EMT_DELAY"] = "60"
+sys.path.insert(0, {src!r})
+from mliprun.core.committee.remote import RemoteMember
+
+member = RemoteMember("held", sys.executable, mlip="emt",
+                      log_path={log!r}, timeout=600.0, load_timeout=120.0)
+member.start()
+print(member.pid, flush=True)
+member.calculate([29], [[0.0, 0.0, 0.0]],
+                 [[10.0, 0, 0], [0, 10.0, 0], [0, 0, 10.0]],
+                 [True, True, True])
+"""
+
+#: Makes every EMT single point take MLIPRUN_TEST_EMT_DELAY seconds, so the
+#: worker is reliably *inside* a calculation when its driver is killed.
+_SLOW_EMT_SITECUSTOMIZE = """
+import os
+import time
+
+_delay = os.environ.get("MLIPRUN_TEST_EMT_DELAY")
+if _delay:
+    from ase.calculators.emt import EMT
+    _original = EMT.calculate
+
+    def calculate(self, *args, **kwargs):
+        time.sleep(float(_delay))
+        return _original(self, *args, **kwargs)
+
+    EMT.calculate = calculate
+"""
+
+
+def _pid_is_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+class TestOrphanWatchdog:
+    """A worker must not outlive a driver that died without cleaning up.
+
+    Closing the driver's end of the pipe is the documented backstop, but the
+    worker only reaches ``stdin.readline()`` *between* calculations. Inside
+    one -- where a committee member spends nearly all of its wall clock --
+    the driver's death is invisible to it, so a SIGKILLed, OOM-killed or
+    node-failed driver leaves the worker running and holding its GPU memory.
+    SIGTERM is handled driver-side; this is the case where the driver never
+    gets to run any code at all.
+    """
+
+    def test_the_watchdog_exits_with_its_own_status_once_the_parent_changes(
+            self, monkeypatch):
+        """The decision, checked directly.
+
+        The end-to-end test below proves the worker really goes away, but a
+        process that calls ``os._exit`` can report nothing back -- not even
+        its coverage -- so the status code and the comparison against the
+        *recorded* parent pid are asserted here instead. ``os._exit`` is
+        replaced by a ``SystemExit``, which ends the watchdog thread rather
+        than the test session.
+        """
+        from mliprun.core.committee import worker as worker_mod
+
+        exits = []
+
+        def _fake_exit(code):
+            exits.append(code)
+            raise SystemExit(code)
+
+        # A subreaper, not init: the watchdog must compare against the pid it
+        # recorded at startup, not against 1.
+        parents = iter([4321, 4321, 99])
+        monkeypatch.setattr(worker_mod.os, "_exit", _fake_exit)
+        monkeypatch.setattr(worker_mod.os, "getppid",
+                            lambda: next(parents, 99))
+
+        thread = worker_mod._exit_when_orphaned(poll_s=0.02)
+        thread.join(timeout=10)
+
+        assert exits == [worker_mod.ORPHAN_EXIT_CODE]
+        assert worker_mod.ORPHAN_EXIT_CODE == 3
+
+    def test_a_worker_inside_a_calculation_exits_when_its_driver_is_killed(
+            self, tmp_path):
+        patch_dir = tmp_path / "slow_emt"
+        patch_dir.mkdir()
+        (patch_dir / "sitecustomize.py").write_text(_SLOW_EMT_SITECUSTOMIZE,
+                                                    encoding="utf-8")
+        src = str(Path(__file__).resolve().parents[1] / "src")
+        script = tmp_path / "driver.py"
+        script.write_text(
+            _ORPHANING_DRIVER.format(patch_dir=str(patch_dir), src=src,
+                                     log=str(tmp_path / "worker.log")),
+            encoding="utf-8")
+
+        driver = subprocess.Popen([sys.executable, str(script)],
+                                  stdout=subprocess.PIPE, text=True,
+                                  start_new_session=True)
+        worker_pid = None
+        try:
+            worker_pid = int(driver.stdout.readline().strip())
+            # Well inside the 60 s calculation, so the worker is not at
+            # stdin.readline() and cannot see the pipe close.
+            time.sleep(3.0)
+            assert _pid_is_alive(worker_pid)
+
+            driver.kill()          # SIGKILL: no handler, no teardown, no atexit
+            driver.wait(timeout=10)
+
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and _pid_is_alive(worker_pid):
+                time.sleep(0.2)
+            assert not _pid_is_alive(worker_pid), (
+                f"worker {worker_pid} outlived its SIGKILLed driver")
+        finally:
+            if driver.poll() is None:
+                driver.kill()
+                driver.wait(timeout=10)
+            if worker_pid is not None and _pid_is_alive(worker_pid):
+                os.kill(worker_pid, signal.SIGKILL)

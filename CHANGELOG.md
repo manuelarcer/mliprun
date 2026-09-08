@@ -172,6 +172,31 @@ All notable changes to this project are documented here. Format follows [Keep a 
   wrongly asserted the head had switched. `schema_version` is left as stage 0
   wrote it; see [docs/OUTPUTS.md](docs/OUTPUTS.md#stages).
 
+### Fixed
+
+- **A plain `kill` (SIGTERM) on a committee run no longer orphans its
+  workers.** SIGTERM's default disposition terminates the interpreter without
+  unwinding the stack, so neither the CLI's teardown nor the `atexit` backstop
+  ran, and every worker was left running and holding its CUDA context — which
+  makes the GPU look busy to everyone else on a shared node with no scheduler
+  to reap orphans. Verified by pid on cos-cluster (2026-09-07): driver dead,
+  two workers still holding 2948 MiB minutes later. `optimize run --committee`
+  now routes SIGTERM into the same unwinding path `Ctrl+C` already took, for
+  the committee's whole lifetime including the model loads, and exits **143**
+  (128 + SIGTERM) after shutting the members down. The handler is installed by
+  the CLI, not by the library, and is removed on the way out: `run_optimization`
+  is also a Python API entry point and must not change signal behaviour for a
+  caller who installs their own. Runs without `--committee` are untouched.
+- **A committee worker now exits when its driver dies without cleaning up**
+  (SIGKILL, an OOM kill, a failed node). The documented backstop — the worker
+  seeing EOF once the driver's pipe closes — only ever covered an *idle*
+  worker: inside a calculation, which is where a member spends nearly all of a
+  relaxation's wall clock, the process is not reading stdin and cannot observe
+  the close at all. That is why the orphaned cluster workers were in state `R`.
+  Each worker now polls its parent pid every 2 s and exits `3` once the driver
+  is gone, comparing against the pid recorded at startup rather than against 1,
+  so a subreaper does not hide the orphaning.
+
 ## [0.4.0] - 2026-07-14
 
 ### Added

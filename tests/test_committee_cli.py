@@ -1,5 +1,12 @@
 """CLI surface for committee runs."""
 import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -283,3 +290,225 @@ class TestSingleModelPathUnchanged:
         result = runner.invoke(app, ["run", "--structure", str(structure)])
         assert calls == ["detect"]
         assert "committee" not in result.output.lower()
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """Signal 0 rather than a process listing.
+
+    ``ps``/``pgrep`` are blocked in some sandboxes and fail there in a way
+    that reads as "no such process", which would turn this whole class into
+    a test that always passes.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+class TestSigtermTeardown:
+    """SIGTERM must tear the committee down, not orphan it.
+
+    SIGTERM's default disposition kills the process without unwinding the
+    stack, so the CLI's teardown and the ``atexit`` backstop in ``remote``
+    are both skipped. The worker's own defence -- noticing the driver's
+    closed pipe -- is unreachable while it is inside a calculation, because
+    it is not reading stdin then. On cos-cluster (2026-09-07) that left two
+    workers running with 2948 MiB of GPU memory held after their driver was
+    killed. Ctrl+C was never affected and must stay that way.
+    """
+
+    def test_the_guard_installs_and_restores_the_sigterm_disposition(self):
+        """``run_optimization`` is a Python API entry point too, so the
+        handler must not outlive the committee window."""
+        from mliprun.cli.commands.optimize import _sigterm_as_interrupt
+
+        before = signal.getsignal(signal.SIGTERM)
+        with _sigterm_as_interrupt():
+            during = signal.getsignal(signal.SIGTERM)
+            assert callable(during)
+            assert during is not before
+        assert signal.getsignal(signal.SIGTERM) is before
+
+    def test_the_installed_handler_unwinds_instead_of_terminating(self):
+        """The whole fix is this: SIGTERM raises, so ``finally`` runs."""
+        from mliprun.cli.commands.optimize import _sigterm_as_interrupt
+
+        with _sigterm_as_interrupt():
+            handler = signal.getsignal(signal.SIGTERM)
+            with pytest.raises(KeyboardInterrupt):
+                handler(signal.SIGTERM, None)
+
+    def test_a_caller_on_a_worker_thread_keeps_its_own_disposition(self):
+        """Only the main thread may install a handler, and only the main
+        thread ever runs one. A caller driving this command from another
+        thread must not have the process's disposition changed underneath
+        them."""
+        from mliprun.cli.commands.optimize import _sigterm_as_interrupt
+
+        observed = {}
+
+        def _inside():
+            with _sigterm_as_interrupt():
+                observed["during"] = signal.getsignal(signal.SIGTERM)
+
+        before = signal.getsignal(signal.SIGTERM)
+        thread = threading.Thread(target=_inside)
+        thread.start()
+        thread.join(timeout=10)
+        assert observed["during"] is before
+        assert signal.getsignal(signal.SIGTERM) is before
+
+    def test_a_committee_run_is_armed_while_it_holds_workers(
+            self, structure, fake_committee_file, monkeypatch):
+        """Armed for the whole window in which workers exist, and disarmed
+        again once they are gone."""
+        path, _ = fake_committee_file
+        import mliprun.cli.commands.optimize as optimize_cli
+
+        observed = {}
+
+        def _capture(*args, **kwargs):
+            observed["during"] = signal.getsignal(signal.SIGTERM)
+            return True
+
+        monkeypatch.setattr(optimize_cli, "run_optimization", _capture)
+
+        before = signal.getsignal(signal.SIGTERM)
+        result = runner.invoke(app, ["run", "--structure", str(structure),
+                                     "--committee", str(path),
+                                     "--no-verbose"])
+        assert result.exit_code == 0
+        assert observed["during"] is not before
+        assert observed["during"] is not signal.SIG_DFL
+        assert signal.getsignal(signal.SIGTERM) is before
+
+    def test_a_sigterm_mid_run_closes_every_member_and_exits_143(
+            self, structure, fake_committee_file, monkeypatch):
+        """The handler is fired from inside the run, which is exactly what a
+        real SIGTERM does at the next bytecode boundary. A real signal is not
+        sent here because an unarmed process would take the default
+        disposition and kill the whole pytest session; the end-to-end proof
+        with a real signal is the subprocess test below.
+
+        143 is 128 + SIGTERM, so a shell still reads the run as terminated
+        rather than as a clean exit.
+        """
+        path, _ = fake_committee_file
+        import mliprun.cli.commands.optimize as optimize_cli
+        import mliprun.core.committee.remote as remote_mod
+
+        def _terminate(*args, **kwargs):
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            raise AssertionError("the SIGTERM handler did not raise")
+
+        monkeypatch.setattr(optimize_cli, "run_optimization", _terminate)
+
+        result = runner.invoke(app, ["run", "--structure", str(structure),
+                                     "--committee", str(path),
+                                     "--no-verbose"])
+        assert result.exit_code == 143
+        live_names = {m.name for m in remote_mod._LIVE}
+        assert "member_a" not in live_names
+        assert "member_b" not in live_names
+
+    def test_the_single_model_path_leaves_sigterm_alone(self, structure,
+                                                        monkeypatch):
+        """Scoped to committee runs: a single-model run keeps whatever
+        disposition the process already had."""
+        import mliprun.cli.commands.optimize as optimize_cli
+
+        observed = {}
+
+        def _capture(*args, **kwargs):
+            observed["during"] = signal.getsignal(signal.SIGTERM)
+            return True
+
+        # No MLIP is installed in this env, and this test is about the
+        # signal disposition, not about model availability.
+        monkeypatch.setattr(optimize_cli, "validate_mlip",
+                            lambda *a, **k: None)
+        monkeypatch.setattr(optimize_cli, "setup_calculator",
+                            lambda atoms, *a, **k: atoms)
+        monkeypatch.setattr(optimize_cli, "run_optimization", _capture)
+
+        before = signal.getsignal(signal.SIGTERM)
+        result = runner.invoke(app, ["run", "--structure", str(structure),
+                                     "--mlip", "uma-s-1p2",
+                                     "--uma-task", "oc20",
+                                     "--no-verbose"])
+        assert result.exit_code == 0
+        assert observed["during"] is before
+
+    def test_sigterm_to_a_real_cli_subprocess_leaves_no_worker(
+            self, structure, tmp_path):
+        """The end-to-end guard, with a real signal to a real driver.
+
+        One member is held inside a calculation and ignores SIGTERM itself,
+        which is the cluster's situation: teardown has to escalate to
+        SIGKILL on the worker's process group. Unlike the in-process tests
+        above, this one can send the real signal, because the driver is a
+        separate process.
+        """
+        member_env = tmp_path / "hanging_env"
+        (member_env / "bin").mkdir(parents=True)
+        launcher = member_env / "bin" / "python"
+        launcher.write_text(
+            "#!/bin/sh\n"
+            f'exec "{sys.executable}" '
+            f'"{STUB_DIR / "sigterm_orphan_worker.py"}"\n')
+        launcher.chmod(0o755)
+
+        config = tmp_path / "committee.yaml"
+        config.write_text(
+            "members:\n"
+            f"  - {{env: {member_env}, mlip: emt, name: held}}\n"
+            f"  - {{env: {Path(sys.executable).parents[1]}, mlip: emt, "
+            f"name: normal}}\n",
+            encoding="utf-8")
+
+        driver = subprocess.Popen(
+            [sys.executable, "-m", "mliprun.cli.main", "optimize", "run",
+             "--structure", str(structure), "--committee", str(config),
+             "--no-verbose"],
+            cwd=str(tmp_path), stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, text=True,
+            start_new_session=True)
+
+        worker_pid = None
+        try:
+            member_log = tmp_path / "committee_held.log"
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                if member_log.exists():
+                    match = re.search(r"WORKER_PID (\d+)",
+                                      member_log.read_text())
+                    if match:
+                        worker_pid = int(match.group(1))
+                        break
+                assert driver.poll() is None, (
+                    f"driver exited early: {driver.communicate()[0]}")
+                time.sleep(0.1)
+            assert worker_pid is not None, "the held member never started"
+
+            # Let the driver get past the loads and into the evaluation the
+            # held member never answers.
+            time.sleep(2.0)
+            assert _pid_is_alive(worker_pid)
+
+            os.kill(driver.pid, signal.SIGTERM)
+            driver.communicate(timeout=60)
+
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and _pid_is_alive(worker_pid):
+                time.sleep(0.2)
+            assert not _pid_is_alive(worker_pid), (
+                f"worker {worker_pid} outlived its SIGTERMed driver")
+        finally:
+            if driver.poll() is None:
+                driver.kill()
+                driver.wait(timeout=10)
+            if worker_pid is not None and _pid_is_alive(worker_pid):
+                os.kill(worker_pid, signal.SIGKILL)
