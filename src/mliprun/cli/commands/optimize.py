@@ -199,35 +199,48 @@ def _started_committee(config, output_dir: Path, member_timeout: float,
             calc.close()
 
 
-def _report_flagged_uncertainty(committee_calc) -> None:
-    """Echo a warning when the final geometry trips the disagreement flag.
+def _report_committee_uncertainty(committee_calc) -> None:
+    """Echo the committee's disagreement at the final geometry.
 
-    This is the single terminal report of the flag at default settings:
-    ``run_optimization``'s own log call is INFO-level (silent unless a
+    Always printed: with no threshold there is no verdict to give, and the
+    numbers are the deliverable. The warning below it appears only when a
+    caller chose a threshold and the run exceeded it.
+
+    This is the single terminal report at default settings:
+    ``run_optimization``'s own log calls are INFO-level (silent unless a
     caller configures logging below WARNING), precisely so this echo is not
-    a duplicate of it.
+    a duplicate of them.
 
     Reads ``committee_calc.latest_uncertainty_summary`` -- the exact
     ``uncertainty_summary(...)`` dict ``run_optimization`` already computed
-    and stored in the run record -- rather than recomputing it. Recomputing
-    here from a fabricated ``rows=[]`` would happen to match today (the
-    fields this function prints only ever read ``latest``, not ``rows``),
-    but would silently diverge from the recorded number the moment a future
-    change derived anything here from ``rows``.
+    and stored in the run record -- rather than recomputing it, so the
+    printed number can never diverge from the recorded one.
     """
     if committee_calc is None:
         return
     summary = committee_calc.latest_uncertainty_summary
-    if summary is None or not summary["flagged"]:
+    if summary is None or summary["sigma_max_final_eV_per_A"] is None:
         return
+    ratio = summary["sigma_max_over_fmax_final"]
+    ratio_text = "" if ratio is None else f", {ratio:.1f}x the final fmax"
     typer.echo(
-        f"\n⚠️  High committee disagreement at the final geometry: "
-        f"sigma_max = {summary['sigma_max_final_eV_per_A']:.4f} eV/Å > "
-        f"{summary['threshold_eV_per_A']:.4f} "
-        f"({summary['threshold_source']}). The located minimum sits inside "
-        f"the committee's own noise; this configuration deserves a DFT "
-        f"check. Worst atom: {summary['worst_atom_symbol']} "
-        f"(#{summary['worst_atom']}).")
+        f"\n📊 Committee disagreement at the final geometry: "
+        f"sigma_max = {summary['sigma_max_final_eV_per_A']:.4f} eV/Å"
+        f"{ratio_text}, sigma_mean = "
+        f"{summary['sigma_mean_final_eV_per_A']:.4f} eV/Å over "
+        f"{summary['n_free_atoms']} free atoms. Worst atom: "
+        f"{summary['worst_atom_symbol']} (#{summary['worst_atom']}).")
+    if summary["unhandled_constraints"]:
+        typer.echo(
+            f"   Note: constraint type(s) "
+            f"{', '.join(summary['unhandled_constraints'])} are not masked, "
+            f"so sigma is over-reported for their atoms.")
+    if summary["flagged"]:
+        typer.echo(
+            f"\n⚠️  sigma_max exceeds the threshold you set "
+            f"({summary['threshold_eV_per_A']:.4f} eV/Å). The located "
+            f"minimum sits inside the committee's own noise; this "
+            f"configuration deserves a DFT check.")
 
 
 @app.command()
@@ -254,10 +267,10 @@ def run(
     uncertainty_threshold: float = typer.Option(
         None, "--uncertainty-threshold",
         help="Flag the final configuration when the committee's per-atom "
-             "force disagreement exceeds this (eV/Å). Defaults to --fmax: if "
-             "the models disagree by more than the convergence tolerance, "
-             "the minimum sits inside the committee's own noise. "
-             "UNCALIBRATED default -- see docs/OUTPUTS.md."),
+             "force disagreement exceeds this (eV/Å). NO DEFAULT: without "
+             "it the run reports sigma and its ratio to fmax but asserts no "
+             "verdict. There is no calibrated value yet -- same-level "
+             "committees disagree by ~0.1 eV/Å. See docs/OUTPUTS.md."),
     optimizer: str = typer.Option("bfgs", help=f"Optimizer algorithm: {', '.join(OPTIMIZER_MAP.keys())}"),
     fmax: float = typer.Option(0.05, help="Force convergence threshold (eV/Å)"),
     max_steps: int = typer.Option(200, help="Maximum optimization steps"),
@@ -417,7 +430,7 @@ def run(
         typer.echo("   - Relaxing fmax threshold")
         typer.echo("   - Trying a different optimizer")
 
-    _report_flagged_uncertainty(committee_calc)
+    _report_committee_uncertainty(committee_calc)
 
 
 @app.command()
@@ -617,11 +630,15 @@ def _write_params(param_file, mlip, uma_task, mace_head, device, relax_cell,
                 f.write(f"  - {spec.name}: {spec.mlip} "
                         f"[{spec.level_of_theory}] gpu={spec.gpu} "
                         f"env={spec.env}\n")
-            threshold = (uncertainty_threshold
-                         if uncertainty_threshold is not None else fmax)
-            source = ("explicit" if uncertainty_threshold is not None
-                      else "fmax")
-            f.write(f"Uncertainty thr.:  {threshold} ({source})\n")
+            # Mirrors `threshold_source` in the run record (Task 5): no
+            # default. Writing the removed fmax default here would put a
+            # verdict nobody asked for into this artifact even though the
+            # run record correctly recorded none.
+            if uncertainty_threshold is None:
+                f.write("Uncertainty thr.:  none\n")
+            else:
+                f.write(f"Uncertainty thr.:  {uncertainty_threshold} "
+                        f"(explicit)\n")
         if mlip.startswith("uma-"):
             f.write(f"UMA task:          {uma_task}\n")
         if mlip.startswith("mace-mh-"):

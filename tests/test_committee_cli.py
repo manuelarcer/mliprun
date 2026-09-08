@@ -163,6 +163,35 @@ class TestEndToEnd:
         assert uncertainty["threshold_eV_per_A"] == pytest.approx(0.001,
                                                                   abs=1e-12)
 
+    def test_params_file_records_no_threshold_when_none_is_given(
+            self, structure, fake_committee_file):
+        """opt_params.txt must not claim a verdict nobody asked for.
+
+        This mirrors ``threshold_source`` in the run record: with no
+        --uncertainty-threshold, the old code wrote the removed fmax
+        default (e.g. "0.05 (fmax)") into this artifact even though the
+        run record correctly recorded no verdict -- a false claim in a
+        run artifact that survived every earlier task in this plan because
+        no test read this specific line.
+        """
+        path, _ = fake_committee_file
+        runner.invoke(app, ["run", "--structure", str(structure),
+                            "--committee", str(path), "--max-steps", "5",
+                            "--no-verbose"])
+        params = (structure.parent / "opt_params.txt").read_text()
+        assert "Uncertainty thr.:  none\n" in params
+        assert "fmax)" not in params
+
+    def test_params_file_records_the_explicit_threshold(
+            self, structure, fake_committee_file):
+        path, _ = fake_committee_file
+        runner.invoke(app, ["run", "--structure", str(structure),
+                            "--committee", str(path), "--max-steps", "5",
+                            "--no-verbose",
+                            "--uncertainty-threshold", "0.001"])
+        params = (structure.parent / "opt_params.txt").read_text()
+        assert "Uncertainty thr.:  0.001 (explicit)\n" in params
+
 
 class TestFlaggedPath:
     """The headline claim -- "flags high-disagreement configurations" --
@@ -199,13 +228,54 @@ class TestFlaggedPath:
         # silent at the default logging configuration, so the CLI echo here
         # is the *only* channel -- not a duplicate of a WARNING-level record
         # reaching the terminal via `logging.lastResort`.
-        assert result.output.count("High committee disagreement") == 1
+        assert result.output.count("deserves a DFT check") == 1
 
         record = json.loads(
             (structure.parent / "mliprun_run.json").read_text())
         uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
         assert uncertainty["flagged"] is True
         assert uncertainty["sigma_max_final_eV_per_A"] > 0.01
+
+
+class TestCommitteeUncertaintyEcho:
+    def _invoke(self, structure, path, *extra):
+        return runner.invoke(app, ["run", "--structure", str(structure),
+                                   "--committee", str(path),
+                                   "--max-steps", "3", "--no-verbose",
+                                   *extra])
+
+    def test_the_numbers_are_printed_without_a_threshold(
+            self, structure, fake_committee_file):
+        path, _ = fake_committee_file
+        result = self._invoke(structure, path)
+        assert result.exit_code == 0, result.output
+        assert "Committee disagreement at the final geometry" in result.output
+        assert "free atoms" in result.output
+
+    def test_no_warning_is_printed_without_a_threshold(
+            self, structure, fake_committee_file):
+        """A verdict nobody asked for is what this change removes."""
+        path, _ = fake_committee_file
+        result = self._invoke(structure, path)
+        assert "deserves a DFT check" not in result.output
+
+    def test_a_tripped_explicit_threshold_warns(
+            self, structure, fake_committee_file):
+        """Two identical EMT members give sigma exactly 0, so -1 is the only
+        threshold this harness can exceed."""
+        path, _ = fake_committee_file
+        result = self._invoke(structure, path,
+                              "--uncertainty-threshold", "-1")
+        assert result.exit_code == 0, result.output
+        assert "deserves a DFT check" in result.output
+
+    def test_an_untripped_explicit_threshold_does_not_warn(
+            self, structure, fake_committee_file):
+        path, _ = fake_committee_file
+        result = self._invoke(structure, path,
+                              "--uncertainty-threshold", "1e9")
+        assert "deserves a DFT check" not in result.output
+        assert "Committee disagreement at the final geometry" in result.output
 
 
 class TestTeardownOnFailure:
