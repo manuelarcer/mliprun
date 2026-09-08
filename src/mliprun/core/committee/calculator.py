@@ -16,7 +16,43 @@ from ase.calculators.calculator import Calculator, all_changes
 logger = logging.getLogger(__name__)
 
 
-def committee_statistics(energies, forces) -> dict:
+def free_component_mask(atoms):
+    """Which force components are free to move, as an ``(N, 3)`` bool array.
+
+    Only ``FixAtoms`` and ``FixCartesian`` are masked. They are the stock ASE
+    constraints whose ``adjust_forces`` is a pure component mask -- verified
+    against ase 3.26.0, ``forces[index] = 0.0`` and
+    ``forces[index] *= ~mask[None, :]`` respectively -- so the component they
+    hold is exactly zero and dropping it from the statistic is unambiguous.
+
+    Everything else in ``ase.constraints`` (``FixScaled``, ``FixedPlane``,
+    ``FixedLine``, ``FixBondLength``) projects rather than masks, and a
+    projection does not carry over to a standard deviation, which is not a
+    vector. Those atoms stay free: sigma is over-reported rather than
+    under-reported, and the type names are returned so the fallback reaches
+    the run record instead of being silent.
+
+    Returns
+    -------
+    (numpy.ndarray, list of str)
+        The ``(N, 3)`` mask -- True where the component is free -- and the
+        sorted names of the constraint types that were not masked.
+    """
+    mask = np.ones((len(atoms), 3), dtype=bool)
+    unhandled = set()
+    for constraint in getattr(atoms, "constraints", ()) or ():
+        kind = type(constraint).__name__
+        if kind == "FixAtoms":
+            mask[np.asarray(constraint.index, dtype=int)] = False
+        elif kind == "FixCartesian":
+            mask[np.asarray(constraint.index, dtype=int)] &= ~np.asarray(
+                constraint.mask, dtype=bool)
+        else:
+            unhandled.add(kind)
+    return mask, sorted(unhandled)
+
+
+def committee_statistics(energies, forces, free_mask=None) -> dict:
     """Reduce the members' energies and forces to a consensus and a spread.
 
     The uncertainty metric is the per-atom force disagreement
@@ -34,26 +70,44 @@ def committee_statistics(energies, forces) -> dict:
     it. Per-model constant offsets shift the mean energy by a constant
     without changing its shape.
 
+    ``sigma_max``/``sigma_mean`` are taken over free components only, using
+    ``free_mask`` (see :func:`free_component_mask`). A constrained atom
+    cannot move regardless of how much the members disagree about its force,
+    and the convergence criterion this is compared against (ASE's ``fmax``)
+    only ever looks at free atoms -- so including constrained atoms in the
+    reduction would compare against the wrong population. Design note:
+    docs/superpowers/specs/2026-09-04-committee-uncertainty-design.md.
+
     Parameters
     ----------
     energies : array-like, shape (M,)
         One energy per member, in the members' own order.
     forces : array-like, shape (M, N, 3)
         One force array per member, same order.
+    free_mask : array-like of bool, shape (N, 3), optional
+        True where a force component is free to move. Defaults to all-free,
+        which reproduces the previous (unmasked) behaviour exactly.
 
     Returns
     -------
     dict
         ``energy_mean`` (float), ``forces_mean`` (N, 3), ``sigma_per_atom``
-        (N,), ``sigma_max`` (float), ``sigma_mean`` (float), ``worst_atom``
-        (int).
+        (N,, all-component), ``sigma_per_atom_free`` (N,, masked),
+        ``sigma_max`` (float, free components only), ``sigma_mean`` (float,
+        free components only), ``worst_atom`` (int, free components only),
+        ``sigma_max_all`` (float, unmasked), ``sigma_mean_all`` (float,
+        unmasked), ``worst_atom_all`` (int, unmasked), ``n_free_atoms``
+        (int, atoms with at least one free component), ``all_constrained``
+        (bool, True when no atom has a free component -- ``sigma_max`` and
+        ``sigma_mean`` then fall back to the unmasked numbers).
 
     Raises
     ------
     ValueError
-        If fewer than two members are given, or the shapes disagree. Two is
-        the floor because ``ddof=1`` is undefined for one sample -- and
-        because a committee of one has no disagreement to report.
+        If fewer than two members are given, the shapes disagree, or
+        ``free_mask`` is not shaped ``(n_atoms, 3)``. Two members is the
+        floor because ``ddof=1`` is undefined for one sample -- and because a
+        committee of one has no disagreement to report.
     """
     energies = np.asarray(energies, dtype=float)
     forces = np.asarray(forces, dtype=float)
@@ -68,16 +122,46 @@ def committee_statistics(energies, forces) -> dict:
     if energies.shape[0] < 2:
         raise ValueError("a committee needs at least two members")
 
-    sigma_components = forces.std(axis=0, ddof=1)          # (N, 3)
-    sigma_per_atom = np.linalg.norm(sigma_components, axis=1)   # (N,)
-    worst_atom = int(np.argmax(sigma_per_atom))
+    sigma_components = forces.std(axis=0, ddof=1)                 # (N, 3)
+    sigma_per_atom = np.linalg.norm(sigma_components, axis=1)     # (N,)
+    worst_all = int(np.argmax(sigma_per_atom))
+
+    if free_mask is None:
+        free_mask = np.ones(sigma_components.shape, dtype=bool)
+    else:
+        free_mask = np.asarray(free_mask, dtype=bool)
+        if free_mask.shape != sigma_components.shape:
+            raise ValueError(
+                f"free_mask must have shape {sigma_components.shape}, got "
+                f"{free_mask.shape}")
+
+    sigma_per_atom_free = np.linalg.norm(sigma_components * free_mask, axis=1)
+    movable = np.flatnonzero(free_mask.any(axis=1))
+
+    if movable.size:
+        worst = int(movable[np.argmax(sigma_per_atom_free[movable])])
+        sigma_max = float(sigma_per_atom_free[worst])
+        sigma_mean = float(sigma_per_atom_free[movable].mean())
+        all_constrained = False
+    else:
+        worst = worst_all
+        sigma_max = float(sigma_per_atom[worst_all])
+        sigma_mean = float(sigma_per_atom.mean())
+        all_constrained = True
+
     return {
         "energy_mean": float(energies.mean()),
         "forces_mean": forces.mean(axis=0),
         "sigma_per_atom": sigma_per_atom,
-        "sigma_max": float(sigma_per_atom[worst_atom]),
-        "sigma_mean": float(sigma_per_atom.mean()),
-        "worst_atom": worst_atom,
+        "sigma_per_atom_free": sigma_per_atom_free,
+        "sigma_max": sigma_max,
+        "sigma_mean": sigma_mean,
+        "worst_atom": worst,
+        "sigma_max_all": float(sigma_per_atom[worst_all]),
+        "sigma_mean_all": float(sigma_per_atom.mean()),
+        "worst_atom_all": worst_all,
+        "n_free_atoms": int(movable.size),
+        "all_constrained": all_constrained,
     }
 
 
