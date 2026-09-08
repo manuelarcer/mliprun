@@ -440,7 +440,12 @@ class CommitteeTraceWriter:
     E_<member>_eV
         Each member's raw energy.
     sigma_max_eV_per_A, sigma_mean_eV_per_A, worst_atom
-        Per-atom force disagreement, reduced.
+        Per-atom force disagreement, reduced -- free components only.
+    sigma_max_all_eV_per_A, n_free_atoms
+        The unmasked maximum (all components, constrained or not) and how
+        many atoms had at least one free component, so a reader can see how
+        much of the disagreement sat in a frozen region without recomputing
+        anything.
     mixed_theory
         The warn-don't-refuse flag, repeated on every row so downstream
         analysis can filter on it without having read the terminal.
@@ -462,7 +467,8 @@ class CommitteeTraceWriter:
             ["step", "energy_mean_eV", "energy_spread_aligned_eV"]
             + [f"E_{name}_eV" for name in member_names]
             + ["fmax_eV_per_A", "sigma_max_eV_per_A", "sigma_mean_eV_per_A",
-               "worst_atom", "mixed_theory"]
+               "worst_atom", "sigma_max_all_eV_per_A", "n_free_atoms",
+               "mixed_theory"]
         )
         self._handle = open(self.path, "w", newline="", encoding="utf-8")
         self._writer = csv.DictWriter(self._handle,
@@ -484,6 +490,8 @@ class CommitteeTraceWriter:
             "sigma_max_eV_per_A": float(latest["sigma_max"]),
             "sigma_mean_eV_per_A": float(latest["sigma_mean"]),
             "worst_atom": int(latest["worst_atom"]),
+            "sigma_max_all_eV_per_A": float(latest["sigma_max_all"]),
+            "n_free_atoms": int(latest["n_free_atoms"]),
             "mixed_theory": self.mixed_theory,
         }
         for name in self.member_names:
@@ -502,7 +510,8 @@ class CommitteeTraceWriter:
                 self._handle = None
 
 
-def write_peratom_sigma(path, symbols, sigma_per_atom) -> None:
+def write_peratom_sigma(path, symbols, sigma_per_atom, sigma_free=None,
+                        free_mask=None) -> None:
     """Write the final geometry's per-atom force disagreement.
 
     Final geometry only: a per-atom field at every step would be a large file
@@ -510,17 +519,39 @@ def write_peratom_sigma(path, symbols, sigma_per_atom) -> None:
     lives during the run. This file is the most diagnostically useful output
     -- it says *which* atoms the models disagree about, which is usually the
     adsorbate or the reacting bond.
+
+    Constrained atoms keep their row. ``sigma_eV_per_A`` is the unmasked
+    value and ``sigma_free_eV_per_A`` drops the held components, so a reader
+    can see for themselves how much of the disagreement sits in a region that
+    cannot move. ``free_components`` is 0 for a fully fixed atom.
     """
     symbols = list(symbols)
     sigma_per_atom = np.asarray(sigma_per_atom, dtype=float).reshape(-1)
     if len(symbols) != sigma_per_atom.size:
         raise ValueError(
             f"{len(symbols)} symbols but {sigma_per_atom.size} sigma values")
+    if sigma_free is None:
+        sigma_free = sigma_per_atom
+    sigma_free = np.asarray(sigma_free, dtype=float).reshape(-1)
+    if sigma_free.size != sigma_per_atom.size:
+        raise ValueError(
+            f"{sigma_per_atom.size} sigma values but {sigma_free.size} "
+            f"free-component sigma values")
+    if free_mask is None:
+        free_mask = np.ones((sigma_per_atom.size, 3), dtype=bool)
+    free_mask = np.asarray(free_mask, dtype=bool)
+    if free_mask.shape != (sigma_per_atom.size, 3):
+        raise ValueError(
+            f"free_mask must have shape {(sigma_per_atom.size, 3)}, got "
+            f"{free_mask.shape}")
+    n_free = free_mask.sum(axis=1)
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["atom_index", "symbol", "sigma_eV_per_A"])
-        for index, (symbol, sigma) in enumerate(zip(symbols, sigma_per_atom)):
-            writer.writerow([index, symbol, float(sigma)])
+        writer.writerow(["atom_index", "symbol", "sigma_eV_per_A",
+                         "sigma_free_eV_per_A", "free_components"])
+        for index, symbol in enumerate(symbols):
+            writer.writerow([index, symbol, float(sigma_per_atom[index]),
+                             float(sigma_free[index]), int(n_free[index])])
 
 
 def uncertainty_summary(rows, latest, *, threshold: float,

@@ -12,6 +12,9 @@ from mliprun.core.committee.calculator import (
 
 
 def _latest(energies, sigma_per_atom, energy_mean=None):
+    # No mask is passed in by any caller of this helper, so it mirrors
+    # committee_statistics's own unmasked default: the "_all" numbers equal
+    # the headline ones and every atom counts as free.
     sigma = np.asarray(sigma_per_atom, dtype=float)
     worst = int(np.argmax(sigma))
     values = list(energies.values())
@@ -23,6 +26,8 @@ def _latest(energies, sigma_per_atom, energy_mean=None):
         "sigma_max": float(sigma[worst]),
         "sigma_mean": float(sigma.mean()),
         "worst_atom": worst,
+        "sigma_max_all": float(sigma[worst]),
+        "n_free_atoms": int(sigma.size),
     }
 
 
@@ -45,7 +50,7 @@ class TestTraceWriter:
             "step", "energy_mean_eV", "energy_spread_aligned_eV",
             "E_member_a_eV", "E_member_b_eV", "fmax_eV_per_A",
             "sigma_max_eV_per_A", "sigma_mean_eV_per_A", "worst_atom",
-            "mixed_theory",
+            "sigma_max_all_eV_per_A", "n_free_atoms", "mixed_theory",
         ]
 
     def test_values_land_in_the_right_columns(self, tmp_path):
@@ -189,3 +194,65 @@ class TestFlaggingRule:
                                       threshold_source="fmax")
         assert summary["flagged"] is False
         assert summary["sigma_max_final_eV_per_A"] is None
+
+
+class TestTraceCarriesBothSigmas:
+    def test_the_row_carries_the_masked_and_unmasked_maxima(self, tmp_path):
+        writer = CommitteeTraceWriter(tmp_path / "t.csv", ["a", "b"], False)
+        latest = {
+            "energies": {"a": -1.0, "b": -3.0},
+            "energy_mean": -2.0, "sigma_max": 0.1, "sigma_mean": 0.05,
+            "worst_atom": 1, "sigma_max_all": 0.9, "n_free_atoms": 1,
+        }
+        row = writer.write_step(0, latest, fmax_value=0.04)
+        writer.close()
+        assert row["sigma_max_eV_per_A"] == pytest.approx(0.1)
+        assert row["sigma_max_all_eV_per_A"] == pytest.approx(0.9)
+        assert row["n_free_atoms"] == 1
+
+    def test_the_header_names_the_new_columns(self, tmp_path):
+        writer = CommitteeTraceWriter(tmp_path / "t.csv", ["a", "b"], False)
+        writer.close()
+        header = (tmp_path / "t.csv").read_text().splitlines()[0]
+        assert "sigma_max_all_eV_per_A" in header
+        assert "n_free_atoms" in header
+
+
+class TestPerAtomFileMarksConstrainedAtoms:
+    def test_every_atom_still_gets_a_row(self, tmp_path):
+        """Seeing the frozen atoms is how a reader checks the masking on
+        their own run, so constrained atoms are listed, not dropped."""
+        path = tmp_path / "p.csv"
+        write_peratom_sigma(path, ["Cu", "C"], [0.9, 0.1],
+                            sigma_free=[0.0, 0.1],
+                            free_mask=[[False, False, False],
+                                       [True, True, True]])
+        lines = path.read_text().splitlines()
+        assert len(lines) == 3
+        assert lines[1].split(",")[:2] == ["0", "Cu"]
+
+    def test_the_free_component_count_is_recorded(self, tmp_path):
+        path = tmp_path / "p.csv"
+        write_peratom_sigma(path, ["Cu", "C"], [0.9, 0.1],
+                            sigma_free=[0.0, 0.1],
+                            free_mask=[[False, False, False],
+                                       [True, True, True]])
+        rows = _read(path)
+        assert rows[0]["free_components"] == "0"
+        assert rows[1]["free_components"] == "3"
+        assert float(rows[0]["sigma_free_eV_per_A"]) == pytest.approx(0.0)
+
+    def test_a_partly_fixed_atom_counts_its_free_directions(self, tmp_path):
+        path = tmp_path / "p.csv"
+        write_peratom_sigma(path, ["Cu"], [0.5], sigma_free=[0.3],
+                            free_mask=[[True, True, False]])
+        rows = _read(path)
+        assert rows[0]["free_components"] == "2"
+
+    def test_omitting_the_mask_treats_every_atom_as_free(self, tmp_path):
+        """Keeps the Python API callable with three arguments."""
+        path = tmp_path / "p.csv"
+        write_peratom_sigma(path, ["Cu", "C"], [0.9, 0.1])
+        rows = _read(path)
+        assert rows[0]["free_components"] == "3"
+        assert float(rows[0]["sigma_free_eV_per_A"]) == pytest.approx(0.9)
