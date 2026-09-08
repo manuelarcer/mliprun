@@ -5,8 +5,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from ase import Atoms
 from ase.build import bulk
 from ase.calculators.emt import EMT
+from ase.constraints import FixAtoms
 from ase.optimize import BFGS
 
 from mliprun.core.committee.calculator import CommitteeCalculator, CommitteeError
@@ -228,3 +230,60 @@ class TestRealSubprocessRoundTrip:
         for pid in pids:
             with pytest.raises(ProcessLookupError):
                 os.kill(pid, 0)
+
+
+class TestConstraintsReachTheStatistic:
+    """FakeMember answers from a fixed table, so the disagreement is exact
+    and independent of geometry."""
+
+    def _members(self, sigma_0, sigma_1):
+        return [
+            FakeMember("a", -1.0, [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]),
+            FakeMember("b", -1.0, [[sigma_0 * np.sqrt(2), 0.0, 0.0],
+                                   [sigma_1 * np.sqrt(2), 0.0, 0.0]]),
+        ]
+
+    def _atoms(self, fixed=()):
+        atoms = Atoms("H2", positions=[(0, 0, 0), (1.0, 0, 0)])
+        if len(fixed):
+            atoms.set_constraint(FixAtoms(indices=list(fixed)))
+        return atoms
+
+    def test_a_fixed_atom_is_excluded_from_the_reported_sigma(self):
+        """The disagreement lives on the fixed atom, so the free-atom sigma
+        must be far smaller than the all-atom one."""
+        atoms = self._atoms(fixed=[0])
+        with CommitteeCalculator(self._members(0.9, 0.1)) as calc:
+            calc.start()
+            atoms.calc = calc
+            atoms.get_potential_energy()
+        assert calc.latest["sigma_max"] == pytest.approx(0.1, abs=1e-9)
+        assert calc.latest["sigma_max_all"] == pytest.approx(0.9, abs=1e-9)
+        assert calc.latest["n_free_atoms"] == 1
+
+    def test_constraints_survive_ase_copying_the_atoms(self):
+        """ASE's Calculator.calculate stores atoms.copy(); the mask is built
+        from that copy, so this asserts the copy keeps the constraint."""
+        atoms = self._atoms(fixed=[0])
+        with CommitteeCalculator(self._members(1.0, 0.0)) as calc:
+            calc.start()
+            atoms.calc = calc
+            atoms.get_potential_energy()
+        assert calc.latest["n_free_atoms"] == 1
+        assert calc.latest["free_mask"][0].tolist() == [False, False, False]
+
+    def test_an_unconstrained_system_reports_every_atom_free(self):
+        atoms = self._atoms()
+        with CommitteeCalculator(self._members(1.0, 0.0)) as calc:
+            calc.start()
+            atoms.calc = calc
+            atoms.get_potential_energy()
+        assert calc.latest["n_free_atoms"] == 2
+        assert calc.latest["unhandled_constraints"] == []
+
+    def test_preflight_masks_the_same_way_calculate_does(self):
+        atoms = self._atoms(fixed=[0])
+        with CommitteeCalculator(self._members(0.9, 0.1)) as calc:
+            calc.start()
+            stats = calc.preflight(atoms)
+        assert stats["sigma_max"] == pytest.approx(0.1, abs=1e-9)

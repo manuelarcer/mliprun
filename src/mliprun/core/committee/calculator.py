@@ -367,8 +367,19 @@ class CommitteeCalculator(Calculator):
             self.close()
             raise
 
+        free_mask, unhandled = free_component_mask(atoms)
         ordered = [energies[m.name] for m in self.members]
-        stats = committee_statistics(ordered, stacked)
+        stats = committee_statistics(ordered, stacked, free_mask=free_mask)
+        # Stored, not recomputed downstream: the per-atom CSV must describe
+        # the same mask the statistic used, and `atoms` has moved on by the
+        # time the run writes it.
+        stats["free_mask"] = free_mask
+        stats["unhandled_constraints"] = unhandled
+        if unhandled:
+            logger.warning(
+                "committee sigma: constraint type(s) %s are not masked, so "
+                "their atoms are counted as free and sigma is over-reported",
+                ", ".join(unhandled))
         stats["energies"] = dict(energies)
         self.latest = stats
         self.n_evaluations += 1
