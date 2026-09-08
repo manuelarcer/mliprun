@@ -56,7 +56,7 @@ UNKNOWN_LEVEL = "unknown"
 #: signal anywhere and nothing able to detect it at runtime. A stored version
 #: number is what lets a reader ask "was this record written under the table
 #: that had the bad row?" instead of trusting it blindly.
-LEVEL_TABLE_VERSION = 1
+LEVEL_TABLE_VERSION = 2
 
 #: UMA task heads (fairchem-core).
 _UMA_LEVELS = {
@@ -82,9 +82,17 @@ _MACE_MH_LEVELS = {
 }
 
 #: Single-task tags whose level is fixed by the tag alone.
+#:
+#: ``mace`` (MACE-MP-0 medium) and ``chgnet`` share one label because they
+#: share one training set: MPtrj, the Materials Project relaxation
+#: trajectories. The label names the dataset and signals the mixing rather
+#: than asserting a functional, because MPtrj applies Hubbard U to specific
+#: transition metals in oxides and fluorides only -- so an MPtrj-trained
+#: model is effectively plain PBE for a metallic slab and PBE+U for an oxide,
+#: and no static label can settle that. Juan's ruling, 2026-09-08.
 _FIXED_LEVELS = {
-    "mace": "PBE/MPtrj",
-    "chgnet": "PBE+U/MPtrj",
+    "mace": "PBE(+U)/MPtrj",
+    "chgnet": "PBE(+U)/MPtrj",
     "7net-omat": "PBE/OMat24",
 }
 

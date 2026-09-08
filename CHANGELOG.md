@@ -197,6 +197,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - `<stem>_committee.csv` gains `sigma_max_all_eV_per_A` and `n_free_atoms`;
   `<stem>_committee_peratom.csv` gains `sigma_free_eV_per_A` and
   `free_components`, and still lists every atom, constrained ones included.
+- **Breaking:** `mace` (MACE-MP-0) and `chgnet` now resolve to one level of
+  theory, `PBE(+U)/MPtrj`, because they share one training set. A committee
+  of the two is no longer reported as mixed theory, and its spread is an
+  error bar rather than a functional comparison. `LEVEL_TABLE_VERSION` 1 → 2.
+  The `7net` MPtrj tags are unchanged pending checkpoint confirmation.
 
 ### Fixed
 
