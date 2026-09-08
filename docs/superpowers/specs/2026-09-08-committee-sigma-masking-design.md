@@ -46,7 +46,9 @@ component.
 **Which constraints are handled, and why only those.** `FixAtoms` and
 `FixCartesian` are the only stock ASE constraints whose `adjust_forces` is a
 pure component mask (`forces[index] = 0.0` and
-`forces[index] *= ~mask[None, :]` respectively, verified against ase 3.26.0).
+`forces[index] *= ~mask[None, :]` respectively, verified byte-identical against
+both ase 3.26.0 and ase 3.29.0 -- 3.29.0 is what the repo's `.venv` runs, so it
+is the version that matters).
 For those the masked component is exactly zero and excluding it is
 unambiguous. Every other constraint type -- `FixScaled`, `FixedPlane`,
 `FixedLine`, `FixBondLength` -- projects rather than masks, and a projection
@@ -106,14 +108,6 @@ batch -- a relative criterion self-calibrates where an absolute one does
 not); an automated trigger such as active learning or a DFT hand-off. The
 third is not yet in use here.
 
-## Not changing
-
-- The committee remains a proper potential: mean force is the negative
-  gradient of the mean energy. Nothing here touches the forces the optimizer
-  sees -- only the statistic reported alongside them.
-- Mixed levels of theory still warn and never refuse.
-- The per-atom CSV keeps a row for every atom, constrained ones included.
-  Seeing the frozen atoms is how a reader checks Decision 1 on their own run.
 ## Decision 3: MPtrj models share one level, labelled `PBE(+U)/MPtrj`
 
 Juan's ruling, 2026-09-08. `mace` (MACE-MP-0 medium) and `chgnet` are both
@@ -150,7 +144,16 @@ would add liability with no benefit.
 
 `LEVEL_TABLE_VERSION` goes 1 -> 2.
 
-## Not changing (continued)
+## Not changing
+
+- The committee remains a proper potential: mean force is the negative
+  gradient of the mean energy. Nothing here touches the forces the optimizer
+  sees -- only the statistic reported alongside them.
+- Mixed levels of theory still warn and never refuse.
+- The per-atom CSV keeps a row for every atom, constrained ones included.
+  Seeing the frozen atoms is how a reader checks Decision 1 on their own run.
+- The remaining unlisted level-of-theory rows stay unlisted; see
+  Decision 3 for which and why.
 
 ## Consequences
 
