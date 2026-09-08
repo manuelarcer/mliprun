@@ -554,23 +554,26 @@ def write_peratom_sigma(path, symbols, sigma_per_atom, sigma_free=None,
                              float(sigma_free[index]), int(n_free[index])])
 
 
-def uncertainty_summary(rows, latest, *, threshold: float,
-                        threshold_source: str, symbols=None) -> dict:
+def uncertainty_summary(rows, latest, *, threshold=None,
+                        threshold_source="none", symbols=None) -> dict:
     """Reduce a committee run to the block the run record stores.
 
-    The flagging rule: a configuration is flagged when ``sigma_max`` at the
-    **final** geometry exceeds ``threshold``. Self-scaling and physically
-    motivated -- if the models disagree about the forces by more than the
-    convergence tolerance, the located minimum sits inside the committee's
-    own noise and the geometry is not resolved. A path that passed through a
-    strained geometry but converged to a well-constrained minimum is not
-    flagged, which is why the peak is reported separately.
+    With no threshold -- the default -- nothing is asserted: the numbers are
+    reported and ``flagged`` is ``None``. ``False`` keeps its meaning of
+    "checked against a threshold and passed"; using it for "not checked"
+    would put a claim in the record that nobody made.
 
-    **The default threshold is uncalibrated.** The 2026-09-04 probe measured
-    sigma_F only across four mixed-level members, so there is no same-level
-    number yet. Calibrating it is a natural first use of the feature; until
-    then the threshold and its source travel with the flag so a later reader
-    knows what was applied.
+    When ``--uncertainty-threshold`` is given, a configuration is flagged
+    when ``sigma_max`` at the **final** geometry exceeds it. A path that
+    passed through a strained geometry but converged to a well-constrained
+    minimum is not flagged, which is why the peak is reported separately.
+
+    There is no default threshold. Same-level committees measured on
+    cos-cluster disagree by 0.11-0.15 eV/A against convergence targets of
+    0.02-0.05, so the previous default (``fmax``) fired on ordinary healthy
+    relaxations; and those numbers were measured before constrained atoms
+    were excluded from sigma, so they are not a calibration either. See the
+    2026-09-08 design note.
 
     Parameters
     ----------
@@ -579,25 +582,30 @@ def uncertainty_summary(rows, latest, *, threshold: float,
     latest : dict or None
         The final evaluation's statistics. ``None`` when the run died before
         evaluating anything.
-    threshold : float
-        The sigma_max above which the configuration is flagged.
-    threshold_source : {"fmax", "explicit"}
+    threshold : float, optional
+        The sigma_max above which the configuration is flagged. ``None``
+        (the default) means no verdict is asserted.
+    threshold_source : {"none", "explicit"}
         Where the threshold came from.
     symbols : sequence of str, optional
         Chemical symbols, used to name the worst atom.
     """
     summary = {
         "n_steps": len(rows),
-        "threshold_eV_per_A": float(threshold),
+        "threshold_eV_per_A": None if threshold is None else float(threshold),
         "threshold_source": threshold_source,
         "sigma_max_final_eV_per_A": None,
         "sigma_mean_final_eV_per_A": None,
+        "sigma_max_all_final_eV_per_A": None,
         "sigma_max_peak_eV_per_A": None,
+        "sigma_max_over_fmax_final": None,
         "peak_step": None,
         "worst_atom": None,
         "worst_atom_symbol": None,
+        "n_free_atoms": None,
+        "unhandled_constraints": [],
         "energy_spread_aligned_final_eV": None,
-        "flagged": False,
+        "flagged": None,
     }
     if rows:
         peak = max(rows, key=lambda r: r["sigma_max_eV_per_A"])
@@ -611,7 +619,18 @@ def uncertainty_summary(rows, latest, *, threshold: float,
         summary["sigma_max_final_eV_per_A"] = sigma_max
         summary["sigma_mean_final_eV_per_A"] = float(latest["sigma_mean"])
         summary["worst_atom"] = worst
+        if "sigma_max_all" in latest:
+            summary["sigma_max_all_final_eV_per_A"] = float(
+                latest["sigma_max_all"])
+        if "n_free_atoms" in latest:
+            summary["n_free_atoms"] = int(latest["n_free_atoms"])
+        summary["unhandled_constraints"] = list(
+            latest.get("unhandled_constraints", []))
         if symbols is not None and worst < len(symbols):
             summary["worst_atom_symbol"] = symbols[worst]
-        summary["flagged"] = bool(sigma_max > threshold)
+        final_fmax = rows[-1].get("fmax_eV_per_A") if rows else None
+        if final_fmax:
+            summary["sigma_max_over_fmax_final"] = sigma_max / float(final_fmax)
+        if threshold is not None:
+            summary["flagged"] = bool(sigma_max > float(threshold))
     return summary

@@ -294,7 +294,10 @@ class TestReusedCommittee:
         assert second["worst_atom"] is None
         assert second["worst_atom_symbol"] is None
         assert second["energy_spread_aligned_final_eV"] is None
-        assert second["flagged"] is False
+        # No evaluation ever ran for this structure, so there is nothing to
+        # check against a threshold -- `flagged` is `None`, not `False`.
+        # `False` would claim a check that never happened (Task 4).
+        assert second["flagged"] is None
         # The trace file exists but holds only its header: zero steps ran.
         assert _read_csv(second_dir / "opt_committee.csv") == []
 
@@ -326,7 +329,9 @@ class TestReusedCommittee:
             committee.close()
 
         assert committee.latest is None
-        assert committee.latest_uncertainty_summary["flagged"] is False
+        # No evaluation ever ran, so nothing was checked (Task 4: `flagged`
+        # is `None`, not `False`, when there is no verdict to give).
+        assert committee.latest_uncertainty_summary["flagged"] is None
         assert (committee.latest_uncertainty_summary[
             "sigma_max_final_eV_per_A"] is None)
 
