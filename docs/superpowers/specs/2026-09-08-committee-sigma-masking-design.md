@@ -96,10 +96,18 @@ arbitrary number puts an arbitrary claim into the provenance. Adding a
 calibrated default later is easy. Un-asserting `flagged` from records already
 written is not.
 
-**`flagged` becomes tri-state**: `true`, `false`, or `null` when no threshold
-was applied. `false` must keep meaning "checked and passed" -- reusing it for
-"not checked" is exactly the failure PR #46 fixed when `device_resolved`
-reported `"cpu"` for a GPU run it had not resolved.
+**`flagged` becomes tri-state**: `true`, `false`, or `null`. `false` must keep
+meaning "checked against a threshold and passed" -- reusing it for "not
+checked" is exactly the failure PR #46 fixed when `device_resolved` reported
+`"cpu"` for a GPU run it had not resolved.
+
+`null` therefore means **no verdict was reached**, which happens two ways: no
+threshold was applied, *or* a threshold was applied but nothing was ever
+evaluated (a run that died before its first optimizer step, where `latest` is
+`None`). The second case was underspecified in the first draft of this note
+and is recorded here because it is the one a consumer gets wrong: a script
+filtering `flagged == false` to select healthy runs would otherwise count a
+run that crashed before its first force call as healthy.
 
 **What a threshold is for, when one is wanted.** Three uses want different
 things, and only the third needs an absolute number: a single careful study
