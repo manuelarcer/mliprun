@@ -23,9 +23,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   never silently dropped by a log axis (linear with an annotation when every
   sigma is zero, `symlog` when only some are, log otherwise).
   `--uncertainty-threshold` flags a configuration whose final `sigma_max`
-  exceeds it, defaulting to the run's `fmax`. **The threshold is
-  uncalibrated**: it is a screening aid for finding configurations worth a
-  second look, not a physically derived criterion.
+  exceeds it. **No default**: same-level committees disagree by
+  0.11-0.15 eV/Å against typical fmax targets of 0.02-0.05, so a default of
+  `fmax` fired on ordinary healthy relaxations and was removed before this
+  reached a release — see "Changed" below. Without a threshold the run
+  still reports `sigma_max`, `sigma_mean` and their ratio to the final
+  `fmax`, but asserts no verdict.
   Committee members are shut down on every exit path, including a failed
   startup and `KeyboardInterrupt`, so a worker never survives holding a GPU
   context on a shared node. Mixed levels of theory warn and still run rather
