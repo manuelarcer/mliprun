@@ -114,13 +114,17 @@ class TestEndToEnd:
         assert (out / "committee_member_b.log").exists()
 
         record = json.loads((out / "mliprun_run.json").read_text())
-        assert record["schema_version"] == 4
+        assert record["schema_version"] == 5
         assert record["provenance"]["committee"]["config_sha256"] == \
             config.sha256
         uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
         assert uncertainty["sigma_max_final_eV_per_A"] == pytest.approx(
             0.0, abs=1e-12)
-        assert uncertainty["flagged"] is False
+        # No threshold was passed on this invocation, so no verdict is
+        # reached -- see "flagged semantics" in the design note. This is not
+        # in Task 5's brief; it broke the moment the fmax default was
+        # removed, since this test never passes --uncertainty-threshold.
+        assert uncertainty["flagged"] is None
 
     def test_the_mixed_theory_warning_is_printed(self, structure,
                                                  fake_committee_file):

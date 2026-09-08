@@ -388,15 +388,18 @@ class TestHeadProvenance:
 
 
 class TestSchemaVersion:
-    def test_schema_version_is_four(self):
+    def test_schema_version_is_five(self):
         """2 added uma_task/mace_head; 3 adds sevennet_task; 4 adds the
         committee block, because collect_provenance took a single
-        mlip_model and a committee needs a list."""
-        assert SCHEMA_VERSION == 4
+        mlip_model and a committee needs a list; 5 makes the uncertainty
+        threshold opt-in, so a committee run with no threshold records
+        threshold_source: "none" and flagged: null instead of a
+        manufactured fmax-derived verdict."""
+        assert SCHEMA_VERSION == 5
 
     def test_written_record_carries_the_new_version(self, tmp_path):
         _begin(tmp_path)
-        assert _read(tmp_path)["schema_version"] == 4
+        assert _read(tmp_path)["schema_version"] == 5
 
 
 class TestHeadInStageProvenance:

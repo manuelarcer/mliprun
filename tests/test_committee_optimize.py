@@ -179,17 +179,16 @@ class TestRunRecord:
             committee.close()
 
         record = _record(tmp_path)
-        assert record["schema_version"] == 4
+        assert record["schema_version"] == 5
         assert len(record["provenance"]["committee"]["members"]) == 2
         assert record["provenance"]["committee_config_sha256"] == config.sha256
 
         uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
-        assert uncertainty["threshold_source"] == "fmax"
-        assert uncertainty["threshold_eV_per_A"] == pytest.approx(0.05,
-                                                                  abs=1e-12)
+        assert uncertainty["threshold_source"] == "none"
+        assert uncertainty["threshold_eV_per_A"] is None
         assert uncertainty["sigma_max_final_eV_per_A"] == pytest.approx(
             0.0, abs=1e-12)
-        assert uncertainty["flagged"] is False
+        assert uncertainty["flagged"] is None
 
     def test_an_explicit_threshold_is_recorded_as_explicit(self, tmp_path):
         atoms = _rattled()
@@ -280,7 +279,11 @@ class TestReusedCommittee:
         assert first["sigma_max_final_eV_per_A"] == pytest.approx(
             BIAS_EV_PER_A / math.sqrt(2.0), rel=1e-9)
         assert first["worst_atom_symbol"] == "Cu"
-        assert first["flagged"] is True
+        # No threshold was passed to this run, so no verdict is asserted
+        # even though the disagreement is real and large -- `flagged` is
+        # `None` (opt-in threshold, Task 5), not a leftover `True` from the
+        # old fmax default.
+        assert first["flagged"] is None
 
         second_record = _record(second_dir)
         assert second_record["status"] == "failed"
@@ -316,7 +319,9 @@ class TestReusedCommittee:
                              output_dir=tmp_path / "cu",
                              model_name="committee", verbose=False,
                              committee=committee)
-            assert committee.latest_uncertainty_summary["flagged"] is True
+            # No threshold passed, so no verdict is asserted (Task 5: opt-in
+            # threshold) even though this run's disagreement is real.
+            assert committee.latest_uncertainty_summary["flagged"] is None
 
             iron = bulk("Fe", "bcc", a=2.87)
             iron.calc = committee
@@ -446,3 +451,55 @@ class TestSingleModelUnchanged:
         provenance = _record(tmp_path)["provenance"]
         assert provenance["device_requested"] == "auto"
         assert provenance["device_resolved"] == "cpu"
+
+
+class TestThresholdIsOptIn:
+    def _run(self, tmp_path, **kwargs):
+        atoms = _rattled()
+        committee = _committee(tmp_path)
+        committee.start()
+        atoms.calc = committee
+        try:
+            run_optimization(atoms, fmax=0.05, max_steps=10,
+                             output_dir=tmp_path, model_name="committee",
+                             verbose=False, committee=committee, **kwargs)
+        finally:
+            committee.close()
+        return _record(tmp_path)
+
+    def test_no_threshold_records_none_and_does_not_flag(self, tmp_path):
+        uncertainty = self._run(tmp_path)["stages"][0]["results"][
+            "committee_uncertainty"]
+        assert uncertainty["threshold_source"] == "none"
+        assert uncertainty["threshold_eV_per_A"] is None
+        assert uncertainty["flagged"] is None
+
+    def test_the_threshold_does_not_silently_become_fmax(self, tmp_path):
+        """The old default. Removing it is the point of this change."""
+        uncertainty = self._run(tmp_path)["stages"][0]["results"][
+            "committee_uncertainty"]
+        assert uncertainty["threshold_eV_per_A"] != pytest.approx(0.05)
+
+    def test_an_explicit_threshold_is_recorded_and_applied(self, tmp_path):
+        """Two identical EMT members give sigma exactly 0, so a threshold of
+        -1 is the only way to make the flag fire from this harness."""
+        uncertainty = self._run(tmp_path, uncertainty_threshold=-1.0)[
+            "stages"][0]["results"]["committee_uncertainty"]
+        assert uncertainty["threshold_source"] == "explicit"
+        assert uncertainty["flagged"] is True
+
+    def test_the_parameter_block_records_no_threshold(self, tmp_path):
+        # `run_optimization` never passes `stage_parameters` to
+        # `RunRecord.begin` -- its `parameters` dict is the run's TOP-LEVEL
+        # block (tagged {"value", "source"} by `_tag`), not a per-stage one.
+        # `record["stages"][0]["parameters"]` only exists for multi-stage
+        # appends (e.g. NEB's per-stage fmax); a plain `optimize` run has no
+        # such key at all, so this deviates from the brief's literal snippet.
+        params = self._run(tmp_path)["parameters"]
+        assert params["uncertainty_threshold"]["value"] is None
+
+    def test_the_free_atom_count_reaches_the_record(self, tmp_path):
+        """_rattled() has no constraints, so every atom is free."""
+        uncertainty = self._run(tmp_path)["stages"][0]["results"][
+            "committee_uncertainty"]
+        assert uncertainty["n_free_atoms"] == len(_rattled())

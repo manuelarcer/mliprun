@@ -30,7 +30,7 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 RECORD_FILENAME = "mliprun_run.json"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 #: Model-tag prefix -> installed distribution name. Longest prefix wins, so
 #: ``mace-mh-1`` resolves before the bare ``mace`` entry.

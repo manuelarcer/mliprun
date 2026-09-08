@@ -253,10 +253,12 @@ def run_optimization(
         resolved levels of theory, and the file's SHA-256.
     uncertainty_threshold : float, optional
         sigma_max above which the final configuration is flagged as
-        high-disagreement. Defaults to ``fmax``: if the models disagree about
-        the forces by more than the convergence tolerance, the located
-        minimum sits inside the committee's own noise and the geometry is not
-        resolved. The value applied and where it came from are both recorded.
+        high-disagreement. No default: same-level committees disagree by
+        0.11-0.15 eV/Ang against typical fmax targets of 0.02-0.05, so
+        defaulting to fmax flagged ordinary healthy relaxations. With no
+        threshold, sigma is still reported but no verdict is asserted
+        (``threshold_source: "none"``, ``flagged: None``). The value applied
+        and where it came from are both recorded.
 
     Returns
     -------
@@ -285,13 +287,16 @@ def run_optimization(
     committee_csv = output_path / f"{logfile_stem}_committee.csv"
     committee_peratom_csv = output_path / f"{logfile_stem}_committee_peratom.csv"
 
-    # Default threshold is fmax itself -- self-scaling, and physically
-    # motivated. UNCALIBRATED: no same-level sigma_F measurement exists yet
-    # (see the design's "Flagging rule"), so both the value and its origin
-    # travel with the flag.
+    # No default. A same-level committee disagrees by 0.11-0.15 eV/A against
+    # convergence targets of 0.02-0.05, so defaulting to fmax flagged
+    # ordinary healthy relaxations; and those numbers predate the exclusion
+    # of constrained atoms from sigma, so they are not a calibration either.
+    # The run reports sigma and its ratio to fmax; a verdict is asserted only
+    # when a caller chooses a threshold. See the 2026-09-08 design note.
     threshold = (float(uncertainty_threshold)
-                 if uncertainty_threshold is not None else float(fmax))
-    threshold_source = "explicit" if uncertainty_threshold is not None else "fmax"
+                 if uncertainty_threshold is not None else None)
+    threshold_source = ("explicit" if uncertainty_threshold is not None
+                        else "none")
 
     optimizer_name = optimizer.lower()
     if optimizer_name not in OPTIMIZER_MAP:
@@ -437,6 +442,18 @@ def run_optimization(
             symbols=atoms.get_chemical_symbols())
         results["committee_uncertainty"] = summary
         committee.latest_uncertainty_summary = summary
+        # sigma is reported unconditionally now -- there is no default
+        # threshold to compare it against, so a caller with no opinion about
+        # what counts as "too much disagreement" still learns the number.
+        # A verdict (the second line) prints only when a threshold was
+        # actually applied and it was exceeded.
+        logger.info(
+            "Committee disagreement at the final geometry: sigma_max = "
+            "%.4f eV/Ang over %s free atoms (worst: %s #%s), sigma_mean = "
+            "%.4f eV/Ang.",
+            summary["sigma_max_final_eV_per_A"], summary["n_free_atoms"],
+            summary["worst_atom_symbol"], summary["worst_atom"],
+            summary["sigma_mean_final_eV_per_A"])
         if summary["flagged"]:
             # INFO, not WARNING: with no logging configured anywhere in this
             # codebase (confirmed by grep for basicConfig/addHandler/setLevel/
@@ -447,13 +464,8 @@ def run_optimization(
             # CLI echo (reading `committee.latest_uncertainty_summary`, not
             # this call) is the one terminal report at default settings.
             logger.info(
-                "High committee disagreement at the final geometry: "
-                "sigma_max = %.4f eV/Ang > %.4f (%s). The located minimum "
-                "sits inside the committee's own noise; this configuration "
-                "deserves a DFT check. Worst atom: %s (%s).",
-                summary["sigma_max_final_eV_per_A"], threshold,
-                threshold_source, summary["worst_atom"],
-                summary["worst_atom_symbol"])
+                "sigma_max exceeds the chosen threshold %.4f eV/Ang; this "
+                "configuration deserves a DFT check.", threshold)
 
     record.complete(
         status="converged" if converged else "not_converged",
