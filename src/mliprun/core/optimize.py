@@ -167,6 +167,136 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
     return fig
 
 
+def _uncertainty_traces(committee_rows):
+    """The numbers behind the uncertainty figure, with no drawing in them.
+
+    Separated from ``_plot_uncertainty`` so the arithmetic -- which zero the
+    energy is measured from, where the force band is clipped -- can be
+    asserted exactly, rather than read back out of a polygon.
+
+    Parameters
+    ----------
+    committee_rows : list of dict
+        Rows as ``CommitteeTraceWriter`` writes them.
+
+    Returns
+    -------
+    dict
+        ``steps``, ``energy`` (relative to step 0) with ``energy_lo`` /
+        ``energy_hi``, and ``fmax`` with ``force_lo`` / ``force_hi``.
+    """
+    steps = [int(row["step"]) for row in committee_rows]
+    energies = [float(row["energy_mean_eV"]) for row in committee_rows]
+    spreads = [float(row["energy_spread_aligned_eV"])
+               for row in committee_rows]
+    fmax_values = [float(row["fmax_eV_per_A"]) for row in committee_rows]
+    sigmas = [float(row["sigma_max_free_eV_per_A"]) for row in committee_rows]
+
+    # The band is measured after each member's own step-0 energy is removed,
+    # so the centre has to share that zero or the two are not commensurate:
+    # absolute committee energies carry a per-package offset of tens of eV
+    # while the band is ~0.01 eV wide, and the band would render as a line.
+    reference = energies[0]
+    energy = [value - reference for value in energies]
+
+    return {
+        "steps": steps,
+        "energy": energy,
+        "energy_lo": [e - s for e, s in zip(energy, spreads)],
+        "energy_hi": [e + s for e, s in zip(energy, spreads)],
+        "fmax": fmax_values,
+        # A force magnitude cannot be negative. sigma above fmax means the
+        # members disagree about the force by more than its own size -- the
+        # regime worth looking at, since the minimum then sits inside the
+        # committee's own noise -- and its honest lower edge is zero.
+        "force_lo": [max(f - s, 0.0) for f, s in zip(fmax_values, sigmas)],
+        "force_hi": [f + s for f, s in zip(fmax_values, sigmas)],
+    }
+
+
+def _plot_uncertainty(committee_rows, fmax: float):
+    """Build the committee uncertainty figure.
+
+    One panel, two y-axes against the optimizer step: mean energy relative to
+    step 0 with a +/- aligned-spread band on the left, max force with a
+    +/- ``sigma_max_free`` band on the right. The point of putting them on one
+    panel is the comparison the fmax target line makes possible -- whether the
+    force is converging into the committee's own disagreement.
+
+    The band on the force axis is an upper bound rather than the uncertainty
+    of the plotted number: ``sigma_max_free`` is the largest disagreement
+    anywhere in the free region, and the atom carrying it need not be the atom
+    carrying fmax.
+
+    Returns
+    -------
+    matplotlib.figure.Figure or None
+        ``None`` when the trace has fewer than two steps -- a run that
+        converged at step 0 would otherwise get a one-point figure whose
+        zero-width band says nothing and implies a lot. The caller saves and
+        closes the figure.
+    """
+    if not committee_rows or len(committee_rows) < 2:
+        return None
+
+    traces = _uncertainty_traces(committee_rows)
+    steps = traces["steps"]
+
+    fig, ax_energy = plt.subplots(figsize=(8, 5))
+    ax_force = ax_energy.twinx()
+
+    energy_color, force_color = "tab:blue", "tab:orange"
+
+    ax_energy.plot(steps, traces["energy"], marker="o", markersize=4,
+                   linewidth=1.5, color=energy_color,
+                   label="energy (committee mean)")
+    ax_energy.fill_between(steps, traces["energy_lo"], traces["energy_hi"],
+                           color=energy_color, alpha=0.25, linewidth=0,
+                           label="+/- energy spread")
+    ax_energy.set_xlabel("Optimization Step")
+    ax_energy.set_ylabel("Energy - Energy(step 0) (eV)", color=energy_color)
+    ax_energy.tick_params(axis="y", labelcolor=energy_color)
+    ax_energy.grid(True, alpha=0.3)
+
+    ax_force.plot(steps, traces["fmax"], marker="s", markersize=4,
+                  linewidth=1.5, color=force_color, label="max force")
+    ax_force.fill_between(steps, traces["force_lo"], traces["force_hi"],
+                          color=force_color, alpha=0.25, linewidth=0,
+                          label="+/- sigma_max_free")
+    ax_force.axhline(y=fmax, color="r", linestyle="--", linewidth=1.0,
+                     label=f"fmax target = {fmax}")
+    ax_force.set_ylabel("Max Force (eV/Ang)", color=force_color)
+    ax_force.tick_params(axis="y", labelcolor=force_color)
+
+    # Both axes stay linear, unlike the log force panel on the convergence
+    # figure. A symmetric band on a log axis loses its lower edge without a
+    # warning exactly when that edge is clipped to zero -- which is the case
+    # the figure exists to show.
+    ax_energy.set_yscale("linear")
+    ax_force.set_yscale("linear")
+
+    handles = ax_energy.get_legend_handles_labels()
+    twin_handles = ax_force.get_legend_handles_labels()
+    ax_energy.legend(handles[0] + twin_handles[0],
+                     handles[1] + twin_handles[1],
+                     loc="upper right", fontsize=8)
+
+    ax_energy.set_title("Committee Energy and Force with Uncertainty")
+
+    fig.tight_layout()
+    # Below the axes, not inside them: on a real relaxation both traces flatten
+    # into the bottom of the panel, which is where an in-axes note lands.
+    fig.subplots_adjust(bottom=0.19)
+    # Without this note a band opening from zero reads as a run that started
+    # certain and got worse. Step 0 is where each member's offset is measured,
+    # so the spread there is zero by construction, not by agreement.
+    fig.text(0.01, 0.015,
+             "energy band is zero at step 0 by construction: that step is "
+             "where each member's energy offset is measured",
+             ha="left", va="bottom", fontsize=7, style="italic")
+    return fig
+
+
 def run_optimization(
     atoms,
     optimizer: str = "bfgs",
@@ -179,6 +309,7 @@ def run_optimization(
     verbose: bool = True,
     relax_cell: bool = False,
     plot: bool = False,
+    uncertainty_plot: bool = False,
     run_context: Optional[RunContext] = None,
     device_requested: str = "auto",
     device_resolved: str = "auto",
@@ -224,6 +355,14 @@ def run_optimization(
         relaxations (e.g. frozen-surface site scans), so plotting is opt-in.
         The ``*_convergence.csv`` is always written, so the data is retained
         either way and can be plotted later.
+    uncertainty_plot : bool
+        If True, write the ``*_uncertainty.png`` figure: committee mean energy
+        with its spread band on the primary y-axis, max force with its
+        ``sigma_max_free`` band on the secondary. Independent of ``plot`` --
+        either, both or neither. Ignored without a committee, since there is
+        no disagreement to draw; the CLI rejects that combination outright
+        rather than leaving a caller waiting for a figure. Nothing is written
+        when the trace has fewer than two steps.
     run_context : RunContext, optional
         Declares the command, batch identity, and where each parameter value
         came from. When omitted the record still gets written, with every
@@ -283,6 +422,7 @@ def run_optimization(
     logfile_stem = Path(logfile).stem
     csv_file = output_path / f"{logfile_stem}_convergence.csv"
     convergence_plot = output_path / f"{logfile_stem}_convergence.png"
+    uncertainty_plot_path = output_path / f"{logfile_stem}_uncertainty.png"
     final_structure = output_path / f"{logfile_stem}_final.vasp"
     # CONTCAR mirror of the final structure so a follow-up DFT run managed by
     # asetools can restart from this directory (it reads OUTCAR or CONTCAR).
@@ -348,6 +488,7 @@ def run_optimization(
             "trajectory": trajectory,
             "logfile": logfile,
             "plot": plot,
+            "uncertainty_plot": uncertainty_plot,
             "verbose": verbose,
             **_committee_parameters(committee, committee_config, threshold),
         },
@@ -502,5 +643,17 @@ def run_optimization(
                             else None))
         figure.savefig(convergence_plot, dpi=150)
         plt.close(figure)
+
+    # The uncertainty figure needs a committee to have something to draw, and
+    # at least two steps to draw it against.
+    if uncertainty_plot and trace_writer is not None:
+        figure = _plot_uncertainty(trace_writer.rows, fmax)
+        if figure is None:
+            logger.info(
+                "uncertainty plot skipped: the committee trace has %d step(s), "
+                "and a band needs at least two.", len(trace_writer.rows))
+        else:
+            figure.savefig(uncertainty_plot_path, dpi=150)
+            plt.close(figure)
 
     return converged
