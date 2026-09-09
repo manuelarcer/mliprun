@@ -41,7 +41,7 @@ With `--committee committee.yaml`, two more files are always written (see [Commi
 | `opt_committee_peratom.csv` | CSV | Per-atom disagreement at the final geometry |
 | `committee_<member>.log` | text | One per member: that env's library banners and any remote traceback |
 
-These also follow `--logfile <name>.log`: `<name>_committee.csv`, `<name>_committee_peratom.csv`. With `--plot`, `<name>_convergence.png` gains a third panel (see [Committee outputs](#committee-outputs)).
+These also follow `--logfile <name>.log`: `<name>_committee.csv`, `<name>_committee_peratom.csv`. With `--plot`, `<name>_convergence.png` gains a third panel; with `--uncertainty-plot`, a separate `<name>_uncertainty.png` is written (see [Committee outputs](#committee-outputs)).
 
 ---
 
@@ -234,6 +234,55 @@ when sigma is exactly zero at every step: an exactly-agreeing committee,
 which does happen and must not be hidden by the axis choice. It is
 `symlog` when some steps agree exactly and others don't, and log when every
 value is a real, positive disagreement.
+
+### `<name>_uncertainty.png`
+
+Written only with `--uncertainty-plot`, which requires `--committee` and is
+independent of `--plot` — ask for either, both or neither. One panel, two
+y-axes, against the optimizer step:
+
+| Element | Axis | Meaning |
+|---------|------|---------|
+| Energy trace | left | `energy_mean_eV` minus its own step-0 value |
+| Energy band | left | ± `energy_spread_aligned_eV` |
+| Force trace | right | `fmax_eV_per_A` |
+| Force band | right | `fmax` ± `sigma_max_free_eV_per_A`, lower edge clipped at 0 |
+| Dashed red line | right | the `--fmax` convergence target |
+
+The point of the single panel is the comparison the target line makes
+possible: whether the force is converging into the committee's own
+disagreement. On the measured same-level runs it is, which is what the
+uncalibrated threshold discussion is about (see [The flagging
+rule](#the-flagging-rule)).
+
+Three things about it are deliberate:
+
+- **The energy is plotted relative to step 0** because the band is measured
+  that way — `energy_spread_aligned_eV` removes each member's own offset
+  first. An absolute committee energy carries a per-package offset of tens of
+  eV while the band is ~0.01 eV wide, so plotting the raw mean would render
+  the band as a line. A consequence the figure annotates rather than hides:
+  the band has exactly zero width at step 0, by construction and not by
+  agreement.
+- **The force band is an upper bound, not the error bar on the plotted
+  number.** `sigma_max_free` is the largest disagreement anywhere in the free
+  region, and the atom carrying it need not be the atom carrying `fmax`.
+- **The force axis is logarithmic; the energy axis is linear.** A relaxation
+  spans orders of magnitude in `fmax`, so a linear force axis buries every
+  step after the first few. Energy relative to step 0 is negative whenever the
+  relaxation went downhill, so that axis can only be linear.
+- **The force axis becomes `symlog` when a band edge is clipped to zero**, on
+  the same reasoning as the sigma panel: matplotlib drops non-positive
+  vertices from a log axis with no warning, which does not merely hide the
+  clipped edge but deforms the whole band polygon. `symlog` treats
+  `|y| <= linthresh` linearly and keeps the edge where it belongs, with the
+  axis floored at zero so the scale's symmetric negative half — decades of
+  negative force — never appears. A clipped edge means sigma exceeded `fmax`
+  at that step, which is exactly the case worth seeing.
+
+No figure is written when the trace has fewer than two steps (a run that
+converged at step 0); the run says so on the terminal rather than emitting a
+one-point plot.
 
 ### The run record (committee fields)
 

@@ -43,6 +43,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
   recomputed from the trajectory with zero mismatches at 1e-8.
   See `examples/committee.yaml` and `docs/OUTPUTS.md`.
 
+- **`optimize run --uncertainty-plot`, an opt-in committee uncertainty
+  figure.** Writes `<stem>_uncertainty.png`: one panel, two y-axes against the
+  optimizer step. Left, the committee mean energy relative to its own step-0
+  value with a ±`energy_spread_aligned_eV` band; right, `fmax` with a
+  ±`sigma_max_free` band whose lower edge is clipped at zero, plus the fmax
+  target line. Together they answer whether the force is converging into the
+  committee's own disagreement. Requires `--committee` (rejected outright
+  without it, rather than silently writing nothing) and is independent of
+  `--plot`. The energy is plotted relative to step 0 because the band is
+  measured that way, which makes the band exactly zero-width at step 0 by
+  construction — annotated on the figure rather than hidden. The force axis is
+  logarithmic (a relaxation spans orders of magnitude in `fmax`) and switches
+  to `symlog`, floored at zero, wherever a band edge is clipped: a log axis
+  drops non-positive vertices with no warning, which deforms the band polygon
+  rather than merely hiding its edge. The energy axis is linear, since
+  energy relative to step 0 is negative. No figure is written for a trace
+  shorter than two steps.
+
 - **SevenNet model family and `--sevennet-task`.** The SevenNet backend was a
   stub that had never executed: one hardcoded tag (`7net-mf-ompa`) with
   `modal="mpa"` baked into `build_calculator`, no way to select the task, no

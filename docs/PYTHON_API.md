@@ -93,6 +93,7 @@ converged = run_optimization(
     model_name="uma-s-1p2",
     uma_task="omat",    # or mace_head="omat_pbe" — see "Run-record keywords"
     plot=False,         # default: no PNG. Set True to write *_convergence.png (CSV always written)
+    uncertainty_plot=False,  # committee runs only: *_uncertainty.png, energy + fmax with bands
 )
 ```
 
@@ -143,7 +144,8 @@ with CommitteeCalculator(members, mixed_theory=config.mixed_theory,
     atoms.calc = committee
     run_optimization(atoms, fmax=0.05, output_dir=".",
                       model_name="committee", committee=committee,
-                      committee_config=config)
+                      committee_config=config,
+                      uncertainty_plot=True)   # optional: *_uncertainty.png
 ```
 
 Pass every field of the `spec` through, `device=spec.device` included.

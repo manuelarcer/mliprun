@@ -295,6 +295,12 @@ def run(
     logfile: str = typer.Option("opt.log", help="Log filename"),
     verbose: bool = typer.Option(True, help="Show optimization progress table (forces, energies)"),
     plot: bool = typer.Option(False, "--plot/--no-plot", help=PLOT_HELP),
+    uncertainty_plot: bool = typer.Option(
+        False, "--uncertainty-plot/--no-uncertainty-plot",
+        help="Write <name>_uncertainty.png: committee mean energy with its "
+             "spread band on the primary y-axis, max force with its "
+             "sigma_max_free band on the secondary, against the fmax target. "
+             "Requires --committee. Independent of --plot."),
 ):
     """
     Run geometry optimization using a supported MLIP model.
@@ -334,6 +340,16 @@ def run(
         else:
             validate_mlip(mlip, sevennet_task, uma_task, mace_head)
             typer.echo(f"🧠 Using MLIP: {mlip}")
+
+    # Rejected rather than ignored: a single model has no disagreement to
+    # draw, and silently writing nothing leaves the user waiting for a figure
+    # that was never going to appear.
+    if uncertainty_plot and committee_config is None:
+        typer.echo(
+            "❌ --uncertainty-plot requires --committee.\n"
+            "   The bands are the committee members' disagreement; a single "
+            "model has none to plot.")
+        raise typer.Exit(1)
 
     # Validate optimizer
     if optimizer.lower() not in OPTIMIZER_MAP:
@@ -395,6 +411,7 @@ def run(
             verbose=verbose,
             relax_cell=relax_cell,
             plot=plot,
+            uncertainty_plot=uncertainty_plot,
             run_context=run_context,
             device_requested=device,
             device_resolved=_resolve_device(device),
@@ -432,6 +449,12 @@ def run(
         output_files.insert(4, f"{logfile_stem}_committee_peratom.csv")
     if plot:
         output_files.insert(3, f"{logfile_stem}_convergence.png")
+    # Existence-checked rather than listed on the flag alone: a run that
+    # converged at step 0 has no band to draw and writes no figure, and a
+    # listing that names a file which is not there is worse than a short one.
+    uncertainty_png = f"{logfile_stem}_uncertainty.png"
+    if uncertainty_plot and (output_dir / uncertainty_png).exists():
+        output_files.insert(3, uncertainty_png)
     for file in output_files:
         typer.echo(f"   📄 {(output_dir / file).resolve()}")
 
