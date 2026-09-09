@@ -585,8 +585,12 @@ def uncertainty_summary(rows, latest, *, threshold=None,
     rows : list of dict
         The trace rows, as written by :class:`CommitteeTraceWriter`.
     latest : dict or None
-        The final evaluation's statistics. ``None`` when the run died before
-        evaluating anything.
+        The final evaluation's statistics, exactly as
+        :func:`committee_statistics` returns them -- every key it emits is
+        required, not optional. ``None`` when the run died before evaluating
+        anything. (``unhandled_constraints`` is the one exception: the
+        calculator attaches it, ``committee_statistics`` does not, so a
+        caller reducing raw statistics need not supply it.)
     threshold : float, optional
         The sigma_max above which the configuration is flagged. ``None``
         (the default) means no verdict is asserted.
@@ -624,11 +628,13 @@ def uncertainty_summary(rows, latest, *, threshold=None,
         summary["sigma_max_final_eV_per_A"] = sigma_max_free
         summary["sigma_mean_final_eV_per_A"] = float(latest["sigma_mean_free"])
         summary["worst_atom"] = worst_free
-        if "sigma_max_all" in latest:
-            summary["sigma_max_all_final_eV_per_A"] = float(
-                latest["sigma_max_all"])
-        if "n_free_atoms" in latest:
-            summary["n_free_atoms"] = int(latest["n_free_atoms"])
+        # Read unguarded, like CommitteeTraceWriter.write_step reads them:
+        # `committee_statistics` always emits both, so a membership check
+        # here would only ever hide a malformed `latest` behind a null in
+        # the run record instead of raising.
+        summary["sigma_max_all_final_eV_per_A"] = float(
+            latest["sigma_max_all"])
+        summary["n_free_atoms"] = int(latest["n_free_atoms"])
         summary["unhandled_constraints"] = list(
             latest.get("unhandled_constraints", []))
         if symbols is not None and worst_free < len(symbols):
