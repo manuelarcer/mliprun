@@ -341,6 +341,55 @@ class TestReusedCommittee:
             "sigma_max_free_final_eV_per_A"] is None)
 
 
+class TestRunWithNoForceEvaluation:
+    """A reused committee on a structure ASE answers entirely from its cache.
+
+    ``run_optimization`` clears ``committee.latest`` on entry -- that is the
+    stale-value fix above. If the optimizer then converges without a single
+    force evaluation (same ``Atoms`` object, already at fmax, same process,
+    so ``Calculator.check_state`` reports no change and ``calculate()`` never
+    runs), nothing repopulates ``latest``. The summary block used to
+    subscript it anyway: ``TypeError``, ``record.complete()`` never reached,
+    and a record left permanently saying ``"running"``.
+    """
+
+    def test_a_run_that_evaluates_nothing_still_finishes_its_record(
+            self, tmp_path):
+        atoms = _rattled()
+        committee = _committee(tmp_path)
+        committee.start()
+        atoms.calc = committee
+        try:
+            run_optimization(atoms, fmax=0.05, max_steps=50,
+                             output_dir=tmp_path / "first",
+                             model_name="committee", verbose=False,
+                             committee=committee)
+            evaluations_after_first = committee.n_evaluations
+            run_optimization(atoms, fmax=0.05, max_steps=50,
+                             output_dir=tmp_path / "second",
+                             model_name="committee", verbose=False,
+                             committee=committee)
+        finally:
+            committee.close()
+
+        # The precondition this test rests on: the second run really did
+        # evaluate nothing, so `latest` really was still None at the end.
+        assert committee.n_evaluations == evaluations_after_first
+        assert committee.latest is None
+
+        record = _record(tmp_path / "second")
+        assert record["status"] == "converged"
+        uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
+        assert uncertainty["n_steps"] == 0
+        assert uncertainty["sigma_max_free_final_eV_per_A"] is None
+        assert uncertainty["n_free_atoms"] is None
+        # No verdict either: nothing was evaluated, so nothing was checked.
+        assert uncertainty["flagged"] is None
+        # Nothing to describe per atom, so no per-atom file is written --
+        # an empty or stale one would be worse than its absence.
+        assert not (tmp_path / "second" / "opt_committee_peratom.csv").exists()
+
+
 class TestMeasuredProvenance:
     """What actually loaded, not only what committee.yaml declared."""
 

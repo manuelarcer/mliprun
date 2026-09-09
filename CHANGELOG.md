@@ -247,6 +247,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **A reused committee no longer crashes on a structure that needs no force
+  evaluation.** Handing `run_optimization` the same `Atoms` object twice in
+  one process, already at `fmax`, makes ASE's calculator cache answer every
+  call, so `calculate()` never runs and the committee's `latest` statistics
+  stay empty. The final summary block subscripted them anyway: `TypeError`,
+  and because it fired before `record.complete()`, the run record was left
+  saying `"running"` forever. The block is now guarded; the record gets an
+  honest all-null `committee_uncertainty` and no per-atom CSV.
 - **A plain `kill` (SIGTERM) on a committee run no longer orphans its
   workers.** SIGTERM's default disposition terminates the interpreter without
   unwinding the stack, so neither the CLI's teardown nor the `atexit` backstop

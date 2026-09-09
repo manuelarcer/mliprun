@@ -435,42 +435,50 @@ def run_optimization(
     }
     if trace_writer is not None:
         trace_writer.close()
-        write_peratom_sigma(committee_peratom_csv,
-                            atoms.get_chemical_symbols(),
-                            committee.latest["sigma_per_atom_all"],
-                            sigma_free=committee.latest["sigma_per_atom_free"],
-                            free_mask=committee.latest["free_mask"])
+        # The summary is written either way -- `uncertainty_summary` turns a
+        # `latest` of None into an honest all-null block -- so the record is
+        # always completed. Everything else here reads the final evaluation
+        # and needs it to exist.
         summary = uncertainty_summary(
             trace_writer.rows, committee.latest, threshold=threshold,
             threshold_source=threshold_source,
             symbols=atoms.get_chemical_symbols())
         results["committee_uncertainty"] = summary
         committee.latest_uncertainty_summary = summary
-        # sigma is reported unconditionally now -- there is no default
-        # threshold to compare it against, so a caller with no opinion about
-        # what counts as "too much disagreement" still learns the number.
-        # A verdict (the second line) prints only when a threshold was
-        # actually applied and it was exceeded.
-        logger.info(
-            "Committee disagreement at the final geometry: sigma_max_free = "
-            "%.4f eV/Ang over %s free atoms (worst: %s #%s), "
-            "sigma_mean_free = %.4f eV/Ang.",
-            summary["sigma_max_free_final_eV_per_A"],
-            summary["n_free_atoms"],
-            summary["worst_atom_free_symbol"], summary["worst_atom_free"],
-            summary["sigma_mean_free_final_eV_per_A"])
-        if summary["flagged"]:
-            # INFO, not WARNING: with no logging configured anywhere in this
-            # codebase (confirmed by grep for basicConfig/addHandler/setLevel/
-            # dictConfig/fileConfig), a WARNING-level record reaches the
-            # terminal on its own via `logging.lastResort` -- printing the
-            # same message the CLI already echoes from `results`. This line
-            # stays for anyone running with verbose logging configured; the
-            # CLI echo (reading `committee.latest_uncertainty_summary`, not
-            # this call) is the one terminal report at default settings.
+        if committee.latest is not None:
+            write_peratom_sigma(
+                committee_peratom_csv,
+                atoms.get_chemical_symbols(),
+                committee.latest["sigma_per_atom_all"],
+                sigma_free=committee.latest["sigma_per_atom_free"],
+                free_mask=committee.latest["free_mask"])
+            # sigma is reported unconditionally now -- there is no default
+            # threshold to compare it against, so a caller with no opinion
+            # about what counts as "too much disagreement" still learns the
+            # number. A verdict (the second line) prints only when a
+            # threshold was actually applied and it was exceeded.
             logger.info(
-                "sigma_max_free exceeds the chosen threshold %.4f eV/Ang; "
-                "this configuration deserves a DFT check.", threshold)
+                "Committee disagreement at the final geometry: "
+                "sigma_max_free = "
+                "%.4f eV/Ang over %s free atoms (worst: %s #%s), "
+                "sigma_mean_free = %.4f eV/Ang.",
+                summary["sigma_max_free_final_eV_per_A"],
+                summary["n_free_atoms"],
+                summary["worst_atom_free_symbol"], summary["worst_atom_free"],
+                summary["sigma_mean_free_final_eV_per_A"])
+            if summary["flagged"]:
+                # INFO, not WARNING: with no logging configured anywhere in
+                # this codebase (confirmed by grep for basicConfig/addHandler/
+                # setLevel/dictConfig/fileConfig), a WARNING-level record
+                # reaches the terminal on its own via `logging.lastResort` --
+                # printing the same message the CLI already echoes from
+                # `results`. This line stays for anyone running with verbose
+                # logging configured; the CLI echo (reading
+                # `committee.latest_uncertainty_summary`, not this call) is
+                # the one terminal report at default settings.
+                logger.info(
+                    "sigma_max_free exceeds the chosen threshold %.4f eV/Ang; "
+                    "this configuration deserves a DFT check.", threshold)
 
     record.complete(
         status="converged" if converged else "not_converged",
