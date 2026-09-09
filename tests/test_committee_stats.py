@@ -19,10 +19,10 @@ class TestCommitteeStatistics:
 
         assert stats["energy_mean"] == pytest.approx(-2.0, abs=1e-12)
         assert stats["forces_mean"][0, 0] == pytest.approx(2.0, abs=1e-12)
-        assert stats["sigma_per_atom"][0] == pytest.approx(1.0, abs=1e-12)
-        assert stats["sigma_max"] == pytest.approx(1.0, abs=1e-12)
-        assert stats["sigma_mean"] == pytest.approx(1.0, abs=1e-12)
-        assert stats["worst_atom"] == 0
+        assert stats["sigma_per_atom_all"][0] == pytest.approx(1.0, abs=1e-12)
+        assert stats["sigma_max_free"] == pytest.approx(1.0, abs=1e-12)
+        assert stats["sigma_mean_free"] == pytest.approx(1.0, abs=1e-12)
+        assert stats["worst_atom_free"] == 0
 
     def test_sigma_is_the_norm_of_the_per_component_std(self):
         """sigma_i = || std_across_members(F_i) ||, so 3-4-5 on the three
@@ -31,13 +31,13 @@ class TestCommitteeStatistics:
         forces[0, 0] = [0.0, 0.0, 0.0]
         forces[1, 0] = [3.0 * np.sqrt(2), 4.0 * np.sqrt(2), 0.0]
         stats = committee_statistics([0.0, 0.0], forces)
-        assert stats["sigma_per_atom"][0] == pytest.approx(5.0, abs=1e-12)
+        assert stats["sigma_per_atom_all"][0] == pytest.approx(5.0, abs=1e-12)
 
     def test_identical_members_give_zero_sigma(self):
         forces = np.tile(np.array([[[0.1, -0.2, 0.3], [0.4, 0.5, -0.6]]]),
                          (4, 1, 1))
         stats = committee_statistics([-7.5] * 4, forces)
-        assert stats["sigma_max"] == pytest.approx(0.0, abs=1e-12)
+        assert stats["sigma_max_free"] == pytest.approx(0.0, abs=1e-12)
         assert stats["forces_mean"] == pytest.approx(forces[0], abs=1e-12)
 
     def test_worst_atom_is_the_index_of_the_largest_sigma(self):
@@ -45,15 +45,15 @@ class TestCommitteeStatistics:
         forces[1, 0, 0] = 0.1
         forces[1, 2, 0] = 0.9
         stats = committee_statistics([0.0, 0.0], forces)
-        assert stats["worst_atom"] == 2
-        assert stats["sigma_max"] == pytest.approx(
-            stats["sigma_per_atom"][2], abs=1e-12)
+        assert stats["worst_atom_free"] == 2
+        assert stats["sigma_max_free"] == pytest.approx(
+            stats["sigma_per_atom_all"][2], abs=1e-12)
 
     def test_sigma_mean_averages_over_atoms_not_members(self):
         forces = np.zeros((2, 4, 3))
         forces[1, 0, 0] = 2.0 * np.sqrt(2)   # sigma = 2.0 on atom 0 only
         stats = committee_statistics([0.0, 0.0], forces)
-        assert stats["sigma_mean"] == pytest.approx(0.5, abs=1e-12)
+        assert stats["sigma_mean_free"] == pytest.approx(0.5, abs=1e-12)
 
     def test_one_member_is_rejected(self):
         """A committee of one has no disagreement to report."""
@@ -161,8 +161,8 @@ class TestConstrainedComponentsAreMasked:
         stats = committee_statistics([0.0, 0.0],
                                      _two_atoms_sigma_on_x(0.9, 0.1),
                                      free_mask=mask)
-        assert stats["sigma_max"] == pytest.approx(0.1, abs=1e-12)
-        assert stats["worst_atom"] == 1
+        assert stats["sigma_max_free"] == pytest.approx(0.1, abs=1e-12)
+        assert stats["worst_atom_free"] == 1
         assert stats["n_free_atoms"] == 1
 
     def test_the_unmasked_numbers_are_kept_alongside(self):
@@ -180,7 +180,7 @@ class TestConstrainedComponentsAreMasked:
         stats = committee_statistics([0.0, 0.0],
                                      _two_atoms_sigma_on_x(0.9, 0.1),
                                      free_mask=mask)
-        assert stats["sigma_mean"] == pytest.approx(0.1, abs=1e-12)
+        assert stats["sigma_mean_free"] == pytest.approx(0.1, abs=1e-12)
 
     def test_a_partly_fixed_atom_keeps_its_free_components(self):
         """3 on x and 4 on z, z held: sigma is 3, not 5."""
@@ -188,15 +188,15 @@ class TestConstrainedComponentsAreMasked:
         forces[1, 0] = [3.0 * np.sqrt(2), 0.0, 4.0 * np.sqrt(2)]
         mask = np.array([[True, True, False]])
         stats = committee_statistics([0.0, 0.0], forces, free_mask=mask)
-        assert stats["sigma_max"] == pytest.approx(3.0, abs=1e-12)
+        assert stats["sigma_max_free"] == pytest.approx(3.0, abs=1e-12)
         assert stats["sigma_max_all"] == pytest.approx(5.0, abs=1e-12)
 
     def test_no_mask_reproduces_the_previous_numbers(self):
         stats = committee_statistics([0.0, 0.0],
                                      _two_atoms_sigma_on_x(0.9, 0.1))
-        assert stats["sigma_max"] == pytest.approx(0.9, abs=1e-12)
-        assert stats["sigma_max"] == pytest.approx(stats["sigma_max_all"])
-        assert stats["worst_atom"] == 0
+        assert stats["sigma_max_free"] == pytest.approx(0.9, abs=1e-12)
+        assert stats["sigma_max_free"] == pytest.approx(stats["sigma_max_all"])
+        assert stats["worst_atom_free"] == 0
         assert stats["n_free_atoms"] == 2
 
     def test_every_component_constrained_falls_back_to_the_unmasked_numbers(self):
@@ -209,7 +209,7 @@ class TestConstrainedComponentsAreMasked:
                                      free_mask=mask)
         assert stats["all_constrained"] is True
         assert stats["n_free_atoms"] == 0
-        assert stats["sigma_max"] == pytest.approx(0.9, abs=1e-12)
+        assert stats["sigma_max_free"] == pytest.approx(0.9, abs=1e-12)
 
     def test_a_mask_of_the_wrong_shape_is_rejected(self):
         with pytest.raises(ValueError, match="free_mask"):

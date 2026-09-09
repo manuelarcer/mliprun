@@ -71,7 +71,7 @@ class TestArithmeticWithFakeMembers:
 
         assert atoms.get_potential_energy() == pytest.approx(-2.0, abs=1e-12)
         assert atoms.get_forces()[0, 0] == pytest.approx(2.0, abs=1e-12)
-        assert committee.latest["sigma_max"] == pytest.approx(
+        assert committee.latest["sigma_max_free"] == pytest.approx(
             2.0 / np.sqrt(2.0), abs=1e-12)
         assert committee.latest["energies"] == {"member_a": -1.0,
                                                 "member_b": -3.0}
@@ -169,7 +169,7 @@ class TestRealSubprocessRoundTrip:
         assert energy == pytest.approx(reference.get_potential_energy(),
                                        abs=1e-10)
         assert forces == pytest.approx(reference.get_forces(), abs=1e-10)
-        assert committee.latest["sigma_max"] == pytest.approx(0.0, abs=1e-12)
+        assert committee.latest["sigma_max_free"] == pytest.approx(0.0, abs=1e-12)
 
     def test_a_stock_optimizer_runs_through_the_committee_unchanged(
             self, tmp_path):
@@ -258,7 +258,7 @@ class TestConstraintsReachTheStatistic:
             calc.start()
             atoms.calc = calc
             atoms.get_potential_energy()
-        assert calc.latest["sigma_max"] == pytest.approx(0.1, abs=1e-9)
+        assert calc.latest["sigma_max_free"] == pytest.approx(0.1, abs=1e-9)
         assert calc.latest["sigma_max_all"] == pytest.approx(0.9, abs=1e-9)
         assert calc.latest["n_free_atoms"] == 1
 
@@ -287,7 +287,7 @@ class TestConstraintsReachTheStatistic:
         with CommitteeCalculator(self._members(0.9, 0.1)) as calc:
             calc.start()
             stats = calc.preflight(atoms)
-        assert stats["sigma_max"] == pytest.approx(0.1, abs=1e-9)
+        assert stats["sigma_max_free"] == pytest.approx(0.1, abs=1e-9)
 
     def test_an_unhandled_constraint_leaves_atoms_free_and_warns_once(
             self, caplog):

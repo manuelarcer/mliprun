@@ -13,8 +13,8 @@ from mliprun.core.committee.calculator import (
 
 def _latest(energies, sigma_per_atom, energy_mean=None):
     # No mask is passed in by any caller of this helper, so it mirrors
-    # committee_statistics's own unmasked default: the "_all" numbers equal
-    # the headline ones and every atom counts as free.
+    # committee_statistics's own unmasked default: the "_free" numbers equal
+    # the "_all" ones and every atom counts as free.
     sigma = np.asarray(sigma_per_atom, dtype=float)
     worst = int(np.argmax(sigma))
     values = list(energies.values())
@@ -22,10 +22,10 @@ def _latest(energies, sigma_per_atom, energy_mean=None):
         "energies": dict(energies),
         "energy_mean": (energy_mean if energy_mean is not None
                         else float(np.mean(values))),
-        "sigma_per_atom": sigma,
-        "sigma_max": float(sigma[worst]),
-        "sigma_mean": float(sigma.mean()),
-        "worst_atom": worst,
+        "sigma_per_atom_all": sigma,
+        "sigma_max_free": float(sigma[worst]),
+        "sigma_mean_free": float(sigma.mean()),
+        "worst_atom_free": worst,
         "sigma_per_atom_free": sigma,
         "sigma_max_all": float(sigma[worst]),
         "sigma_mean_all": float(sigma.mean()),
@@ -208,8 +208,9 @@ class TestTraceCarriesBothSigmas:
         writer = CommitteeTraceWriter(tmp_path / "t.csv", ["a", "b"], False)
         latest = {
             "energies": {"a": -1.0, "b": -3.0},
-            "energy_mean": -2.0, "sigma_max": 0.1, "sigma_mean": 0.05,
-            "worst_atom": 1, "sigma_max_all": 0.9, "n_free_atoms": 1,
+            "energy_mean": -2.0, "sigma_max_free": 0.1,
+            "sigma_mean_free": 0.05, "worst_atom_free": 1,
+            "sigma_max_all": 0.9, "n_free_atoms": 1,
         }
         row = writer.write_step(0, latest, fmax_value=0.04)
         writer.close()

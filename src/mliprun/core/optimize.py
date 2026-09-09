@@ -433,7 +433,7 @@ def run_optimization(
         trace_writer.close()
         write_peratom_sigma(committee_peratom_csv,
                             atoms.get_chemical_symbols(),
-                            committee.latest["sigma_per_atom"],
+                            committee.latest["sigma_per_atom_all"],
                             sigma_free=committee.latest["sigma_per_atom_free"],
                             free_mask=committee.latest["free_mask"])
         summary = uncertainty_summary(

@@ -70,8 +70,12 @@ def committee_statistics(energies, forces, free_mask=None) -> dict:
     it. Per-model constant offsets shift the mean energy by a constant
     without changing its shape.
 
-    ``sigma_max``/``sigma_mean`` are taken over free components only, using
-    ``free_mask`` (see :func:`free_component_mask`). A constrained atom
+    ``sigma_max_free``/``sigma_mean_free`` are taken over free components
+    only, using ``free_mask`` (see :func:`free_component_mask`). Every name
+    here carries a ``_free`` or ``_all`` suffix on purpose: a bare
+    ``sigma_max`` would leave the reader to remember which population it
+    covers, and that convention is exactly what this module must not rely
+    on. A constrained atom
     cannot move regardless of how much the members disagree about its force,
     and the convergence criterion this is compared against (ASE's ``fmax``)
     only ever looks at free atoms -- so including constrained atoms in the
@@ -91,15 +95,16 @@ def committee_statistics(energies, forces, free_mask=None) -> dict:
     Returns
     -------
     dict
-        ``energy_mean`` (float), ``forces_mean`` (N, 3), ``sigma_per_atom``
-        (N,, all-component), ``sigma_per_atom_free`` (N,, masked),
-        ``sigma_max`` (float, free components only), ``sigma_mean`` (float,
-        free components only), ``worst_atom`` (int, free components only),
-        ``sigma_max_all`` (float, unmasked), ``sigma_mean_all`` (float,
-        unmasked), ``worst_atom_all`` (int, unmasked), ``n_free_atoms``
-        (int, atoms with at least one free component), ``all_constrained``
-        (bool, True when no atom has a free component -- ``sigma_max`` and
-        ``sigma_mean`` then fall back to the unmasked numbers).
+        ``energy_mean`` (float), ``forces_mean`` (N, 3),
+        ``sigma_per_atom_all`` (N,, all-component), ``sigma_per_atom_free``
+        (N,, masked), ``sigma_max_free`` (float, free components only),
+        ``sigma_mean_free`` (float, free components only),
+        ``worst_atom_free`` (int, free components only), ``sigma_max_all``
+        (float, unmasked), ``sigma_mean_all`` (float, unmasked),
+        ``worst_atom_all`` (int, unmasked), ``n_free_atoms`` (int, atoms
+        with at least one free component), ``all_constrained`` (bool, True
+        when no atom has a free component -- ``sigma_max_free`` and
+        ``sigma_mean_free`` then fall back to the unmasked numbers).
 
     Raises
     ------
@@ -123,8 +128,8 @@ def committee_statistics(energies, forces, free_mask=None) -> dict:
         raise ValueError("a committee needs at least two members")
 
     sigma_components = forces.std(axis=0, ddof=1)                 # (N, 3)
-    sigma_per_atom = np.linalg.norm(sigma_components, axis=1)     # (N,)
-    worst_all = int(np.argmax(sigma_per_atom))
+    sigma_per_atom_all = np.linalg.norm(sigma_components, axis=1)  # (N,)
+    worst_all = int(np.argmax(sigma_per_atom_all))
 
     if free_mask is None:
         free_mask = np.ones(sigma_components.shape, dtype=bool)
@@ -139,26 +144,26 @@ def committee_statistics(energies, forces, free_mask=None) -> dict:
     movable = np.flatnonzero(free_mask.any(axis=1))
 
     if movable.size:
-        worst = int(movable[np.argmax(sigma_per_atom_free[movable])])
-        sigma_max = float(sigma_per_atom_free[worst])
-        sigma_mean = float(sigma_per_atom_free[movable].mean())
+        worst_free = int(movable[np.argmax(sigma_per_atom_free[movable])])
+        sigma_max_free = float(sigma_per_atom_free[worst_free])
+        sigma_mean_free = float(sigma_per_atom_free[movable].mean())
         all_constrained = False
     else:
-        worst = worst_all
-        sigma_max = float(sigma_per_atom[worst_all])
-        sigma_mean = float(sigma_per_atom.mean())
+        worst_free = worst_all
+        sigma_max_free = float(sigma_per_atom_all[worst_all])
+        sigma_mean_free = float(sigma_per_atom_all.mean())
         all_constrained = True
 
     return {
         "energy_mean": float(energies.mean()),
         "forces_mean": forces.mean(axis=0),
-        "sigma_per_atom": sigma_per_atom,
+        "sigma_per_atom_all": sigma_per_atom_all,
         "sigma_per_atom_free": sigma_per_atom_free,
-        "sigma_max": sigma_max,
-        "sigma_mean": sigma_mean,
-        "worst_atom": worst,
-        "sigma_max_all": float(sigma_per_atom[worst_all]),
-        "sigma_mean_all": float(sigma_per_atom.mean()),
+        "sigma_max_free": sigma_max_free,
+        "sigma_mean_free": sigma_mean_free,
+        "worst_atom_free": worst_free,
+        "sigma_max_all": float(sigma_per_atom_all[worst_all]),
+        "sigma_mean_all": float(sigma_per_atom_all.mean()),
         "worst_atom_all": worst_all,
         "n_free_atoms": int(movable.size),
         "all_constrained": all_constrained,
@@ -487,9 +492,9 @@ class CommitteeTraceWriter:
             "energy_spread_aligned_eV": aligned_energy_spread(
                 energies, self._baseline),
             "fmax_eV_per_A": float(fmax_value),
-            "sigma_max_eV_per_A": float(latest["sigma_max"]),
-            "sigma_mean_eV_per_A": float(latest["sigma_mean"]),
-            "worst_atom": int(latest["worst_atom"]),
+            "sigma_max_eV_per_A": float(latest["sigma_max_free"]),
+            "sigma_mean_eV_per_A": float(latest["sigma_mean_free"]),
+            "worst_atom": int(latest["worst_atom_free"]),
             "sigma_max_all_eV_per_A": float(latest["sigma_max_all"]),
             "n_free_atoms": int(latest["n_free_atoms"]),
             "mixed_theory": self.mixed_theory,
@@ -510,7 +515,7 @@ class CommitteeTraceWriter:
                 self._handle = None
 
 
-def write_peratom_sigma(path, symbols, sigma_per_atom, sigma_free=None,
+def write_peratom_sigma(path, symbols, sigma_all, sigma_free=None,
                         free_mask=None) -> None:
     """Write the final geometry's per-atom force disagreement.
 
@@ -526,23 +531,23 @@ def write_peratom_sigma(path, symbols, sigma_per_atom, sigma_free=None,
     cannot move. ``free_components`` is 0 for a fully fixed atom.
     """
     symbols = list(symbols)
-    sigma_per_atom = np.asarray(sigma_per_atom, dtype=float).reshape(-1)
-    if len(symbols) != sigma_per_atom.size:
+    sigma_all = np.asarray(sigma_all, dtype=float).reshape(-1)
+    if len(symbols) != sigma_all.size:
         raise ValueError(
-            f"{len(symbols)} symbols but {sigma_per_atom.size} sigma values")
+            f"{len(symbols)} symbols but {sigma_all.size} sigma values")
     if sigma_free is None:
-        sigma_free = sigma_per_atom
+        sigma_free = sigma_all
     sigma_free = np.asarray(sigma_free, dtype=float).reshape(-1)
-    if sigma_free.size != sigma_per_atom.size:
+    if sigma_free.size != sigma_all.size:
         raise ValueError(
-            f"{sigma_per_atom.size} sigma values but {sigma_free.size} "
+            f"{sigma_all.size} sigma values but {sigma_free.size} "
             f"free-component sigma values")
     if free_mask is None:
-        free_mask = np.ones((sigma_per_atom.size, 3), dtype=bool)
+        free_mask = np.ones((sigma_all.size, 3), dtype=bool)
     free_mask = np.asarray(free_mask, dtype=bool)
-    if free_mask.shape != (sigma_per_atom.size, 3):
+    if free_mask.shape != (sigma_all.size, 3):
         raise ValueError(
-            f"free_mask must have shape {(sigma_per_atom.size, 3)}, got "
+            f"free_mask must have shape {(sigma_all.size, 3)}, got "
             f"{free_mask.shape}")
     n_free = free_mask.sum(axis=1)
     with open(path, "w", newline="", encoding="utf-8") as handle:
@@ -550,7 +555,7 @@ def write_peratom_sigma(path, symbols, sigma_per_atom, sigma_free=None,
         writer.writerow(["atom_index", "symbol", "sigma_eV_per_A",
                          "sigma_free_eV_per_A", "free_components"])
         for index, symbol in enumerate(symbols):
-            writer.writerow([index, symbol, float(sigma_per_atom[index]),
+            writer.writerow([index, symbol, float(sigma_all[index]),
                              float(sigma_free[index]), int(n_free[index])])
 
 
@@ -614,11 +619,11 @@ def uncertainty_summary(rows, latest, *, threshold=None,
         summary["energy_spread_aligned_final_eV"] = float(
             rows[-1]["energy_spread_aligned_eV"])
     if latest is not None:
-        sigma_max = float(latest["sigma_max"])
-        worst = int(latest["worst_atom"])
-        summary["sigma_max_final_eV_per_A"] = sigma_max
-        summary["sigma_mean_final_eV_per_A"] = float(latest["sigma_mean"])
-        summary["worst_atom"] = worst
+        sigma_max_free = float(latest["sigma_max_free"])
+        worst_free = int(latest["worst_atom_free"])
+        summary["sigma_max_final_eV_per_A"] = sigma_max_free
+        summary["sigma_mean_final_eV_per_A"] = float(latest["sigma_mean_free"])
+        summary["worst_atom"] = worst_free
         if "sigma_max_all" in latest:
             summary["sigma_max_all_final_eV_per_A"] = float(
                 latest["sigma_max_all"])
@@ -626,11 +631,12 @@ def uncertainty_summary(rows, latest, *, threshold=None,
             summary["n_free_atoms"] = int(latest["n_free_atoms"])
         summary["unhandled_constraints"] = list(
             latest.get("unhandled_constraints", []))
-        if symbols is not None and worst < len(symbols):
-            summary["worst_atom_symbol"] = symbols[worst]
+        if symbols is not None and worst_free < len(symbols):
+            summary["worst_atom_symbol"] = symbols[worst_free]
         final_fmax = rows[-1].get("fmax_eV_per_A") if rows else None
         if final_fmax:
-            summary["sigma_max_over_fmax_final"] = sigma_max / float(final_fmax)
+            summary["sigma_max_over_fmax_final"] = (sigma_max_free
+                                                    / float(final_fmax))
         if threshold is not None:
-            summary["flagged"] = bool(sigma_max > float(threshold))
+            summary["flagged"] = bool(sigma_max_free > float(threshold))
     return summary

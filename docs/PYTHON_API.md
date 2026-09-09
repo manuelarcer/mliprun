@@ -248,23 +248,27 @@ the pre-2026-09-08 unmasked behaviour exactly. Raises `ValueError` for
 fewer than two members, mismatched shapes, or a wrongly-shaped `free_mask`.
 
 Returns a dict with `energy_mean`, `forces_mean` (`(N, 3)`),
-`sigma_per_atom` (`(N,)`, unmasked), `sigma_per_atom_free` (`(N,)`,
-masked), `sigma_max` / `sigma_mean` / `worst_atom` (free components only —
-what a threshold should compare against), `sigma_max_all` /
-`sigma_mean_all` / `worst_atom_all` (the pre-masking values), `n_free_atoms`
-(atoms with at least one free component), and `all_constrained` (`True`
-when every atom is fully fixed, in which case `sigma_max`/`sigma_mean` fall
-back to the unmasked values because there is no free population to reduce
-over).
+`sigma_per_atom_all` (`(N,)`, unmasked), `sigma_per_atom_free` (`(N,)`,
+masked), `sigma_max_free` / `sigma_mean_free` / `worst_atom_free` (free
+components only — what a threshold should compare against),
+`sigma_max_all` / `sigma_mean_all` / `worst_atom_all` (the pre-masking
+values), `n_free_atoms` (atoms with at least one free component), and
+`all_constrained` (`True` when every atom is fully fixed, in which case
+`sigma_max_free`/`sigma_mean_free` fall back to the unmasked values because
+there is no free population to reduce over).
+
+Every key naming a sigma carries a `_free` or `_all` suffix. There is no
+bare `sigma_max`: which population a number covers is the one thing a
+reader must not have to remember.
 
 ```python
-write_peratom_sigma(path, symbols, sigma_per_atom, sigma_free=None,
+write_peratom_sigma(path, symbols, sigma_all, sigma_free=None,
                      free_mask=None) -> None
 ```
 
 Writes `<stem>_committee_peratom.csv` (columns: `atom_index`, `symbol`,
 `sigma_eV_per_A`, `sigma_free_eV_per_A`, `free_components`) for the final
-geometry. `sigma_per_atom` is `committee_statistics()`'s `sigma_per_atom`;
+geometry. `sigma_all` is `committee_statistics()`'s `sigma_per_atom_all`;
 pass its `sigma_per_atom_free` and the same `free_mask` as `sigma_free` /
 `free_mask` to get the masked column and the free-component count.
 Omitting `sigma_free` or `free_mask` writes the pre-masking file (every
