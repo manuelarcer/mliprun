@@ -1,4 +1,5 @@
 """CLI surface for committee runs."""
+import csv
 import json
 import os
 import re
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import pytest
 from ase.build import bulk
+from ase.constraints import FixAtoms
 from ase.io import write
 from typer.testing import CliRunner
 
@@ -28,6 +30,42 @@ def structure(tmp_path):
     path = tmp_path / "POSCAR"
     write(str(path), atoms, format="vasp")
     return path
+
+
+@pytest.fixture
+def constrained_structure(tmp_path):
+    """The same four Cu atoms with the first two held by ``FixAtoms``.
+
+    Written and read back as a POSCAR, which is how a real run gets its
+    constraints: ASE's VASP writer emits selective-dynamics flags for
+    ``FixAtoms`` and its reader turns them back into a ``FixAtoms``. Nothing
+    here reaches into the calculator to install a constraint by hand.
+    """
+    atoms = bulk("Cu", "fcc", a=3.6) * (2, 2, 1)
+    atoms.rattle(stdev=0.05, seed=7)
+    atoms.set_constraint(FixAtoms(indices=[0, 1]))
+    path = tmp_path / "POSCAR"
+    write(str(path), atoms, format="vasp")
+    return path
+
+
+def _reroute_one_member_to_the_biased_worker(monkeypatch, name="member_b"):
+    """Make ``name`` genuinely disagree with its plain-EMT sibling.
+
+    Two identical EMT members give sigma exactly 0, which cannot show a
+    difference between a masked and an unmasked column. ``biased_worker.py``
+    adds a fixed force offset, so sigma is a known non-zero number.
+    """
+    import mliprun.cli.commands.optimize as optimize_cli
+    from mliprun.core.committee.remote import RemoteMember as _RealRemoteMember
+
+    stub = STUB_DIR / "biased_worker.py"
+
+    def _mixed_remote_member(member_name, python_exe, **kwargs):
+        argv = [python_exe, str(stub)] if member_name == name else None
+        return _RealRemoteMember(member_name, python_exe, argv=argv, **kwargs)
+
+    monkeypatch.setattr(optimize_cli, "RemoteMember", _mixed_remote_member)
 
 
 class TestMutualExclusion:
@@ -276,6 +314,131 @@ class TestCommitteeUncertaintyEcho:
                               "--uncertainty-threshold", "1e9")
         assert "deserves a DFT check" not in result.output
         assert "Committee disagreement at the final geometry" in result.output
+
+
+class TestConstrainedStructureEndToEnd:
+    """A constrained structure driven all the way through the CLI.
+
+    Masking is covered at unit and calculator level, but until this class
+    nothing drove a *constrained* structure through `optimize run`. So
+    `n_free_atoms` in the run record and the per-atom CSV's masked and
+    unmasked columns were only ever validated on runs where they happen to
+    agree -- which is every run without constraints, and every run of two
+    identical EMT members, where sigma is exactly zero.
+    """
+
+    def test_the_masked_and_unmasked_columns_differ_on_a_fixed_atom(
+            self, constrained_structure, fake_committee_file, monkeypatch):
+        _reroute_one_member_to_the_biased_worker(monkeypatch)
+        path, _ = fake_committee_file
+        result = runner.invoke(app, ["run", "--structure",
+                                     str(constrained_structure),
+                                     "--committee", str(path),
+                                     "--max-steps", "3", "--no-verbose"])
+        assert result.exit_code == 0, result.output
+
+        out = constrained_structure.parent
+        with open(out / "opt_committee_peratom.csv", newline="",
+                  encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+
+        # Every atom keeps its row, constrained ones included.
+        assert [int(r["atom_index"]) for r in rows] == [0, 1, 2, 3]
+        fixed, free = rows[:2], rows[2:]
+
+        # The point of the two columns: on a fully fixed atom they differ,
+        # and they differ in the direction masking promises.
+        for row in fixed:
+            assert float(row["sigma_all_eV_per_A"]) > 0.0
+            assert float(row["sigma_free_eV_per_A"]) == pytest.approx(0.0)
+            assert int(row["free_components"]) == 0
+        for row in free:
+            assert float(row["sigma_free_eV_per_A"]) > 0.0
+            assert float(row["sigma_free_eV_per_A"]) == pytest.approx(
+                float(row["sigma_all_eV_per_A"]))
+            assert int(row["free_components"]) == 3
+
+        record = json.loads((out / "mliprun_run.json").read_text())
+        uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
+        # Fewer free atoms than atoms: the reduction really ran over a
+        # smaller population than the cell.
+        assert uncertainty["n_free_atoms"] == 2
+        assert uncertainty["n_free_atoms"] < record["inputs"]["n_atoms"]
+        # The worst free atom cannot be one of the two that cannot move.
+        assert uncertainty["worst_atom_free"] >= 2
+        assert uncertainty["unhandled_constraints"] == []
+
+    def test_the_trace_carries_the_free_atom_count_on_every_row(
+            self, constrained_structure, fake_committee_file, monkeypatch):
+        _reroute_one_member_to_the_biased_worker(monkeypatch)
+        path, _ = fake_committee_file
+        result = runner.invoke(app, ["run", "--structure",
+                                     str(constrained_structure),
+                                     "--committee", str(path),
+                                     "--max-steps", "3", "--no-verbose"])
+        assert result.exit_code == 0, result.output
+
+        out = constrained_structure.parent
+        with open(out / "opt_committee.csv", newline="",
+                  encoding="utf-8") as handle:
+            trace = list(csv.DictReader(handle))
+        assert trace
+        assert all(int(r["n_free_atoms"]) == 2 for r in trace)
+        assert all(int(r["worst_atom_free"]) >= 2 for r in trace)
+
+
+class TestUnhandledConstraintNote:
+    """The terminal note naming constraint types sigma could not mask.
+
+    ``FixBondLengths`` projects rather than masks, so its atoms stay counted
+    as free and sigma is over-reported for them. That fallback must be
+    visible, not silent. It cannot come through a POSCAR -- ASE's VASP writer
+    only emits selective dynamics, i.e. ``FixAtoms``/``FixScaled`` -- so the
+    constraint is attached to what the CLI reads, one layer above the code
+    under test.
+    """
+
+    def test_the_note_names_the_constraint_type_it_could_not_mask(
+            self, structure, fake_committee_file, monkeypatch):
+        import mliprun.cli.commands.optimize as optimize_cli
+        from ase.constraints import FixBondLengths
+        from ase.io import read as _real_read
+
+        def _read_with_an_unhandled_constraint(*args, **kwargs):
+            atoms = _real_read(*args, **kwargs)
+            atoms.set_constraint(FixBondLengths([(0, 1)]))
+            return atoms
+
+        monkeypatch.setattr(optimize_cli, "read",
+                            _read_with_an_unhandled_constraint)
+
+        path, _ = fake_committee_file
+        result = runner.invoke(app, ["run", "--structure", str(structure),
+                                     "--committee", str(path),
+                                     "--max-steps", "3", "--no-verbose"])
+        assert result.exit_code == 0, result.output
+        assert "are not masked" in result.output
+        assert "FixBondLengths" in result.output
+        assert "over-reported" in result.output
+
+        record = json.loads(
+            (structure.parent / "mliprun_run.json").read_text())
+        uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
+        assert uncertainty["unhandled_constraints"] == ["FixBondLengths"]
+        # Unhandled means "left free", not "dropped": every atom still counts.
+        assert uncertainty["n_free_atoms"] == 4
+
+    def test_no_note_is_printed_when_every_constraint_is_masked(
+            self, constrained_structure, fake_committee_file):
+        """The sibling: `FixAtoms` is masked, so there is nothing to warn
+        about and the note must not appear."""
+        path, _ = fake_committee_file
+        result = runner.invoke(app, ["run", "--structure",
+                                     str(constrained_structure),
+                                     "--committee", str(path),
+                                     "--max-steps", "3", "--no-verbose"])
+        assert result.exit_code == 0, result.output
+        assert "are not masked" not in result.output
 
 
 class TestTeardownOnFailure:
