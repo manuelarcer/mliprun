@@ -39,9 +39,9 @@ energy or barrier computed as a difference against a common slab.
 
 **The rule.** Mask componentwise, not per atom. A force component that a
 constraint holds fixed contributes nothing to sigma; an atom free in x and y
-but fixed in z still contributes its x and y disagreement. `sigma_max` and
-`sigma_mean` are then taken over the atoms that retain at least one free
-component.
+but fixed in z still contributes its x and y disagreement. `sigma_max_free`
+and `sigma_mean_free` are then taken over the atoms that retain at least one
+free component.
 
 **Which constraints are handled, and why only those.** `FixAtoms` and
 `FixCartesian` are the only stock ASE constraints whose `adjust_forces` is a
@@ -103,9 +103,9 @@ down, where the next maintainer meets it.
 
 **What changes.** `--uncertainty-threshold` no longer defaults to `fmax`. Left
 unset, no threshold is applied and no verdict is asserted. The committee
-always reports `sigma_max`, `sigma_mean`, the worst atom and the ratio
-`sigma_max / fmax`; a warning appears only when a threshold was chosen and
-exceeded.
+always reports `sigma_max_free`, `sigma_mean_free`, the worst free atom and
+the ratio `sigma_max_free / fmax`; a warning appears only when a threshold was
+chosen and exceeded.
 
 **Why not simply loosen the default to the measured spread.** Two datapoints
 are not a calibration, and they were measured on the pre-masking statistic --
@@ -188,9 +188,11 @@ would add liability with no benefit.
 
 ## Consequences
 
-- Run record schema 4 -> 5. This changes the *meaning* of `sigma_max`, which
-  is stronger than the two previous bumps that only added fields; a reader
-  must be able to tell which definition a record was written under.
+- Run record schema 4 -> 5. Schema 4's `sigma_max_final_eV_per_A` counted every
+  atom; schema 5 renames it `sigma_max_free_final_eV_per_A` and reduces over
+  free components only. A changed *meaning* is stronger than the two previous
+  bumps, which only added fields — a reader must be able to tell which
+  definition a record was written under, and here the name itself says so.
 - The two cluster datapoints above are superseded as calibration inputs. Any
   future threshold must be measured after this change.
 - No frozen golden contains sigma (the four in `tests/goldens/` predate the
