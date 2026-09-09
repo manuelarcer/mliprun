@@ -108,9 +108,15 @@ the ratio `sigma_max_free / fmax`; a warning appears only when a threshold was
 chosen and exceeded.
 
 **Why not simply loosen the default to the measured spread.** Two datapoints
-are not a calibration, and they were measured on the pre-masking statistic --
-Decision 1 changes both numbers. Picking 0.15 today means picking it from
-data that is about to move.
+are not a calibration.
+
+*Corrected 2026-09-09.* This paragraph originally added a second reason -- that
+the datapoints were measured on the pre-masking statistic, so Decision 1 would
+move them and picking 0.15 meant picking from data about to change. That reason
+was wrong, and the correction is recorded here rather than deleted because it
+is the more useful fact: **Decision 1 moves neither `sigma_max`.** Both worst
+atoms were free, so the masked and unmasked maxima are identical (0.1502 and
+0.1121 eV/A). See the Consequences section.
 
 **Why this is not cosmetic.** `flagged: true` is a machine-readable claim,
 written permanently into the run record, that a downstream script can filter
@@ -193,7 +199,34 @@ would add liability with no benefit.
   free components only. A changed *meaning* is stronger than the two previous
   bumps, which only added fields — a reader must be able to tell which
   definition a record was written under, and here the name itself says so.
-- The two cluster datapoints above are superseded as calibration inputs. Any
-  future threshold must be measured after this change.
+- **The two cluster datapoints above survive this change unchanged**, contrary
+  to what this note first predicted. Recomputed exactly on 2026-09-09 from the
+  run data already on cos-cluster -- no re-run was needed, because both runs
+  use `FixAtoms` only, which zeroes an atom's whole force row, so the masked
+  maximum is the maximum of the recorded per-atom sigma over the free atoms:
+
+  | system | fixed / total | worst atom | sigma_max all | sigma_max free | sigma_mean all -> free |
+  |---|---|---|---|---|---|
+  | O/Pt(111), 3 members | 8 / 17 | #10 Pt, free | 0.1502 | 0.1502 | 0.0643 -> 0.0830 |
+  | CH/FeNi, 6 members | 32 / 82 | #44 Fe, free | 0.1121 | 0.1121 | 0.0343 -> 0.0323 |
+
+  The hypothesis that motivated the masking -- that `sigma_max` might be
+  sitting on a frozen substrate atom, reporting disagreement in a region that
+  cannot move -- is **false for both measured systems**. The worst atom is free
+  in each. The masking remains correct: the statistic now means what it says
+  and is reduced over the same atom set as `fmax`. It simply does not rescue
+  these numbers, and the threshold tension is undiminished -- same-level
+  committees disagree by 0.11-0.15 eV/A in the *free* region against targets of
+  0.02-0.05.
+
+  One number did move, and it is the more interesting one: on O/Pt the mean
+  rose from 0.0643 to 0.0830 eV/A once the frozen atoms were excluded. The
+  frozen bottom-layer Pt atoms were the *best-agreeing* atoms in the cell and
+  were dragging the average down, so the all-atom mean was flattering the
+  committee on that slab. `sigma_mean_free` is the honest cross-system
+  quantity.
+
+  Method and the reusable script are recorded in
+  `.claude/handoffs/committee-threshold-calibration.md`.
 - No frozen golden contains sigma (the four in `tests/goldens/` predate the
   committee feature), so none may change.
