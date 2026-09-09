@@ -255,9 +255,15 @@ class TestReusedCommittee:
         try:
             copper = _rattled()
             copper.calc = committee
+            # An explicit, deliberately low threshold: the biased member puts
+            # sigma at 1.41 eV/A, so this structure genuinely flags. Without
+            # it BOTH structures would report `flagged: None` and this field
+            # -- the one a leak would corrupt most visibly -- could not tell
+            # them apart.
             run_optimization(copper, fmax=0.05, max_steps=3,
                              output_dir=first_dir, model_name="committee",
-                             verbose=False, committee=committee)
+                             verbose=False, committee=committee,
+                             uncertainty_threshold=0.01)
 
             # Iron has no EMT potential, so EVERY member rejects the geometry
             # on the first evaluation: this run never produces a statistic of
@@ -268,7 +274,8 @@ class TestReusedCommittee:
                 run_optimization(iron, fmax=0.05, max_steps=3,
                                  output_dir=second_dir,
                                  model_name="committee", verbose=False,
-                                 committee=committee)
+                                 committee=committee,
+                                 uncertainty_threshold=0.01)
         finally:
             committee.close()
 
@@ -279,11 +286,8 @@ class TestReusedCommittee:
         assert first["sigma_max_free_final_eV_per_A"] == pytest.approx(
             BIAS_EV_PER_A / math.sqrt(2.0), rel=1e-9)
         assert first["worst_atom_free_symbol"] == "Cu"
-        # No threshold was passed to this run, so no verdict is asserted
-        # even though the disagreement is real and large -- `flagged` is
-        # `None` (opt-in threshold, Task 5), not a leftover `True` from the
-        # old fmax default.
-        assert first["flagged"] is None
+        assert first["threshold_source"] == "explicit"
+        assert first["flagged"] is True
 
         second_record = _record(second_dir)
         assert second_record["status"] == "failed"
@@ -297,9 +301,11 @@ class TestReusedCommittee:
         assert second["worst_atom_free"] is None
         assert second["worst_atom_free_symbol"] is None
         assert second["energy_spread_aligned_final_eV"] is None
-        # No evaluation ever ran for this structure, so there is nothing to
-        # check against a threshold -- `flagged` is `None`, not `False`.
-        # `False` would claim a check that never happened (Task 4).
+        # The same threshold was applied to this run, but no evaluation ever
+        # ran, so there was nothing to check against it. `None`, not `False`
+        # (which would claim a check that never happened, Task 4) and not the
+        # `True` the previous structure earned.
+        assert second["threshold_source"] == "explicit"
         assert second["flagged"] is None
         # The trace file exists but holds only its header: zero steps ran.
         assert _read_csv(second_dir / "opt_committee.csv") == []
@@ -315,13 +321,15 @@ class TestReusedCommittee:
         try:
             copper = _rattled()
             copper.calc = committee
+            # Explicit low threshold, for the same reason as the sibling
+            # above: this structure must genuinely flag, so the stale value
+            # the echo would print is a `True` and not another `None`.
             run_optimization(copper, fmax=0.05, max_steps=3,
                              output_dir=tmp_path / "cu",
                              model_name="committee", verbose=False,
-                             committee=committee)
-            # No threshold passed, so no verdict is asserted (Task 5: opt-in
-            # threshold) even though this run's disagreement is real.
-            assert committee.latest_uncertainty_summary["flagged"] is None
+                             committee=committee,
+                             uncertainty_threshold=0.01)
+            assert committee.latest_uncertainty_summary["flagged"] is True
 
             iron = bulk("Fe", "bcc", a=2.87)
             iron.calc = committee
@@ -329,13 +337,15 @@ class TestReusedCommittee:
                 run_optimization(iron, fmax=0.05, max_steps=3,
                                  output_dir=tmp_path / "fe",
                                  model_name="committee", verbose=False,
-                                 committee=committee)
+                                 committee=committee,
+                                 uncertainty_threshold=0.01)
         finally:
             committee.close()
 
         assert committee.latest is None
-        # No evaluation ever ran, so nothing was checked (Task 4: `flagged`
-        # is `None`, not `False`, when there is no verdict to give).
+        # A threshold was applied but no evaluation ever ran, so nothing was
+        # checked: `None`, not `False` (Task 4) and not the previous
+        # structure's `True`.
         assert committee.latest_uncertainty_summary["flagged"] is None
         assert (committee.latest_uncertainty_summary[
             "sigma_max_free_final_eV_per_A"] is None)
