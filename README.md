@@ -15,13 +15,44 @@ Supports **UMA** (FAIRChem), **MACE**, **SevenNet** (7net), and **CHGNet** model
 
 ---
 
+## Relax with a committee, and see how much your models disagree
+
+One MLIP gives you an answer with no error bar. A **committee** relaxes the
+structure with several of them at once, follows their mean force, and reports
+how far they disagree at every step — a per-configuration uncertainty attached
+to the run itself.
+
+```bash
+mlip optimize run --structure POSCAR --committee committee.yaml --uncertainty-plot
+```
+
+![Committee relaxation of O on Pt(111): mean energy and max force, each with its uncertainty band](docs/images/committee_uncertainty.png)
+
+**Left axis**, the committee mean energy with a band showing how much the
+members disagree about it. **Right axis**, the max force driving convergence
+with a band showing the largest force disagreement over the free atoms, against
+the `--fmax` target line. Where the band reaches down to that line, the minimum
+sits inside the committee's own noise: the relaxation has gone as far as these
+models can tell apart. In the run above — three same-level models on
+O/Pt(111) — the band reaches zero at step 13, where the disagreement (0.146
+eV/Å) overtakes the force being minimized (0.118 eV/Å). `fmax` itself does not
+cross the 0.05 target until step 16, three steps later.
+
+Each member runs in **its own Python environment** as a subprocess, so UMA,
+MACE, SevenNet and CHGNet can sit on one committee despite dependencies that
+cannot coexist in a single env. Every number in the figure is also written to
+CSV, per step and per atom. See
+[Committee outputs](docs/OUTPUTS.md#committee-outputs).
+
+---
+
 ## Key Features
 
 - Unified CLI commands: `optimize run`, `md run`, `neb run`, `autoneb run`
 - Auto-detection of available MLIP models (UMA > MACE > SevenNet > CHGNet)
 - UMA model support with multiple task types (OMat, OC20, OMol, ODAC)
 - MACE multi-head foundation models (`mace-mh-*`) with selectable heads (`omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, …)
-- Committee evaluation: relax with several MLIPs at once and report their disagreement as a per-configuration uncertainty (`optimize run --committee`)
+- Committee evaluation: relax with several MLIPs at once and report their disagreement as a per-configuration uncertainty (`optimize run --committee`), with an opt-in energy/force uncertainty figure (`--uncertainty-plot`)
 - GPU/CPU selection via `--device` (`auto`/`cuda`/`cpu`) on all run commands
 - Geometry optimization with multiple optimizers (FIRE, BFGS, LBFGS, BFGSLineSearch, GPMin, MDMin)
 - MD with NVE, NVT, and NPT ensembles

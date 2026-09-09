@@ -57,6 +57,14 @@ def _default_rows():
                  sigmas=[0.21, 0.09, 0.04])
 
 
+def _rows_with_no_clipping():
+    """sigma below fmax at every step, so no band edge reaches zero."""
+    return _rows(energies=[-88.10, -88.31, -88.42],
+                 spreads=[0.0, 0.012, 0.030],
+                 fmax_values=[1.80, 0.54, 0.20],
+                 sigmas=[0.21, 0.09, 0.04])
+
+
 def _band_at_each_step(collection, steps):
     """Recover ``(lower, upper)`` per x from a ``fill_between`` polygon.
 
@@ -203,14 +211,61 @@ class TestTheFigure:
         assert lower == pytest.approx([0.0, 0.0], abs=1e-12)
         plt.close(figure)
 
-    def test_both_y_axes_are_linear(self):
-        """The convergence figure's force panel is log; this one cannot be.
-
-        A symmetric band on a log axis drops its lower edge silently exactly
-        when that edge is clipped to zero -- the case worth looking at.
-        """
+    def test_the_energy_axis_is_linear(self):
+        """Energy relative to step 0 is negative for any relaxation that
+        went downhill, and a log axis cannot carry a negative number."""
         figure = _plot_uncertainty(_default_rows(), 0.05)
         assert figure.axes[0].get_yscale() == "linear"
+        plt.close(figure)
+
+    def test_the_force_axis_is_log_when_no_band_edge_reaches_zero(self):
+        """A relaxation spans orders of magnitude in fmax; linear buries
+        everything after the first few steps."""
+        figure = _plot_uncertainty(_rows_with_no_clipping(), 0.05)
+        assert figure.axes[1].get_yscale() == "log"
+        plt.close(figure)
+
+    def test_a_band_edge_clipped_to_zero_forces_symlog(self):
+        """A log axis cannot draw zero, and matplotlib drops the offending
+        vertices rather than warning -- which silently deforms the band
+        polygon exactly where sigma exceeds fmax. symlog keeps the edge.
+        """
+        rows = _default_rows()          # last step: 0.02 - 0.04 -> clipped
+        traces = _uncertainty_traces(rows)
+        assert min(traces["force_lo"]) == 0.0, "fixture must clip somewhere"
+
+        figure = _plot_uncertainty(rows, 0.05)
+        force_axis = figure.axes[1]
+        assert force_axis.get_yscale() == "symlog"
+
+        smallest_positive = min(v for v in (traces["fmax"]
+                                            + traces["force_lo"]
+                                            + traces["force_hi"]) if v > 0)
+        assert force_axis.yaxis._scale.linthresh == pytest.approx(
+            smallest_positive)
+
+        # Every point survives, the clipped edge included: this is the
+        # assertion that proves nothing was silently dropped.
+        lower, upper = _band_at_each_step(force_axis.collections[0],
+                                          traces["steps"])
+        assert lower == pytest.approx(traces["force_lo"], abs=1e-12)
+        assert upper == pytest.approx(traces["force_hi"], abs=1e-12)
+        plt.close(figure)
+
+    def test_the_force_axis_never_shows_a_negative_force(self):
+        """symlog is symmetric about zero by definition, and autoscaling it
+        offers decades of negative force -- a quantity that does not exist."""
+        figure = _plot_uncertainty(_default_rows(), 0.05)
+        bottom, _ = figure.axes[1].get_ylim()
+        assert bottom == 0.0
+        plt.close(figure)
+
+    def test_an_all_zero_force_trace_stays_linear(self):
+        """A converged, exactly-agreeing committee has nothing positive to
+        put on a log axis; linear keeps the flat trace on screen."""
+        rows = _rows(energies=[-1.0, -1.0], spreads=[0.0, 0.0],
+                     fmax_values=[0.0, 0.0], sigmas=[0.0, 0.0])
+        figure = _plot_uncertainty(rows, 0.05)
         assert figure.axes[1].get_yscale() == "linear"
         plt.close(figure)
 

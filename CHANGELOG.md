@@ -53,10 +53,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   without it, rather than silently writing nothing) and is independent of
   `--plot`. The energy is plotted relative to step 0 because the band is
   measured that way, which makes the band exactly zero-width at step 0 by
-  construction — annotated on the figure rather than hidden. Both axes are
-  linear, unlike the convergence figure's log force panel: a symmetric band on
-  a log axis loses its lower edge without warning exactly when that edge is
-  clipped to zero. No figure is written for a trace shorter than two steps.
+  construction — annotated on the figure rather than hidden. The force axis is
+  logarithmic (a relaxation spans orders of magnitude in `fmax`) and switches
+  to `symlog`, floored at zero, wherever a band edge is clipped: a log axis
+  drops non-positive vertices with no warning, which deforms the band polygon
+  rather than merely hiding its edge. The energy axis is linear, since
+  energy relative to step 0 is negative. No figure is written for a trace
+  shorter than two steps.
 
 - **SevenNet model family and `--sevennet-task`.** The SevenNet backend was a
   stub that had never executed: one hardcoded tag (`7net-mf-ompa`) with

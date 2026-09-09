@@ -267,11 +267,18 @@ Three things about it are deliberate:
 - **The force band is an upper bound, not the error bar on the plotted
   number.** `sigma_max_free` is the largest disagreement anywhere in the free
   region, and the atom carrying it need not be the atom carrying `fmax`.
-- **Both axes are linear**, unlike the log force panel on the convergence
-  figure. A symmetric band on a log axis loses its lower edge with no warning
-  exactly when that edge is clipped to zero — the case worth looking at, since
-  a sigma larger than `fmax` means the minimum sits inside the committee's
-  noise.
+- **The force axis is logarithmic; the energy axis is linear.** A relaxation
+  spans orders of magnitude in `fmax`, so a linear force axis buries every
+  step after the first few. Energy relative to step 0 is negative whenever the
+  relaxation went downhill, so that axis can only be linear.
+- **The force axis becomes `symlog` when a band edge is clipped to zero**, on
+  the same reasoning as the sigma panel: matplotlib drops non-positive
+  vertices from a log axis with no warning, which does not merely hide the
+  clipped edge but deforms the whole band polygon. `symlog` treats
+  `|y| <= linthresh` linearly and keeps the edge where it belongs, with the
+  axis floored at zero so the scale's symmetric negative half — decades of
+  negative force — never appears. A clipped edge means sigma exceeded `fmax`
+  at that step, which is exactly the case worth seeing.
 
 No figure is written when the trace has fewer than two steps (a run that
 converged at step 0); the run says so on the terminal rather than emitting a

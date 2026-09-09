@@ -268,12 +268,32 @@ def _plot_uncertainty(committee_rows, fmax: float):
     ax_force.set_ylabel("Max Force (eV/Ang)", color=force_color)
     ax_force.tick_params(axis="y", labelcolor=force_color)
 
-    # Both axes stay linear, unlike the log force panel on the convergence
-    # figure. A symmetric band on a log axis loses its lower edge without a
-    # warning exactly when that edge is clipped to zero -- which is the case
-    # the figure exists to show.
+    # Energy relative to step 0 is negative for any relaxation that went
+    # downhill, so this axis can only ever be linear.
     ax_energy.set_yscale("linear")
-    ax_force.set_yscale("linear")
+
+    # The force axis is log, matching the convergence figure's force panel: a
+    # relaxation spans orders of magnitude in fmax, and a linear axis buries
+    # every step after the first few. The band complicates that -- its lower
+    # edge is clipped to zero wherever sigma >= fmax -- and matplotlib drops
+    # non-positive vertices from a log axis with no warning, which does not
+    # merely hide that edge but deforms the whole polygon. So the scale adapts
+    # exactly as the sigma panel's does, for the same reason.
+    force_values = traces["fmax"] + traces["force_lo"] + traces["force_hi"]
+    positive_values = [value for value in force_values if value > 0]
+    if not positive_values:
+        # A converged, exactly-agreeing committee: nothing to put on a log
+        # axis, and linear keeps the flat trace on screen.
+        ax_force.set_yscale("linear")
+    elif len(positive_values) < len(force_values):
+        # symlog treats |y| <= linthresh linearly, so a band edge sitting at
+        # exactly zero is drawn where it belongs instead of vanishing. It is
+        # symmetric about zero by definition, though, and autoscaling then
+        # offers decades of negative force -- a quantity that does not exist.
+        ax_force.set_yscale("symlog", linthresh=min(positive_values))
+        ax_force.set_ylim(bottom=0.0)
+    else:
+        ax_force.set_yscale("log")
 
     handles = ax_energy.get_legend_handles_labels()
     twin_handles = ax_force.get_legend_handles_labels()
