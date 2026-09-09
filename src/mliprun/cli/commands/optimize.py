@@ -202,9 +202,13 @@ def _started_committee(config, output_dir: Path, member_timeout: float,
 def _report_committee_uncertainty(committee_calc) -> None:
     """Echo the committee's disagreement at the final geometry.
 
-    Always printed: with no threshold there is no verdict to give, and the
-    numbers are the deliverable. The warning below it appears only when a
-    caller chose a threshold and the run exceeded it.
+    Printed on every run that finishes, threshold or not: with no threshold
+    there is no verdict to give, and the numbers are the deliverable. The
+    warning below it appears only when a caller chose a threshold and the
+    run exceeded it. A run that *failed* never reaches here -- the summary
+    is written to the run record and the exception re-raised before this
+    call -- so a failed run's numbers are in `mliprun_run.json`, not on the
+    terminal.
 
     This is the single terminal report at default settings:
     ``run_optimization``'s own log calls are INFO-level (silent unless a
@@ -222,6 +226,10 @@ def _report_committee_uncertainty(committee_calc) -> None:
     if summary is None or summary["sigma_max_free_final_eV_per_A"] is None:
         return
     ratio = summary["sigma_max_free_over_fmax_final"]
+    # Printed unconditionally, so it is worth knowing where it is not
+    # like-for-like: on a --relax-cell run the denominator carries the cell
+    # virials the optimizer converges against, while sigma is atomic forces
+    # only. See "The flagging rule" in docs/OUTPUTS.md.
     ratio_text = "" if ratio is None else f", {ratio:.1f}x the final fmax"
     typer.echo(
         f"\n📊 Committee disagreement at the final geometry: "

@@ -90,6 +90,18 @@ _MACE_MH_LEVELS = {
 #: transition metals in oxides and fluorides only -- so an MPtrj-trained
 #: model is effectively plain PBE for a metallic slab and PBE+U for an oxide,
 #: and no static label can settle that. Juan's ruling, 2026-09-08.
+#:
+#: ``7net-0``, ``7net-0_22may2024`` and ``7net-l3i5`` are BELIEVED to be MPtrj
+#: too, and are still absent from this table on purpose. The belief comes from
+#: SevenNet's documentation; the rule for this table is that a row is added
+#: only once the training set is confirmed from the installed package
+#: (``sevenn cp <tag>``), which nobody has done for those three. The
+#: asymmetry is deliberate, not an oversight: adding an unconfirmed row is
+#: exactly the *wrong* row this table's one silent failure mode is about --
+#: two entries carrying the same label for genuinely different datasets read
+#: as same-level with no signal anywhere. Leaving them out costs a spurious
+#: mixed-theory warning; putting them in could silently turn a functional
+#: comparison into an error bar.
 _FIXED_LEVELS = {
     "mace": "PBE(+U)/MPtrj",
     "chgnet": "PBE(+U)/MPtrj",

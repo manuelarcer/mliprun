@@ -186,6 +186,12 @@ only**: the members are asked for forces, never for a stress. Read a flag on
 a cell relaxation as "the members disagree about the atomic forces by more
 than the combined force/virial tolerance", not as a like-for-like ratio.
 
+The same caveat applies to `sigma_max_free_over_fmax_final`, and it applies
+on *every* `--relax-cell` run, not only a flagged one: the ratio is printed
+and recorded unconditionally, and on a cell relaxation its denominator
+carries virials its numerator does not. It is still useful as a trend across
+comparable runs; it is not "sigma in units of the force tolerance" there.
+
 On a run that **failed** (a member rejecting the geometry, a member dying),
 `sigma_max_free_final_eV_per_A` and the other `*_final_*` fields describe the last
 **successful** evaluation, not the final geometry, because there is no

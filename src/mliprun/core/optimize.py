@@ -319,10 +319,11 @@ def run_optimization(
         # exists for -- the exception handler below would otherwise write the
         # previous structure's sigma, its atom index and its flag into THIS
         # run's record, wearing this structure's element symbols. Clearing here
-        # is safe: `log_convergence` guards on `latest is not None`, the
-        # optimizer's first `get_potential_energy()` repopulates it before the
-        # observer fires, and `uncertainty_summary(rows=[], latest=None)`
-        # returns all-null with `flagged: False`, which is the honest output.
+        # is safe: every reader guards on `latest is not None`
+        # (`log_convergence` and the summary block at the end), and
+        # `uncertainty_summary(rows=[], latest=None)` returns all-null with
+        # `flagged: None` -- no verdict, which is the honest output when
+        # nothing was ever evaluated.
         committee.latest = None
         committee.latest_uncertainty_summary = None
 
