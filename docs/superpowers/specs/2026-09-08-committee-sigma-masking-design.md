@@ -70,11 +70,34 @@ is no per-atom decomposition to mask, so the aligned energy spread is
 untouched by this change.
 
 **The old numbers are kept.** `sigma_max_all` / `sigma_mean_all` /
-`worst_atom_all` carry the pre-change definition alongside the new headline
-values. Cost is a few floats; the benefit is that the two measured datapoints
-above stay comparable to every later run, and the gap between the two numbers
-says directly how much of the old figure was frozen substrate -- which is the
-evidence any future threshold calibration needs.
+`worst_atom_all` carry the pre-change definition alongside the new
+free-atom values. Cost is a few floats; the benefit is that the two measured
+datapoints above stay comparable to every later run, and the gap between the
+two numbers says directly how much of the old figure was frozen substrate --
+which is the evidence any future threshold calibration needs.
+
+**Naming: every sigma name states which atoms it covers.** Juan's ruling,
+2026-09-09. A sigma name carries `free` (atoms free to move) or `all` (every
+atom in the cell); there is no bare form, in the CSV columns, in the run
+record, or in the internal statistics dict.
+
+The first attempt at this made the exception explicit and left the common case
+bare -- `sigma_max_all_eV_per_A` announced itself while `sigma_max_eV_per_A`
+silently meant free-atoms-only. That is the wrong way round: the bare name is
+the one people actually read, so it is the one that gets misread, and a reader
+had to already know the convention to know what they were looking at. The
+concrete failure it produced was two sibling output files using opposite
+polarity for the same distinction, so `df_peratom.sigma_eV_per_A.max()` stopped
+equalling the trace's final `sigma_max_eV_per_A` -- silently, on exactly the
+constrained runs this feature exists for.
+
+`free` rather than `relaxed`, for consistency with `n_free_atoms` and
+`free_components`, and with ASE's degrees-of-freedom vocabulary.
+
+The internal dict keys follow the same rule, not only the user-facing columns.
+A `stats["sigma_max"]` meaning "free" behind a column named
+`sigma_max_free_eV_per_A` would rebuild the same implicit convention one layer
+down, where the next maintainer meets it.
 
 ## Decision 2: the threshold is opt-in, and `flagged` is tri-state
 
