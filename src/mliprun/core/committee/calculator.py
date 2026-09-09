@@ -16,7 +16,43 @@ from ase.calculators.calculator import Calculator, all_changes
 logger = logging.getLogger(__name__)
 
 
-def committee_statistics(energies, forces) -> dict:
+def free_component_mask(atoms):
+    """Which force components are free to move, as an ``(N, 3)`` bool array.
+
+    Only ``FixAtoms`` and ``FixCartesian`` are masked. They are the stock ASE
+    constraints whose ``adjust_forces`` is a pure component mask -- verified
+    against ase 3.26.0, ``forces[index] = 0.0`` and
+    ``forces[index] *= ~mask[None, :]`` respectively -- so the component they
+    hold is exactly zero and dropping it from the statistic is unambiguous.
+
+    Everything else in ``ase.constraints`` (``FixScaled``, ``FixedPlane``,
+    ``FixedLine``, ``FixBondLength``) projects rather than masks, and a
+    projection does not carry over to a standard deviation, which is not a
+    vector. Those atoms stay free: sigma is over-reported rather than
+    under-reported, and the type names are returned so the fallback reaches
+    the run record instead of being silent.
+
+    Returns
+    -------
+    (numpy.ndarray, list of str)
+        The ``(N, 3)`` mask -- True where the component is free -- and the
+        sorted names of the constraint types that were not masked.
+    """
+    mask = np.ones((len(atoms), 3), dtype=bool)
+    unhandled = set()
+    for constraint in getattr(atoms, "constraints", ()) or ():
+        kind = type(constraint).__name__
+        if kind == "FixAtoms":
+            mask[np.asarray(constraint.index, dtype=int)] = False
+        elif kind == "FixCartesian":
+            mask[np.asarray(constraint.index, dtype=int)] &= ~np.asarray(
+                constraint.mask, dtype=bool)
+        else:
+            unhandled.add(kind)
+    return mask, sorted(unhandled)
+
+
+def committee_statistics(energies, forces, free_mask=None) -> dict:
     """Reduce the members' energies and forces to a consensus and a spread.
 
     The uncertainty metric is the per-atom force disagreement
@@ -34,26 +70,49 @@ def committee_statistics(energies, forces) -> dict:
     it. Per-model constant offsets shift the mean energy by a constant
     without changing its shape.
 
+    ``sigma_max_free``/``sigma_mean_free`` are taken over free components
+    only, using ``free_mask`` (see :func:`free_component_mask`). Every name
+    here carries a ``_free`` or ``_all`` suffix on purpose: a bare
+    ``sigma_max`` would leave the reader to remember which population it
+    covers, and that convention is exactly what this module must not rely
+    on. A constrained atom
+    cannot move regardless of how much the members disagree about its force,
+    and the convergence criterion this is compared against (ASE's ``fmax``)
+    only ever looks at free atoms -- so including constrained atoms in the
+    reduction would compare against the wrong population. Design note:
+    docs/superpowers/specs/2026-09-04-committee-uncertainty-design.md.
+
     Parameters
     ----------
     energies : array-like, shape (M,)
         One energy per member, in the members' own order.
     forces : array-like, shape (M, N, 3)
         One force array per member, same order.
+    free_mask : array-like of bool, shape (N, 3), optional
+        True where a force component is free to move. Defaults to all-free,
+        which reproduces the previous (unmasked) behaviour exactly.
 
     Returns
     -------
     dict
-        ``energy_mean`` (float), ``forces_mean`` (N, 3), ``sigma_per_atom``
-        (N,), ``sigma_max`` (float), ``sigma_mean`` (float), ``worst_atom``
-        (int).
+        ``energy_mean`` (float), ``forces_mean`` (N, 3),
+        ``sigma_per_atom_all`` (N,, all-component), ``sigma_per_atom_free``
+        (N,, masked), ``sigma_max_free`` (float, free components only),
+        ``sigma_mean_free`` (float, free components only),
+        ``worst_atom_free`` (int, free components only), ``sigma_max_all``
+        (float, unmasked), ``sigma_mean_all`` (float, unmasked),
+        ``worst_atom_all`` (int, unmasked), ``n_free_atoms`` (int, atoms
+        with at least one free component), ``all_constrained`` (bool, True
+        when no atom has a free component -- ``sigma_max_free`` and
+        ``sigma_mean_free`` then fall back to the unmasked numbers).
 
     Raises
     ------
     ValueError
-        If fewer than two members are given, or the shapes disagree. Two is
-        the floor because ``ddof=1`` is undefined for one sample -- and
-        because a committee of one has no disagreement to report.
+        If fewer than two members are given, the shapes disagree, or
+        ``free_mask`` is not shaped ``(n_atoms, 3)``. Two members is the
+        floor because ``ddof=1`` is undefined for one sample -- and because a
+        committee of one has no disagreement to report.
     """
     energies = np.asarray(energies, dtype=float)
     forces = np.asarray(forces, dtype=float)
@@ -68,16 +127,46 @@ def committee_statistics(energies, forces) -> dict:
     if energies.shape[0] < 2:
         raise ValueError("a committee needs at least two members")
 
-    sigma_components = forces.std(axis=0, ddof=1)          # (N, 3)
-    sigma_per_atom = np.linalg.norm(sigma_components, axis=1)   # (N,)
-    worst_atom = int(np.argmax(sigma_per_atom))
+    sigma_components = forces.std(axis=0, ddof=1)                 # (N, 3)
+    sigma_per_atom_all = np.linalg.norm(sigma_components, axis=1)  # (N,)
+    worst_all = int(np.argmax(sigma_per_atom_all))
+
+    if free_mask is None:
+        free_mask = np.ones(sigma_components.shape, dtype=bool)
+    else:
+        free_mask = np.asarray(free_mask, dtype=bool)
+        if free_mask.shape != sigma_components.shape:
+            raise ValueError(
+                f"free_mask must have shape {sigma_components.shape}, got "
+                f"{free_mask.shape}")
+
+    sigma_per_atom_free = np.linalg.norm(sigma_components * free_mask, axis=1)
+    movable = np.flatnonzero(free_mask.any(axis=1))
+
+    if movable.size:
+        worst_free = int(movable[np.argmax(sigma_per_atom_free[movable])])
+        sigma_max_free = float(sigma_per_atom_free[worst_free])
+        sigma_mean_free = float(sigma_per_atom_free[movable].mean())
+        all_constrained = False
+    else:
+        worst_free = worst_all
+        sigma_max_free = float(sigma_per_atom_all[worst_all])
+        sigma_mean_free = float(sigma_per_atom_all.mean())
+        all_constrained = True
+
     return {
         "energy_mean": float(energies.mean()),
         "forces_mean": forces.mean(axis=0),
-        "sigma_per_atom": sigma_per_atom,
-        "sigma_max": float(sigma_per_atom[worst_atom]),
-        "sigma_mean": float(sigma_per_atom.mean()),
-        "worst_atom": worst_atom,
+        "sigma_per_atom_all": sigma_per_atom_all,
+        "sigma_per_atom_free": sigma_per_atom_free,
+        "sigma_max_free": sigma_max_free,
+        "sigma_mean_free": sigma_mean_free,
+        "worst_atom_free": worst_free,
+        "sigma_max_all": float(sigma_per_atom_all[worst_all]),
+        "sigma_mean_all": float(sigma_per_atom_all.mean()),
+        "worst_atom_all": worst_all,
+        "n_free_atoms": int(movable.size),
+        "all_constrained": all_constrained,
     }
 
 
@@ -160,9 +249,10 @@ class CommitteeCalculator(Calculator):
         self.latest = None
         #: The ``uncertainty_summary(...)`` dict for the last relaxation
         #: driven through this committee, set by ``run_optimization`` once it
-        #: finishes. A caller (the CLI's flagged-uncertainty echo) reads this
-        #: back instead of recomputing it, so the printed number can never
-        #: diverge from what the run record stored.
+        #: finishes. The CLI's ``_report_committee_uncertainty`` reads this
+        #: back instead of recomputing it -- on every successful run, not
+        #: only on a flagged one -- so the printed number can never diverge
+        #: from what the run record stored.
         self.latest_uncertainty_summary = None
         #: ``{member name: versions dict}`` as MEASURED inside each member's
         #: own env by ``worker._versions`` -- the interpreter, ASE, torch and
@@ -172,6 +262,11 @@ class CommitteeCalculator(Calculator):
         self.member_versions: dict = {}
         self.n_evaluations = 0
         self._pool = None
+        #: Distinct ``unhandled_constraints`` tuples already logged, so the
+        #: warning fires once per kind of unmasked constraint rather than
+        #: once per force evaluation (``_evaluate`` runs every optimizer
+        #: step).
+        self._warned_unhandled: set = set()
 
     @property
     def member_names(self) -> list:
@@ -283,8 +378,24 @@ class CommitteeCalculator(Calculator):
             self.close()
             raise
 
+        free_mask, unhandled = free_component_mask(atoms)
         ordered = [energies[m.name] for m in self.members]
-        stats = committee_statistics(ordered, stacked)
+        stats = committee_statistics(ordered, stacked, free_mask=free_mask)
+        # Stored, not recomputed downstream: the per-atom CSV must describe
+        # the same mask the statistic used, and `atoms` has moved on by the
+        # time the run writes it.
+        stats["free_mask"] = free_mask
+        stats["unhandled_constraints"] = unhandled
+        # Once per distinct set, not once per evaluation: `_evaluate` runs on
+        # every force call, so an unconditional warning would repeat itself
+        # several hundred times in one relaxation and bury the thing it is
+        # trying to say.
+        if unhandled and tuple(unhandled) not in self._warned_unhandled:
+            self._warned_unhandled.add(tuple(unhandled))
+            logger.warning(
+                "committee sigma: constraint type(s) %s are not masked, so "
+                "their atoms are counted as free and sigma is over-reported",
+                ", ".join(unhandled))
         stats["energies"] = dict(energies)
         self.latest = stats
         self.n_evaluations += 1
@@ -334,8 +445,17 @@ class CommitteeTraceWriter:
         a real energy uncertainty. Zero by construction on the first row.
     E_<member>_eV
         Each member's raw energy.
-    sigma_max_eV_per_A, sigma_mean_eV_per_A, worst_atom
-        Per-atom force disagreement, reduced.
+    sigma_max_free_eV_per_A, sigma_mean_free_eV_per_A, worst_atom_free
+        Per-atom force disagreement, reduced -- free components only.
+    sigma_max_all_eV_per_A, sigma_mean_all_eV_per_A, n_free_atoms
+        The same two reductions with no masking (every component, constrained
+        or not), and how many atoms had at least one free component, so a
+        reader can see how much of the disagreement sat in a frozen region
+        without recomputing anything.
+
+    Every sigma column names its population -- ``_free`` or ``_all``. A bare
+    ``sigma_max_eV_per_A`` would be read as "the" disagreement by anyone who
+    has not memorised which convention this file follows.
     mixed_theory
         The warn-don't-refuse flag, repeated on every row so downstream
         analysis can filter on it without having read the terminal.
@@ -356,8 +476,10 @@ class CommitteeTraceWriter:
         self._fieldnames = (
             ["step", "energy_mean_eV", "energy_spread_aligned_eV"]
             + [f"E_{name}_eV" for name in member_names]
-            + ["fmax_eV_per_A", "sigma_max_eV_per_A", "sigma_mean_eV_per_A",
-               "worst_atom", "mixed_theory"]
+            + ["fmax_eV_per_A", "sigma_max_free_eV_per_A",
+               "sigma_mean_free_eV_per_A", "worst_atom_free",
+               "sigma_max_all_eV_per_A", "sigma_mean_all_eV_per_A",
+               "n_free_atoms", "mixed_theory"]
         )
         self._handle = open(self.path, "w", newline="", encoding="utf-8")
         self._writer = csv.DictWriter(self._handle,
@@ -376,9 +498,12 @@ class CommitteeTraceWriter:
             "energy_spread_aligned_eV": aligned_energy_spread(
                 energies, self._baseline),
             "fmax_eV_per_A": float(fmax_value),
-            "sigma_max_eV_per_A": float(latest["sigma_max"]),
-            "sigma_mean_eV_per_A": float(latest["sigma_mean"]),
-            "worst_atom": int(latest["worst_atom"]),
+            "sigma_max_free_eV_per_A": float(latest["sigma_max_free"]),
+            "sigma_mean_free_eV_per_A": float(latest["sigma_mean_free"]),
+            "worst_atom_free": int(latest["worst_atom_free"]),
+            "sigma_max_all_eV_per_A": float(latest["sigma_max_all"]),
+            "sigma_mean_all_eV_per_A": float(latest["sigma_mean_all"]),
+            "n_free_atoms": int(latest["n_free_atoms"]),
             "mixed_theory": self.mixed_theory,
         }
         for name in self.member_names:
@@ -397,85 +522,141 @@ class CommitteeTraceWriter:
                 self._handle = None
 
 
-def write_peratom_sigma(path, symbols, sigma_per_atom) -> None:
+def write_peratom_sigma(path, symbols, sigma_all, sigma_free=None,
+                        free_mask=None) -> None:
     """Write the final geometry's per-atom force disagreement.
 
     Final geometry only: a per-atom field at every step would be a large file
-    for little gain, and ``worst_atom`` already traces where the disagreement
-    lives during the run. This file is the most diagnostically useful output
-    -- it says *which* atoms the models disagree about, which is usually the
-    adsorbate or the reacting bond.
+    for little gain, and ``worst_atom_free`` already traces where the
+    disagreement lives during the run. This file is the most diagnostically
+    useful output -- it says *which* atoms the models disagree about, which
+    is usually the adsorbate or the reacting bond.
+
+    Constrained atoms keep their row. ``sigma_all_eV_per_A`` is the unmasked
+    value and ``sigma_free_eV_per_A`` drops the held components, so a reader
+    can see for themselves how much of the disagreement sits in a region that
+    cannot move. ``free_components`` is 0 for a fully fixed atom. Neither
+    column is named bare: which population a sigma covers is the one thing
+    the header must not leave to convention.
     """
     symbols = list(symbols)
-    sigma_per_atom = np.asarray(sigma_per_atom, dtype=float).reshape(-1)
-    if len(symbols) != sigma_per_atom.size:
+    sigma_all = np.asarray(sigma_all, dtype=float).reshape(-1)
+    if len(symbols) != sigma_all.size:
         raise ValueError(
-            f"{len(symbols)} symbols but {sigma_per_atom.size} sigma values")
+            f"{len(symbols)} symbols but {sigma_all.size} sigma values")
+    if sigma_free is None:
+        sigma_free = sigma_all
+    sigma_free = np.asarray(sigma_free, dtype=float).reshape(-1)
+    if sigma_free.size != sigma_all.size:
+        raise ValueError(
+            f"{sigma_all.size} sigma values but {sigma_free.size} "
+            f"free-component sigma values")
+    if free_mask is None:
+        free_mask = np.ones((sigma_all.size, 3), dtype=bool)
+    free_mask = np.asarray(free_mask, dtype=bool)
+    if free_mask.shape != (sigma_all.size, 3):
+        raise ValueError(
+            f"free_mask must have shape {(sigma_all.size, 3)}, got "
+            f"{free_mask.shape}")
+    n_free = free_mask.sum(axis=1)
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["atom_index", "symbol", "sigma_eV_per_A"])
-        for index, (symbol, sigma) in enumerate(zip(symbols, sigma_per_atom)):
-            writer.writerow([index, symbol, float(sigma)])
+        writer.writerow(["atom_index", "symbol", "sigma_all_eV_per_A",
+                         "sigma_free_eV_per_A", "free_components"])
+        for index, symbol in enumerate(symbols):
+            writer.writerow([index, symbol, float(sigma_all[index]),
+                             float(sigma_free[index]), int(n_free[index])])
 
 
-def uncertainty_summary(rows, latest, *, threshold: float,
-                        threshold_source: str, symbols=None) -> dict:
+def uncertainty_summary(rows, latest, *, threshold=None,
+                        threshold_source="none", symbols=None) -> dict:
     """Reduce a committee run to the block the run record stores.
 
-    The flagging rule: a configuration is flagged when ``sigma_max`` at the
-    **final** geometry exceeds ``threshold``. Self-scaling and physically
-    motivated -- if the models disagree about the forces by more than the
-    convergence tolerance, the located minimum sits inside the committee's
-    own noise and the geometry is not resolved. A path that passed through a
-    strained geometry but converged to a well-constrained minimum is not
-    flagged, which is why the peak is reported separately.
+    With no threshold -- the default -- nothing is asserted: the numbers are
+    reported and ``flagged`` is ``None``. ``False`` keeps its meaning of
+    "checked against a threshold and passed"; using it for "not checked"
+    would put a claim in the record that nobody made.
 
-    **The default threshold is uncalibrated.** The 2026-09-04 probe measured
-    sigma_F only across four mixed-level members, so there is no same-level
-    number yet. Calibrating it is a natural first use of the feature; until
-    then the threshold and its source travel with the flag so a later reader
-    knows what was applied.
+    When ``--uncertainty-threshold`` is given, a configuration is flagged
+    when ``sigma_max_free`` at the **final** geometry exceeds it. A path that
+    passed through a strained geometry but converged to a well-constrained
+    minimum is not flagged, which is why the peak is reported separately.
+
+    There is no default threshold. Same-level committees measured on
+    cos-cluster disagree by 0.11-0.15 eV/A against convergence targets of
+    0.02-0.05, so the previous default (``fmax``) fired on ordinary healthy
+    relaxations; and those numbers were measured before constrained atoms
+    were excluded from sigma, so they are not a calibration either. See the
+    2026-09-08 design note.
 
     Parameters
     ----------
     rows : list of dict
         The trace rows, as written by :class:`CommitteeTraceWriter`.
     latest : dict or None
-        The final evaluation's statistics. ``None`` when the run died before
-        evaluating anything.
-    threshold : float
-        The sigma_max above which the configuration is flagged.
-    threshold_source : {"fmax", "explicit"}
+        The final evaluation's statistics, exactly as
+        :func:`committee_statistics` returns them -- every key it emits is
+        required, not optional. ``None`` when the run died before evaluating
+        anything. (``unhandled_constraints`` is the one exception: the
+        calculator attaches it, ``committee_statistics`` does not, so a
+        caller reducing raw statistics need not supply it.)
+    threshold : float, optional
+        The ``sigma_max_free`` above which the configuration is flagged.
+        ``None`` (the default) means no verdict is asserted.
+    threshold_source : {"none", "explicit"}
         Where the threshold came from.
     symbols : sequence of str, optional
         Chemical symbols, used to name the worst atom.
     """
     summary = {
         "n_steps": len(rows),
-        "threshold_eV_per_A": float(threshold),
+        "threshold_eV_per_A": None if threshold is None else float(threshold),
         "threshold_source": threshold_source,
-        "sigma_max_final_eV_per_A": None,
-        "sigma_mean_final_eV_per_A": None,
-        "sigma_max_peak_eV_per_A": None,
+        "sigma_max_free_final_eV_per_A": None,
+        "sigma_mean_free_final_eV_per_A": None,
+        "sigma_max_all_final_eV_per_A": None,
+        "sigma_mean_all_final_eV_per_A": None,
+        "sigma_max_free_peak_eV_per_A": None,
+        "sigma_max_free_over_fmax_final": None,
         "peak_step": None,
-        "worst_atom": None,
-        "worst_atom_symbol": None,
+        "worst_atom_free": None,
+        "worst_atom_free_symbol": None,
+        "n_free_atoms": None,
+        "unhandled_constraints": [],
         "energy_spread_aligned_final_eV": None,
-        "flagged": False,
+        "flagged": None,
     }
     if rows:
-        peak = max(rows, key=lambda r: r["sigma_max_eV_per_A"])
-        summary["sigma_max_peak_eV_per_A"] = float(peak["sigma_max_eV_per_A"])
+        peak = max(rows, key=lambda r: r["sigma_max_free_eV_per_A"])
+        summary["sigma_max_free_peak_eV_per_A"] = float(
+            peak["sigma_max_free_eV_per_A"])
         summary["peak_step"] = int(peak["step"])
         summary["energy_spread_aligned_final_eV"] = float(
             rows[-1]["energy_spread_aligned_eV"])
     if latest is not None:
-        sigma_max = float(latest["sigma_max"])
-        worst = int(latest["worst_atom"])
-        summary["sigma_max_final_eV_per_A"] = sigma_max
-        summary["sigma_mean_final_eV_per_A"] = float(latest["sigma_mean"])
-        summary["worst_atom"] = worst
-        if symbols is not None and worst < len(symbols):
-            summary["worst_atom_symbol"] = symbols[worst]
-        summary["flagged"] = bool(sigma_max > threshold)
+        sigma_max_free = float(latest["sigma_max_free"])
+        worst_free = int(latest["worst_atom_free"])
+        summary["sigma_max_free_final_eV_per_A"] = sigma_max_free
+        summary["sigma_mean_free_final_eV_per_A"] = float(
+            latest["sigma_mean_free"])
+        summary["worst_atom_free"] = worst_free
+        # Read unguarded, like CommitteeTraceWriter.write_step reads them:
+        # `committee_statistics` always emits all four, so a membership check
+        # here would only ever hide a malformed `latest` behind a null in
+        # the run record instead of raising.
+        summary["sigma_max_all_final_eV_per_A"] = float(
+            latest["sigma_max_all"])
+        summary["sigma_mean_all_final_eV_per_A"] = float(
+            latest["sigma_mean_all"])
+        summary["n_free_atoms"] = int(latest["n_free_atoms"])
+        summary["unhandled_constraints"] = list(
+            latest.get("unhandled_constraints", []))
+        if symbols is not None and worst_free < len(symbols):
+            summary["worst_atom_free_symbol"] = symbols[worst_free]
+        final_fmax = rows[-1].get("fmax_eV_per_A") if rows else None
+        if final_fmax:
+            summary["sigma_max_free_over_fmax_final"] = (sigma_max_free
+                                                         / float(final_fmax))
+        if threshold is not None:
+            summary["flagged"] = bool(sigma_max_free > float(threshold))
     return summary

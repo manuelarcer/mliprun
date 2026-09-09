@@ -27,8 +27,8 @@ class TestKnownLevels:
             ("7net-omat", {}, "PBE/OMat24"),
             ("mace-mh-1", {"mace_head": "oc20_usemppbe"}, "RPBE/OC20"),
             ("mace-mh-1", {"mace_head": "omat_pbe"}, "PBE/OMat24"),
-            ("mace", {}, "PBE/MPtrj"),
-            ("chgnet", {}, "PBE+U/MPtrj"),
+            ("mace", {}, "PBE(+U)/MPtrj"),
+            ("chgnet", {}, "PBE(+U)/MPtrj"),
         ],
         ids=["member_a", "member_b", "member_c", "member_d", "member_e",
              "member_f", "member_g", "member_h", "member_i", "member_j",
@@ -79,7 +79,7 @@ class TestMixedDetection:
         assert is_mixed_theory(["RPBE/OC20", "RPBE/OC20"]) is False
 
     def test_two_levels_are_mixed(self):
-        assert is_mixed_theory(["RPBE/OC20", "PBE/MPtrj"]) is True
+        assert is_mixed_theory(["RPBE/OC20", "PBE(+U)/MPtrj"]) is True
 
     def test_any_unknown_counts_as_mixed(self):
         """Unknown is *possibly* mixed: it warns rather than passing
@@ -89,3 +89,34 @@ class TestMixedDetection:
 
     def test_an_empty_set_is_not_mixed(self):
         assert is_mixed_theory([]) is False
+
+
+class TestMPtrjModelsShareOneLevel:
+    def test_mace_mp_0_and_chgnet_are_the_same_level(self):
+        """Both are trained on MPtrj. Their disagreement is architectural at
+        a fixed level of theory, which is exactly what a committee measures.
+        Juan's ruling, 2026-09-08."""
+        assert (resolve_level_of_theory("mace")
+                == resolve_level_of_theory("chgnet"))
+
+    def test_the_label_names_the_mixing_not_one_functional(self):
+        """MPtrj applies +U to transition-metal oxides and fluorides only, so
+        the effective functional depends on the system. A label asserting
+        plain PBE or plain PBE+U is wrong for half the compositions."""
+        assert resolve_level_of_theory("mace") == "PBE(+U)/MPtrj"
+
+    def test_an_mptrj_committee_is_not_mixed_theory(self):
+        assert is_mixed_theory([resolve_level_of_theory("mace"),
+                                resolve_level_of_theory("chgnet")]) is False
+
+    def test_omat24_is_still_a_different_level(self):
+        """The ruling merges MPtrj labels only; it must not collapse
+        genuinely different datasets."""
+        assert is_mixed_theory([resolve_level_of_theory("7net-omat"),
+                                resolve_level_of_theory("mace")]) is True
+
+    def test_the_unverified_mptrj_sevennet_tags_stay_unknown(self):
+        """7net-0 and 7net-l3i5 are believed to be MPtrj too, but that is not
+        confirmed from the checkpoints, so they must not be quietly merged."""
+        assert resolve_level_of_theory("7net-0") == UNKNOWN_LEVEL
+        assert resolve_level_of_theory("7net-l3i5") == UNKNOWN_LEVEL

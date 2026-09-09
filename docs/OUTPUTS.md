@@ -56,6 +56,41 @@ below report how much they **disagree**, as a diagnostic. Force disagreement
 never a substitute for DFT validation. Not supported by `optimize batch`,
 `md`, or `neb`/`autoneb`: committees run through `optimize run` only.
 
+### Constraint masking
+
+**Every sigma name says which atoms it covers.** A name carrying `free`
+(`sigma_max_free_eV_per_A`, `sigma_free_eV_per_A`, `worst_atom_free`, …) is
+taken over **free force components only** — the same population ASE's
+`fmax` uses for its convergence test, not every atom in the cell. A name
+carrying `all` (`sigma_max_all_eV_per_A`, `sigma_all_eV_per_A`, …) covers
+every atom in the cell, constrained ones included. There is no bare
+`sigma_max`: which population a number covers is the one thing you should
+never have to remember.
+
+A constrained atom cannot move regardless of how much the members disagree
+about its force, so including it would compare against the wrong
+population; see the 2026-09-08 design note
+(`docs/superpowers/specs/2026-09-08-committee-sigma-masking-design.md`).
+
+Only `FixAtoms` and `FixCartesian` are masked: they are the only stock ASE
+constraints whose `adjust_forces` is a pure component mask, so the component
+they hold is exactly zero and dropping it is unambiguous. Every other
+constraint type (`FixScaled`, `FixedPlane`, `FixedLine`, `FixBondLength`, …)
+projects rather than masks, so it is left **unhandled**: its atoms stay
+counted as free, sigma is over-reported for them rather than silently
+under-reported, and the type names are recorded in `unhandled_constraints`
+(in `results.committee_uncertainty`, and echoed once by the CLI as a
+warning naming the constraint types).
+
+If every atom in the structure is fully constrained, the `free` values fall
+back to the `all` ones since there is no free population left to reduce
+over.
+
+The pre-masking numbers survive in full — `sigma_max_all_eV_per_A` and
+`sigma_mean_all_eV_per_A` (trace CSV), `sigma_max_all_final_eV_per_A` and
+`sigma_mean_all_final_eV_per_A` (run record), `sigma_all_eV_per_A`
+(per-atom CSV) — so runs from before 2026-09-08 stay comparable.
+
 ### `<name>_committee.csv`
 
 One row per optimizer step, flushed as it is written, so a run that dies at
@@ -68,9 +103,12 @@ step 300 keeps its first 300 rows.
 | `energy_spread_aligned_eV` | Standard deviation (`ddof=1`, not a range) across members after each member's own step-0 energy is subtracted |
 | `E_<member>_eV` | One column per member, its raw energy |
 | `fmax_eV_per_A` | Max atomic force at this step (same quantity as `opt_convergence.csv`) |
-| `sigma_max_eV_per_A` | Largest per-atom force disagreement across members at this step |
-| `sigma_mean_eV_per_A` | Mean per-atom force disagreement across members at this step |
-| `worst_atom` | Index of the atom with the largest disagreement at this step |
+| `sigma_max_free_eV_per_A` | Largest per-atom force disagreement across members at this step, over **free force components only** — the same atoms ASE's `fmax` uses |
+| `sigma_mean_free_eV_per_A` | Mean per-atom force disagreement at this step, over the atoms with at least one free component |
+| `worst_atom_free` | Index of the atom with the largest free-component disagreement at this step |
+| `sigma_max_all_eV_per_A` | The same maximum with no constraint masking, kept so runs from before 2026-09-08 stay comparable |
+| `sigma_mean_all_eV_per_A` | The same mean with no constraint masking, over every atom in the cell |
+| `n_free_atoms` | How many atoms retain at least one free force component |
 | `mixed_theory` | Whether the committee spans more than one level of theory (see below); repeated on every row so a downstream filter needs no terminal output |
 
 `energy_mean_eV` is not comparable in absolute terms across MLIP packages,
@@ -82,13 +120,25 @@ each member's offset is measured against).
 
 ### `<name>_committee_peratom.csv`
 
-`atom_index`, `symbol`, `sigma_eV_per_A`: the per-atom force disagreement at
-the **final** geometry only (not every step: a per-atom field at every step
-would be a large file for little gain, and `worst_atom` above already traces
-where the disagreement lived during the run). This is usually the most
-diagnostically useful committee output. It names *which* atoms the members
-disagree about, typically the adsorbate or the bond being formed or broken,
-not just that they disagree.
+One row per atom, at the **final** geometry only (not every step: a
+per-atom field at every step would be a large file for little gain, and
+`worst_atom_free` above already traces where the disagreement lived during
+the run). This is usually the most diagnostically useful committee output. It
+names *which* atoms the members disagree about, typically the adsorbate or
+the bond being formed or broken, not just that they disagree.
+
+| Column | Meaning |
+|--------|---------|
+| `atom_index` | Index into the structure |
+| `symbol` | Chemical symbol |
+| `sigma_all_eV_per_A` | Per-atom force disagreement, unmasked (all three components) |
+| `sigma_free_eV_per_A` | The same quantity with constrained components dropped |
+| `free_components` | How many of the atom's 3 force components are free (0-3; `0` means the atom is fully fixed) |
+
+**Every atom keeps its row, constrained ones included.** Seeing the frozen
+atoms alongside `sigma_all_eV_per_A` and `sigma_free_eV_per_A` side by side
+is how a reader checks, on their own run, how much of the disagreement sits
+in a region that cannot move.
 
 ### `committee_<member>.log`
 
@@ -99,36 +149,56 @@ committee error message.
 
 ### The flagging rule
 
-A configuration is **flagged** when `sigma_max` at the *final* geometry
-exceeds a threshold (`--uncertainty-threshold`, eV/Å). Default: `--fmax`
-itself. The reasoning is that if the members disagree about the forces by
-more than the convergence tolerance, the located minimum sits inside the
-committee's own noise. When flagged, the CLI prints one warning naming the
-worst atom.
+**There is no default threshold.** The run always reports
+`sigma_max_free`, `sigma_mean_free`, the worst free atom, and
+`sigma_max_free_over_fmax_final` (the ratio of `sigma_max_free` to the
+final `fmax`) — those numbers are the deliverable whether
+or not anyone sets a threshold. `--uncertainty-threshold` (eV/Å) is
+**opt-in**: pass it and a configuration is **flagged** when
+`sigma_max_free` at the *final* geometry exceeds it. The reasoning is that
+if the members disagree about the forces by more than the convergence
+tolerance, the located minimum sits inside the committee's own noise. When
+flagged, the CLI prints one warning naming the worst atom.
+
+There used to be a default (`--fmax` itself); it is gone. Same-level
+committees measured on cos-cluster disagreed by 0.11-0.15 eV/Å against
+convergence targets of 0.02-0.05, so the old default fired on ordinary
+healthy relaxations. Those numbers also predate excluding constrained atoms
+from the reported maximum, so they are not a calibration for a new default
+either.
+See the 2026-09-08 design note
+(`docs/superpowers/specs/2026-09-08-committee-sigma-masking-design.md`).
+
+**`flagged` is tri-state:** `true` (checked against a threshold and it was
+exceeded), `false` (checked and it passed), or `null` (no verdict was
+reached). `null` happens two ways: no threshold was applied (the default
+now), *or* a threshold was applied but nothing was ever evaluated — a run
+that died before its first optimizer step. **`null` is not the same as
+`false`.** A script that filters `flagged == false` to select healthy runs
+would otherwise count a run that crashed before its first force call as
+healthy.
 
 With `--relax-cell`, the two sides of that comparison are not quite the same
 quantity. `fmax_eV_per_A` then includes the cell virials the cell filter emits
 alongside the atomic forces, because that is what the optimizer's convergence
-test uses, while `sigma_max` is disagreement about **atomic forces only**: the
-members are asked for forces, never for a stress. Read a flag on a cell
-relaxation as "the members disagree about the atomic forces by more than the
-combined force/virial tolerance", not as a like-for-like ratio.
+test uses, while `sigma_max_free` is disagreement about **atomic forces
+only**: the members are asked for forces, never for a stress. Read a flag on
+a cell relaxation as "the members disagree about the atomic forces by more
+than the combined force/virial tolerance", not as a like-for-like ratio.
+
+The same caveat applies to `sigma_max_free_over_fmax_final`, and it applies
+on *every* `--relax-cell` run, not only a flagged one: the ratio is printed
+and recorded unconditionally, and on a cell relaxation its denominator
+carries virials its numerator does not. It is still useful as a trend across
+comparable runs; it is not "sigma in units of the force tolerance" there.
 
 On a run that **failed** (a member rejecting the geometry, a member dying),
-`sigma_max_final_eV_per_A` and the other `*_final_*` fields describe the last
+`sigma_max_free_final_eV_per_A` and the other `*_final_*` fields describe the last
 **successful** evaluation, not the final geometry, because there is no
 converged final geometry to describe. When the run failed before any member
 completed an evaluation, every one of those fields is `null` and `flagged` is
-`false`. `n_steps` says how many steps the trace actually holds.
-
-**The default threshold is uncalibrated.** The probe behind this feature
-measured sigma_F (the same per-atom force disagreement as `sigma_max` /
-`sigma_mean` above) only across members at *different* levels of theory:
-0.25-0.62 eV/Å across the physical range of a CO-height scan, rising to 3.48
-eV/Å at a deliberately strained geometry. No same-level number exists yet
-to set the threshold from. Treat it as a screening aid, not a physically
-derived criterion, until it has been calibrated against real same-level
-runs; that calibration is a natural first use of the feature.
+also `null` — the second `null` case above. `n_steps` says how many steps the
+trace actually holds.
 
 ### Mixed levels of theory
 
@@ -156,7 +226,7 @@ either way.
 ### The convergence plot
 
 With `--plot`, a committee run's `<name>_convergence.png` gains a third
-panel plotting `sigma_max` and `sigma_mean` per step, on the same fmax
+panel plotting `sigma_max_free` and `sigma_mean_free` per step, on the same fmax
 reference line as the force panel. Its y-axis adapts to what is actually
 being plotted rather than defaulting to log, because a plain log scale
 silently drops non-positive values. It is linear, with an on-panel note,
@@ -165,11 +235,18 @@ which does happen and must not be hidden by the axis choice. It is
 `symlog` when some steps agree exactly and others don't, and log when every
 value is a real, positive disagreement.
 
-### The run record (schema 4)
+### The run record (committee fields)
 
 `mliprun_run.json` gains the following, present only when a committee
 actually ran (a single-model record is unchanged apart from the schema
-number: see [The run record](#the-run-record) below):
+number: see [The run record](#the-run-record) below). `provenance.committee`
+and `provenance.committee_config_sha256` were added in schema 4;
+`results.committee_uncertainty`'s content below is schema 5, amended by the
+2026-09-08 sigma-masking change — a schema-4 record instead has a bare
+`sigma_max_final_eV_per_A` (unmasked), a bare `worst_atom`, and a
+`threshold_source` of `"fmax"` or `"explicit"`. The key names changed with
+the meaning on purpose: a consumer that reads a schema-4 record for
+`sigma_max_free_final_eV_per_A` gets a `KeyError`, not the wrong number.
 
 - `provenance.committee`: one entry per member (`name`, `mlip`, `uma_task`,
   `mace_head`, `sevennet_task`, `env`, `python`, `device`, `gpu`,
@@ -195,10 +272,20 @@ number: see [The run record](#the-run-record) below):
   authoritative value is per member, in `provenance.committee.members[i]`
   (`device` and `gpu`).
 - `results.committee_uncertainty`: `n_steps`, `threshold_eV_per_A`,
-  `threshold_source` (`"fmax"` or `"explicit"`), `sigma_max_final_eV_per_A`,
-  `sigma_mean_final_eV_per_A`, `sigma_max_peak_eV_per_A`, `peak_step`,
-  `worst_atom`, `worst_atom_symbol`, `energy_spread_aligned_final_eV`,
-  `flagged`.
+  `threshold_source` (`"explicit"` or `"none"` — `"fmax"` can no longer be
+  produced, see [The flagging rule](#the-flagging-rule) above),
+  `sigma_max_free_final_eV_per_A`, `sigma_mean_free_final_eV_per_A`,
+  `sigma_max_all_final_eV_per_A` and `sigma_mean_all_final_eV_per_A` (the
+  pre-masking pair, for comparison against runs from before 2026-09-08),
+  `sigma_max_free_peak_eV_per_A`,
+  `sigma_max_free_over_fmax_final` (`sigma_max_free_final_eV_per_A` divided
+  by the final `fmax`, or `null` when there are no trace rows or the final
+  `fmax` is exactly zero), `peak_step`,
+  `worst_atom_free`, `worst_atom_free_symbol`, `n_free_atoms`,
+  `unhandled_constraints`
+  (list of constraint type names, empty when none are present),
+  `energy_spread_aligned_final_eV`, `flagged` (tri-state: `true`, `false`, or
+  `null` — see [The flagging rule](#the-flagging-rule) above).
 
 ---
 
@@ -347,7 +434,7 @@ layer — so a script that calls `run_optimization` directly gets one too.
 
 | Key | Meaning |
 |-----|---------|
-| `schema_version` | Currently `4`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)). |
+| `schema_version` | Currently `5`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. |
 | `command` | `optimize`, `md`, `neb` or `autoneb`. |
 | `status` | Status of the **latest** stage: `running`, `converged`, `not_converged` or `failed`. A record left saying `running` means the job died without reporting back. |
 | `run.mode` | `one-off` or `batch`. |

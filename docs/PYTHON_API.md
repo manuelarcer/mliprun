@@ -14,6 +14,10 @@ The CLI commands wrap a small set of pure-Python functions and one class. This p
 | `mliprun.core.committee.config` | `load_committee(path)` | Parse and validate a `committee.yaml` into a `CommitteeConfig` |
 | `mliprun.core.committee.remote` | `RemoteMember(name, python_exe, ...)` | One committee member's worker subprocess, addressed as a calculator |
 | `mliprun.core.committee.calculator` | `CommitteeCalculator(members, ...)` | ASE calculator over N members: mean force drives the relaxation, their spread is reported |
+| `mliprun.core.committee.calculator` | `free_component_mask(atoms)` | The `(N, 3)` free/fixed mask `committee_statistics` needs, from `atoms.constraints` |
+| `mliprun.core.committee.calculator` | `committee_statistics(energies, forces, free_mask=None)` | Reduce one evaluation's per-member energies/forces to a consensus and a masked + unmasked spread |
+| `mliprun.core.committee.calculator` | `write_peratom_sigma(path, symbols, sigma_all, ...)` | Write `<stem>_committee_peratom.csv` for the final geometry |
+| `mliprun.core.committee.calculator` | `uncertainty_summary(rows, latest, *, threshold=None, ...)` | Reduce a run's trace into the `results.committee_uncertainty` block |
 | `mliprun.core.md` | `setup_dynamics(atoms, ...)` | Build a configured ASE dynamics object |
 | `mliprun.core.md` | `run_md(atoms, ...)` | Full MD run with logging, CSV, and plots |
 | `mliprun.core.neb` | `CustomNEB(initial, final, ...)` | NEB/AutoNEB orchestration class |
@@ -208,6 +212,84 @@ regardless of whether anyone printed it. The CLI prints
 `config.mixed_theory_warning()` once at startup when it is set; a script
 calling `run_optimization` directly should check and print it too, or the
 warning is silent. See [OUTPUTS.md](OUTPUTS.md#mixed-levels-of-theory).
+
+### Uncertainty statistics
+
+`run_optimization` calls these itself when a `committee=` is passed; they
+are documented here for a caller writing its own driver instead of going
+through `run_optimization`, or post-processing a committee's raw per-member
+forces some other way. All four live in `mliprun.core.committee.calculator`.
+See [OUTPUTS.md#constraint-masking](OUTPUTS.md#constraint-masking) and
+[OUTPUTS.md#the-flagging-rule](OUTPUTS.md#the-flagging-rule) for the
+reasoning; this section is signatures and return values only.
+
+```python
+free_component_mask(atoms) -> (mask, unhandled_constraints)
+```
+
+Builds the `(N, 3)` boolean mask (`True` where a force component is free)
+that `committee_statistics` needs for its `free_mask` argument. Only
+`ase.constraints.FixAtoms` and `FixCartesian` are recognised — the only
+stock ASE constraints whose `adjust_forces` is a pure component mask, so
+excluding the component they hold is unambiguous. Every other constraint
+type on `atoms` (`FixScaled`, `FixedPlane`, `FixedLine`, `FixBondLength`,
+…) is left free rather than masked (over-reporting sigma, never
+under-reporting it) and its type name is added to `unhandled_constraints`,
+returned as a sorted `list[str]` (empty when nothing is unhandled).
+
+```python
+committee_statistics(energies, forces, free_mask=None) -> dict
+```
+
+Reduces one evaluation's per-member `energies` (shape `(M,)`) and `forces`
+(shape `(M, N, 3)`) to a consensus and a spread. `free_mask` (shape
+`(N, 3)`, from `free_component_mask`) is optional; omitting it reproduces
+the pre-2026-09-08 unmasked behaviour exactly. Raises `ValueError` for
+fewer than two members, mismatched shapes, or a wrongly-shaped `free_mask`.
+
+Returns a dict with `energy_mean`, `forces_mean` (`(N, 3)`),
+`sigma_per_atom_all` (`(N,)`, unmasked), `sigma_per_atom_free` (`(N,)`,
+masked), `sigma_max_free` / `sigma_mean_free` / `worst_atom_free` (free
+components only — what a threshold should compare against),
+`sigma_max_all` / `sigma_mean_all` / `worst_atom_all` (the pre-masking
+values), `n_free_atoms` (atoms with at least one free component), and
+`all_constrained` (`True` when every atom is fully fixed, in which case
+`sigma_max_free`/`sigma_mean_free` fall back to the unmasked values because
+there is no free population to reduce over).
+
+Every key naming a sigma carries a `_free` or `_all` suffix. There is no
+bare `sigma_max`: which population a number covers is the one thing a
+reader must not have to remember.
+
+```python
+write_peratom_sigma(path, symbols, sigma_all, sigma_free=None,
+                     free_mask=None) -> None
+```
+
+Writes `<stem>_committee_peratom.csv` (columns: `atom_index`, `symbol`,
+`sigma_all_eV_per_A`, `sigma_free_eV_per_A`, `free_components`) for the final
+geometry. `sigma_all` is `committee_statistics()`'s `sigma_per_atom_all`;
+pass its `sigma_per_atom_free` and the same `free_mask` as `sigma_free` /
+`free_mask` to get the masked column and the free-component count.
+Omitting `sigma_free` or `free_mask` writes the pre-masking file (every
+atom reported fully free). Every atom gets a row, constrained ones
+included — see the `<name>_committee_peratom.csv` section of
+[OUTPUTS.md](OUTPUTS.md#committee-outputs).
+
+```python
+uncertainty_summary(rows, latest, *, threshold=None,
+                     threshold_source="none", symbols=None) -> dict
+```
+
+Reduces a whole run's trace `rows` (as written by `CommitteeTraceWriter`)
+plus the final evaluation's `latest` stats (`None` when the run died before
+evaluating anything) into the `results.committee_uncertainty` block. With
+no `threshold` — the default — nothing is asserted: the numbers are
+reported and `flagged` is `None`. `threshold_source` is `"none"` or
+`"explicit"`; there is no `"fmax"` any more. `run_optimization`'s own
+`uncertainty_threshold=None` means exactly this: no default, not "use
+`fmax`". See [OUTPUTS.md#the-flagging-rule](OUTPUTS.md#the-flagging-rule)
+for what each returned key means and the `flagged` tri-state.
 
 ---
 

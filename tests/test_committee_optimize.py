@@ -118,7 +118,7 @@ class TestCommitteeRun:
             reference.get_positions(), abs=1e-8)
 
         trace = _read_csv(tmp_path / "opt_committee.csv")
-        assert all(float(r["sigma_max_eV_per_A"]) == pytest.approx(0.0,
+        assert all(float(r["sigma_max_free_eV_per_A"]) == pytest.approx(0.0,
                                                                    abs=1e-12)
                    for r in trace)
         assert all(float(r["energy_spread_aligned_eV"]) == pytest.approx(
@@ -179,17 +179,16 @@ class TestRunRecord:
             committee.close()
 
         record = _record(tmp_path)
-        assert record["schema_version"] == 4
+        assert record["schema_version"] == 5
         assert len(record["provenance"]["committee"]["members"]) == 2
         assert record["provenance"]["committee_config_sha256"] == config.sha256
 
         uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
-        assert uncertainty["threshold_source"] == "fmax"
-        assert uncertainty["threshold_eV_per_A"] == pytest.approx(0.05,
-                                                                  abs=1e-12)
-        assert uncertainty["sigma_max_final_eV_per_A"] == pytest.approx(
+        assert uncertainty["threshold_source"] == "none"
+        assert uncertainty["threshold_eV_per_A"] is None
+        assert uncertainty["sigma_max_free_final_eV_per_A"] == pytest.approx(
             0.0, abs=1e-12)
-        assert uncertainty["flagged"] is False
+        assert uncertainty["flagged"] is None
 
     def test_an_explicit_threshold_is_recorded_as_explicit(self, tmp_path):
         atoms = _rattled()
@@ -256,9 +255,15 @@ class TestReusedCommittee:
         try:
             copper = _rattled()
             copper.calc = committee
+            # An explicit, deliberately low threshold: the biased member puts
+            # sigma at 1.41 eV/A, so this structure genuinely flags. Without
+            # it BOTH structures would report `flagged: None` and this field
+            # -- the one a leak would corrupt most visibly -- could not tell
+            # them apart.
             run_optimization(copper, fmax=0.05, max_steps=3,
                              output_dir=first_dir, model_name="committee",
-                             verbose=False, committee=committee)
+                             verbose=False, committee=committee,
+                             uncertainty_threshold=0.01)
 
             # Iron has no EMT potential, so EVERY member rejects the geometry
             # on the first evaluation: this run never produces a statistic of
@@ -269,7 +274,8 @@ class TestReusedCommittee:
                 run_optimization(iron, fmax=0.05, max_steps=3,
                                  output_dir=second_dir,
                                  model_name="committee", verbose=False,
-                                 committee=committee)
+                                 committee=committee,
+                                 uncertainty_threshold=0.01)
         finally:
             committee.close()
 
@@ -277,9 +283,10 @@ class TestReusedCommittee:
         # attached to a Cu atom.
         first = _record(first_dir)["stages"][0]["results"][
             "committee_uncertainty"]
-        assert first["sigma_max_final_eV_per_A"] == pytest.approx(
+        assert first["sigma_max_free_final_eV_per_A"] == pytest.approx(
             BIAS_EV_PER_A / math.sqrt(2.0), rel=1e-9)
-        assert first["worst_atom_symbol"] == "Cu"
+        assert first["worst_atom_free_symbol"] == "Cu"
+        assert first["threshold_source"] == "explicit"
         assert first["flagged"] is True
 
         second_record = _record(second_dir)
@@ -287,14 +294,19 @@ class TestReusedCommittee:
         second = second_record["stages"][0]["results"][
             "committee_uncertainty"]
         assert second["n_steps"] == 0
-        assert second["sigma_max_final_eV_per_A"] is None
-        assert second["sigma_mean_final_eV_per_A"] is None
-        assert second["sigma_max_peak_eV_per_A"] is None
+        assert second["sigma_max_free_final_eV_per_A"] is None
+        assert second["sigma_mean_free_final_eV_per_A"] is None
+        assert second["sigma_max_free_peak_eV_per_A"] is None
         assert second["peak_step"] is None
-        assert second["worst_atom"] is None
-        assert second["worst_atom_symbol"] is None
+        assert second["worst_atom_free"] is None
+        assert second["worst_atom_free_symbol"] is None
         assert second["energy_spread_aligned_final_eV"] is None
-        assert second["flagged"] is False
+        # The same threshold was applied to this run, but no evaluation ever
+        # ran, so there was nothing to check against it. `None`, not `False`
+        # (which would claim a check that never happened, Task 4) and not the
+        # `True` the previous structure earned.
+        assert second["threshold_source"] == "explicit"
+        assert second["flagged"] is None
         # The trace file exists but holds only its header: zero steps ran.
         assert _read_csv(second_dir / "opt_committee.csv") == []
 
@@ -309,10 +321,14 @@ class TestReusedCommittee:
         try:
             copper = _rattled()
             copper.calc = committee
+            # Explicit low threshold, for the same reason as the sibling
+            # above: this structure must genuinely flag, so the stale value
+            # the echo would print is a `True` and not another `None`.
             run_optimization(copper, fmax=0.05, max_steps=3,
                              output_dir=tmp_path / "cu",
                              model_name="committee", verbose=False,
-                             committee=committee)
+                             committee=committee,
+                             uncertainty_threshold=0.01)
             assert committee.latest_uncertainty_summary["flagged"] is True
 
             iron = bulk("Fe", "bcc", a=2.87)
@@ -321,14 +337,67 @@ class TestReusedCommittee:
                 run_optimization(iron, fmax=0.05, max_steps=3,
                                  output_dir=tmp_path / "fe",
                                  model_name="committee", verbose=False,
-                                 committee=committee)
+                                 committee=committee,
+                                 uncertainty_threshold=0.01)
         finally:
             committee.close()
 
         assert committee.latest is None
-        assert committee.latest_uncertainty_summary["flagged"] is False
+        # A threshold was applied but no evaluation ever ran, so nothing was
+        # checked: `None`, not `False` (Task 4) and not the previous
+        # structure's `True`.
+        assert committee.latest_uncertainty_summary["flagged"] is None
         assert (committee.latest_uncertainty_summary[
-            "sigma_max_final_eV_per_A"] is None)
+            "sigma_max_free_final_eV_per_A"] is None)
+
+
+class TestRunWithNoForceEvaluation:
+    """A reused committee on a structure ASE answers entirely from its cache.
+
+    ``run_optimization`` clears ``committee.latest`` on entry -- that is the
+    stale-value fix above. If the optimizer then converges without a single
+    force evaluation (same ``Atoms`` object, already at fmax, same process,
+    so ``Calculator.check_state`` reports no change and ``calculate()`` never
+    runs), nothing repopulates ``latest``. The summary block used to
+    subscript it anyway: ``TypeError``, ``record.complete()`` never reached,
+    and a record left permanently saying ``"running"``.
+    """
+
+    def test_a_run_that_evaluates_nothing_still_finishes_its_record(
+            self, tmp_path):
+        atoms = _rattled()
+        committee = _committee(tmp_path)
+        committee.start()
+        atoms.calc = committee
+        try:
+            run_optimization(atoms, fmax=0.05, max_steps=50,
+                             output_dir=tmp_path / "first",
+                             model_name="committee", verbose=False,
+                             committee=committee)
+            evaluations_after_first = committee.n_evaluations
+            run_optimization(atoms, fmax=0.05, max_steps=50,
+                             output_dir=tmp_path / "second",
+                             model_name="committee", verbose=False,
+                             committee=committee)
+        finally:
+            committee.close()
+
+        # The precondition this test rests on: the second run really did
+        # evaluate nothing, so `latest` really was still None at the end.
+        assert committee.n_evaluations == evaluations_after_first
+        assert committee.latest is None
+
+        record = _record(tmp_path / "second")
+        assert record["status"] == "converged"
+        uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
+        assert uncertainty["n_steps"] == 0
+        assert uncertainty["sigma_max_free_final_eV_per_A"] is None
+        assert uncertainty["n_free_atoms"] is None
+        # No verdict either: nothing was evaluated, so nothing was checked.
+        assert uncertainty["flagged"] is None
+        # Nothing to describe per atom, so no per-atom file is written --
+        # an empty or stale one would be worse than its absence.
+        assert not (tmp_path / "second" / "opt_committee_peratom.csv").exists()
 
 
 class TestMeasuredProvenance:
@@ -441,3 +510,55 @@ class TestSingleModelUnchanged:
         provenance = _record(tmp_path)["provenance"]
         assert provenance["device_requested"] == "auto"
         assert provenance["device_resolved"] == "cpu"
+
+
+class TestThresholdIsOptIn:
+    def _run(self, tmp_path, **kwargs):
+        atoms = _rattled()
+        committee = _committee(tmp_path)
+        committee.start()
+        atoms.calc = committee
+        try:
+            run_optimization(atoms, fmax=0.05, max_steps=10,
+                             output_dir=tmp_path, model_name="committee",
+                             verbose=False, committee=committee, **kwargs)
+        finally:
+            committee.close()
+        return _record(tmp_path)
+
+    def test_no_threshold_records_none_and_does_not_flag(self, tmp_path):
+        uncertainty = self._run(tmp_path)["stages"][0]["results"][
+            "committee_uncertainty"]
+        assert uncertainty["threshold_source"] == "none"
+        assert uncertainty["threshold_eV_per_A"] is None
+        assert uncertainty["flagged"] is None
+
+    def test_the_threshold_does_not_silently_become_fmax(self, tmp_path):
+        """The old default. Removing it is the point of this change."""
+        uncertainty = self._run(tmp_path)["stages"][0]["results"][
+            "committee_uncertainty"]
+        assert uncertainty["threshold_eV_per_A"] != pytest.approx(0.05)
+
+    def test_an_explicit_threshold_is_recorded_and_applied(self, tmp_path):
+        """Two identical EMT members give sigma exactly 0, so a threshold of
+        -1 is the only way to make the flag fire from this harness."""
+        uncertainty = self._run(tmp_path, uncertainty_threshold=-1.0)[
+            "stages"][0]["results"]["committee_uncertainty"]
+        assert uncertainty["threshold_source"] == "explicit"
+        assert uncertainty["flagged"] is True
+
+    def test_the_parameter_block_records_no_threshold(self, tmp_path):
+        # `run_optimization` never passes `stage_parameters` to
+        # `RunRecord.begin` -- its `parameters` dict is the run's TOP-LEVEL
+        # block (tagged {"value", "source"} by `_tag`), not a per-stage one.
+        # `record["stages"][0]["parameters"]` only exists for multi-stage
+        # appends (e.g. NEB's per-stage fmax); a plain `optimize` run has no
+        # such key at all, so this deviates from the brief's literal snippet.
+        params = self._run(tmp_path)["parameters"]
+        assert params["uncertainty_threshold"]["value"] is None
+
+    def test_the_free_atom_count_reaches_the_record(self, tmp_path):
+        """_rattled() has no constraints, so every atom is free."""
+        uncertainty = self._run(tmp_path)["stages"][0]["results"][
+            "committee_uncertainty"]
+        assert uncertainty["n_free_atoms"] == len(_rattled())

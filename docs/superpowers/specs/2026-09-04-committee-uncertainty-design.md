@@ -294,6 +294,12 @@ the convergence figure. Plotting code follows the `plot-style` conventions.
 
 ### Flagging rule
 
+> **Superseded 2026-09-08.** The `fmax` default described below was removed;
+> `--uncertainty-threshold` is now opt-in with no default, and `sigma_max`
+> was renamed and narrowed to the free atoms. The decision recorded here was
+> correct when written — the calibration it asked for is what overturned it.
+> See `2026-09-08-committee-sigma-masking-design.md`.
+
 Default: flag the configuration when `sigma_max` at the final geometry exceeds
 the `fmax` the run converged to. Self-scaling and physically motivated — if the
 models disagree about the forces by more than the convergence tolerance, the

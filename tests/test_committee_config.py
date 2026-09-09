@@ -133,9 +133,12 @@ class TestValidFile:
         provenance = load_committee(path).as_provenance()
         assert len(provenance["members"]) == 2
         assert provenance["members"][0]["mlip"] == "chgnet"
-        assert provenance["members"][0]["level_of_theory"] == "PBE+U/MPtrj"
-        assert provenance["mixed_theory"] is True   # PBE+U/MPtrj vs PBE/MPtrj
-        assert sorted(provenance["levels"]) == ["PBE+U/MPtrj", "PBE/MPtrj"]
+        assert provenance["members"][0]["level_of_theory"] == "PBE(+U)/MPtrj"
+        # chgnet and mace (MACE-MP-0) both train on MPtrj, so this committee
+        # is same-level: the label is shared, not mixed. Juan's ruling,
+        # 2026-09-08.
+        assert provenance["mixed_theory"] is False
+        assert sorted(provenance["levels"]) == ["PBE(+U)/MPtrj"]
         assert provenance["config_sha256"] == load_committee(path).sha256
 
 
@@ -149,7 +152,7 @@ class TestMixedTheoryFlag:
         """)
         config = load_committee(path)
         assert config.mixed_theory is True
-        assert sorted(config.levels) == ["PBE/MPtrj", "RPBE/OC20"]
+        assert sorted(config.levels) == ["PBE(+U)/MPtrj", "RPBE/OC20"]
 
     def test_an_unknown_task_sets_the_flag(self, tmp_path, fake_env):
         a, b = fake_env("a"), fake_env("b")
@@ -308,12 +311,16 @@ class TestMixedTheoryWarning:
     def test_a_mixed_level_committee_names_every_member(self, tmp_path,
                                                          fake_env):
         """Assert on the member names and resolved levels, not the prose --
-        the surrounding wording may be reworded later."""
+        the surrounding wording may be reworded later.
+
+        Uses uma-s-1p2/oc20 + chgnet, not chgnet + mace: since Juan's
+        2026-09-08 ruling, chgnet and mace (both MPtrj) are same-level and no
+        longer exercise this warning path."""
         a, b = fake_env("a"), fake_env("b")
         path = _write(tmp_path, f"""
             members:
-              - {{env: {a}, mlip: chgnet}}
-              - {{env: {b}, mlip: mace}}
+              - {{env: {a}, mlip: uma-s-1p2, uma_task: oc20}}
+              - {{env: {b}, mlip: chgnet}}
         """)
         config = load_committee(path)
         warning = config.mixed_theory_warning()

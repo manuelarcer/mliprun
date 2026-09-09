@@ -81,8 +81,9 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
 
     Two panels normally -- energy and max force. A committee run gets a third
     carrying the per-atom force disagreement, on the same log scale as the
-    force panel so the two are read against each other: where sigma_max
-    approaches fmax, the minimum sits inside the committee's own noise.
+    force panel so the two are read against each other: where
+    sigma_max_free approaches fmax, the minimum sits inside the committee's
+    own noise.
 
     Returns
     -------
@@ -114,12 +115,14 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
     if committee_rows:
         ax3 = axes[2]
         steps = [row["step"] for row in committee_rows]
-        sigma_max = [row["sigma_max_eV_per_A"] for row in committee_rows]
-        sigma_mean = [row["sigma_mean_eV_per_A"] for row in committee_rows]
-        ax3.plot(steps, sigma_max, marker="o", markersize=4, linewidth=1.5,
-                 label="sigma_max")
-        ax3.plot(steps, sigma_mean, marker="s", markersize=3, linewidth=1.0,
-                 label="sigma_mean")
+        sigma_max_free = [row["sigma_max_free_eV_per_A"]
+                          for row in committee_rows]
+        sigma_mean_free = [row["sigma_mean_free_eV_per_A"]
+                           for row in committee_rows]
+        ax3.plot(steps, sigma_max_free, marker="o", markersize=4,
+                 linewidth=1.5, label="sigma_max_free")
+        ax3.plot(steps, sigma_mean_free, marker="s", markersize=3,
+                 linewidth=1.0, label="sigma_mean_free")
         ax3.axhline(y=fmax, color="r", linestyle="--",
                     label=f"fmax target = {fmax}")
         ax3.set_xlabel("Optimization Step")
@@ -135,7 +138,8 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
         # render as an empty panel. Never clamp a true zero to a fake
         # epsilon: that falsifies the figure. Instead pick the scale from
         # what is actually being plotted.
-        positive_values = [v for v in sigma_max + sigma_mean if v > 0]
+        positive_values = [v for v in sigma_max_free + sigma_mean_free
+                           if v > 0]
         if not positive_values:
             # No disagreement at any step: linear keeps both flat-zero
             # traces on screen, and the annotation says why the panel is
@@ -148,7 +152,7 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
                      fontsize=9, style="italic",
                      bbox=dict(boxstyle="round", facecolor="white",
                                alpha=0.85))
-        elif len(positive_values) < len(sigma_max) + len(sigma_mean):
+        elif len(positive_values) < len(sigma_max_free) + len(sigma_mean_free):
             # Mixed: some steps agree exactly, others don't. A log scale
             # would drop precisely the exact-agreement steps while plotting
             # the rest normally -- more misleading than an empty panel,
@@ -252,11 +256,13 @@ def run_optimization(
         The parsed ``committee.yaml``, for the run record: member list, envs,
         resolved levels of theory, and the file's SHA-256.
     uncertainty_threshold : float, optional
-        sigma_max above which the final configuration is flagged as
-        high-disagreement. Defaults to ``fmax``: if the models disagree about
-        the forces by more than the convergence tolerance, the located
-        minimum sits inside the committee's own noise and the geometry is not
-        resolved. The value applied and where it came from are both recorded.
+        sigma_max_free above which the final configuration is flagged as
+        high-disagreement. No default: same-level committees disagree by
+        0.11-0.15 eV/Ang against typical fmax targets of 0.02-0.05, so
+        defaulting to fmax flagged ordinary healthy relaxations. With no
+        threshold, sigma is still reported but no verdict is asserted
+        (``threshold_source: "none"``, ``flagged: None``). The value applied
+        and where it came from are both recorded.
 
     Returns
     -------
@@ -285,13 +291,16 @@ def run_optimization(
     committee_csv = output_path / f"{logfile_stem}_committee.csv"
     committee_peratom_csv = output_path / f"{logfile_stem}_committee_peratom.csv"
 
-    # Default threshold is fmax itself -- self-scaling, and physically
-    # motivated. UNCALIBRATED: no same-level sigma_F measurement exists yet
-    # (see the design's "Flagging rule"), so both the value and its origin
-    # travel with the flag.
+    # No default. A same-level committee disagrees by 0.11-0.15 eV/A against
+    # convergence targets of 0.02-0.05, so defaulting to fmax flagged
+    # ordinary healthy relaxations; and those numbers predate the exclusion
+    # of constrained atoms from sigma, so they are not a calibration either.
+    # The run reports sigma and its ratio to fmax; a verdict is asserted only
+    # when a caller chooses a threshold. See the 2026-09-08 design note.
     threshold = (float(uncertainty_threshold)
-                 if uncertainty_threshold is not None else float(fmax))
-    threshold_source = "explicit" if uncertainty_threshold is not None else "fmax"
+                 if uncertainty_threshold is not None else None)
+    threshold_source = ("explicit" if uncertainty_threshold is not None
+                        else "none")
 
     optimizer_name = optimizer.lower()
     if optimizer_name not in OPTIMIZER_MAP:
@@ -310,10 +319,11 @@ def run_optimization(
         # exists for -- the exception handler below would otherwise write the
         # previous structure's sigma, its atom index and its flag into THIS
         # run's record, wearing this structure's element symbols. Clearing here
-        # is safe: `log_convergence` guards on `latest is not None`, the
-        # optimizer's first `get_potential_energy()` repopulates it before the
-        # observer fires, and `uncertainty_summary(rows=[], latest=None)`
-        # returns all-null with `flagged: False`, which is the honest output.
+        # is safe: every reader guards on `latest is not None`
+        # (`log_convergence` and the summary block at the end), and
+        # `uncertainty_summary(rows=[], latest=None)` returns all-null with
+        # `flagged: None` -- no verdict, which is the honest output when
+        # nothing was ever evaluated.
         committee.latest = None
         committee.latest_uncertainty_summary = None
 
@@ -426,32 +436,50 @@ def run_optimization(
     }
     if trace_writer is not None:
         trace_writer.close()
-        write_peratom_sigma(committee_peratom_csv,
-                            atoms.get_chemical_symbols(),
-                            committee.latest["sigma_per_atom"])
+        # The summary is written either way -- `uncertainty_summary` turns a
+        # `latest` of None into an honest all-null block -- so the record is
+        # always completed. Everything else here reads the final evaluation
+        # and needs it to exist.
         summary = uncertainty_summary(
             trace_writer.rows, committee.latest, threshold=threshold,
             threshold_source=threshold_source,
             symbols=atoms.get_chemical_symbols())
         results["committee_uncertainty"] = summary
         committee.latest_uncertainty_summary = summary
-        if summary["flagged"]:
-            # INFO, not WARNING: with no logging configured anywhere in this
-            # codebase (confirmed by grep for basicConfig/addHandler/setLevel/
-            # dictConfig/fileConfig), a WARNING-level record reaches the
-            # terminal on its own via `logging.lastResort` -- printing the
-            # same message the CLI already echoes from `results`. This line
-            # stays for anyone running with verbose logging configured; the
-            # CLI echo (reading `committee.latest_uncertainty_summary`, not
-            # this call) is the one terminal report at default settings.
+        if committee.latest is not None:
+            write_peratom_sigma(
+                committee_peratom_csv,
+                atoms.get_chemical_symbols(),
+                committee.latest["sigma_per_atom_all"],
+                sigma_free=committee.latest["sigma_per_atom_free"],
+                free_mask=committee.latest["free_mask"])
+            # sigma is reported unconditionally now -- there is no default
+            # threshold to compare it against, so a caller with no opinion
+            # about what counts as "too much disagreement" still learns the
+            # number. A verdict (the second line) prints only when a
+            # threshold was actually applied and it was exceeded.
             logger.info(
-                "High committee disagreement at the final geometry: "
-                "sigma_max = %.4f eV/Ang > %.4f (%s). The located minimum "
-                "sits inside the committee's own noise; this configuration "
-                "deserves a DFT check. Worst atom: %s (%s).",
-                summary["sigma_max_final_eV_per_A"], threshold,
-                threshold_source, summary["worst_atom"],
-                summary["worst_atom_symbol"])
+                "Committee disagreement at the final geometry: "
+                "sigma_max_free = "
+                "%.4f eV/Ang over %s free atoms (worst: %s #%s), "
+                "sigma_mean_free = %.4f eV/Ang.",
+                summary["sigma_max_free_final_eV_per_A"],
+                summary["n_free_atoms"],
+                summary["worst_atom_free_symbol"], summary["worst_atom_free"],
+                summary["sigma_mean_free_final_eV_per_A"])
+            if summary["flagged"]:
+                # INFO, not WARNING: with no logging configured anywhere in
+                # this codebase (confirmed by grep for basicConfig/addHandler/
+                # setLevel/dictConfig/fileConfig), a WARNING-level record
+                # reaches the terminal on its own via `logging.lastResort` --
+                # printing the same message the CLI already echoes from
+                # `results`. This line stays for anyone running with verbose
+                # logging configured; the CLI echo (reading
+                # `committee.latest_uncertainty_summary`, not this call) is
+                # the one terminal report at default settings.
+                logger.info(
+                    "sigma_max_free exceeds the chosen threshold %.4f eV/Ang; "
+                    "this configuration deserves a DFT check.", threshold)
 
     record.complete(
         status="converged" if converged else "not_converged",

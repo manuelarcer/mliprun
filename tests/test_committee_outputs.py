@@ -12,6 +12,9 @@ from mliprun.core.committee.calculator import (
 
 
 def _latest(energies, sigma_per_atom, energy_mean=None):
+    # No mask is passed in by any caller of this helper, so it mirrors
+    # committee_statistics's own unmasked default: the "_free" numbers equal
+    # the "_all" ones and every atom counts as free.
     sigma = np.asarray(sigma_per_atom, dtype=float)
     worst = int(np.argmax(sigma))
     values = list(energies.values())
@@ -19,10 +22,16 @@ def _latest(energies, sigma_per_atom, energy_mean=None):
         "energies": dict(energies),
         "energy_mean": (energy_mean if energy_mean is not None
                         else float(np.mean(values))),
-        "sigma_per_atom": sigma,
-        "sigma_max": float(sigma[worst]),
-        "sigma_mean": float(sigma.mean()),
-        "worst_atom": worst,
+        "sigma_per_atom_all": sigma,
+        "sigma_max_free": float(sigma[worst]),
+        "sigma_mean_free": float(sigma.mean()),
+        "worst_atom_free": worst,
+        "sigma_per_atom_free": sigma,
+        "sigma_max_all": float(sigma[worst]),
+        "sigma_mean_all": float(sigma.mean()),
+        "worst_atom_all": worst,
+        "n_free_atoms": int(sigma.size),
+        "unhandled_constraints": [],
     }
 
 
@@ -44,8 +53,9 @@ class TestTraceWriter:
         assert header == [
             "step", "energy_mean_eV", "energy_spread_aligned_eV",
             "E_member_a_eV", "E_member_b_eV", "fmax_eV_per_A",
-            "sigma_max_eV_per_A", "sigma_mean_eV_per_A", "worst_atom",
-            "mixed_theory",
+            "sigma_max_free_eV_per_A", "sigma_mean_free_eV_per_A",
+            "worst_atom_free", "sigma_max_all_eV_per_A",
+            "sigma_mean_all_eV_per_A", "n_free_atoms", "mixed_theory",
         ]
 
     def test_values_land_in_the_right_columns(self, tmp_path):
@@ -61,10 +71,13 @@ class TestTraceWriter:
         assert float(row["E_member_a_eV"]) == pytest.approx(-1.0, abs=1e-12)
         assert float(row["E_member_b_eV"]) == pytest.approx(-3.0, abs=1e-12)
         assert float(row["fmax_eV_per_A"]) == pytest.approx(0.25, abs=1e-12)
-        assert float(row["sigma_max_eV_per_A"]) == pytest.approx(0.4, abs=1e-12)
-        assert float(row["sigma_mean_eV_per_A"]) == pytest.approx(0.25,
-                                                                  abs=1e-12)
-        assert int(row["worst_atom"]) == 1
+        assert float(row["sigma_max_free_eV_per_A"]) == pytest.approx(
+            0.4, abs=1e-12)
+        assert float(row["sigma_mean_free_eV_per_A"]) == pytest.approx(
+            0.25, abs=1e-12)
+        assert int(row["worst_atom_free"]) == 1
+        assert float(row["sigma_mean_all_eV_per_A"]) == pytest.approx(
+            0.25, abs=1e-12)
         assert row["mixed_theory"] == "True"
 
     def test_first_step_has_zero_aligned_spread_by_construction(self, tmp_path):
@@ -124,35 +137,49 @@ class TestPerAtomFile:
         rows = _read(path)
         assert [r["symbol"] for r in rows] == ["Cu", "Cu", "C", "O"]
         assert [int(r["atom_index"]) for r in rows] == [0, 1, 2, 3]
-        assert float(rows[2]["sigma_eV_per_A"]) == pytest.approx(0.9,
+        assert float(rows[2]["sigma_all_eV_per_A"]) == pytest.approx(0.9,
                                                                  abs=1e-12)
 
     def test_length_mismatch_is_rejected(self, tmp_path):
         with pytest.raises(ValueError):
             write_peratom_sigma(tmp_path / "p.csv", ["Cu"], [0.1, 0.2])
 
+    def test_a_masked_column_of_the_wrong_length_is_rejected(self, tmp_path):
+        """The two sigma columns describe the same atoms; a length mismatch
+        would silently write one atom's masked value against another's."""
+        with pytest.raises(ValueError):
+            write_peratom_sigma(tmp_path / "p.csv", ["Cu", "C"], [0.1, 0.2],
+                                sigma_free=[0.1])
+
+    def test_a_mask_of_the_wrong_shape_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="free_mask"):
+            write_peratom_sigma(tmp_path / "p.csv", ["Cu", "C"], [0.1, 0.2],
+                                sigma_free=[0.0, 0.2],
+                                free_mask=[[True, True, True]])
+
 
 class TestFlaggingRule:
     def _rows(self, sigmas):
-        return [{"step": i, "sigma_max_eV_per_A": s,
-                 "energy_spread_aligned_eV": 0.0} for i, s in enumerate(sigmas)]
+        return [{"step": i, "sigma_max_free_eV_per_A": s,
+                 "energy_spread_aligned_eV": 0.0, "fmax_eV_per_A": 0.04}
+                for i, s in enumerate(sigmas)]
 
     def test_sigma_above_the_threshold_flags_the_configuration(self):
         summary = uncertainty_summary(
             self._rows([0.30, 0.12, 0.08]),
             _latest({"member_a": -1.0, "member_b": -3.0}, [0.02, 0.08]),
-            threshold=0.05, threshold_source="fmax", symbols=["Cu", "C"])
+            threshold=0.05, threshold_source="explicit", symbols=["Cu", "C"])
         assert summary["flagged"] is True
-        assert summary["sigma_max_final_eV_per_A"] == pytest.approx(0.08,
+        assert summary["sigma_max_free_final_eV_per_A"] == pytest.approx(0.08,
                                                                     abs=1e-12)
         assert summary["threshold_eV_per_A"] == pytest.approx(0.05, abs=1e-12)
-        assert summary["threshold_source"] == "fmax"
+        assert summary["threshold_source"] == "explicit"
 
     def test_sigma_below_the_threshold_does_not_flag(self):
         summary = uncertainty_summary(
             self._rows([0.30, 0.02]),
             _latest({"member_a": -1.0, "member_b": -3.0}, [0.01, 0.02]),
-            threshold=0.05, threshold_source="fmax")
+            threshold=0.05, threshold_source="explicit")
         assert summary["flagged"] is False
 
     def test_the_flag_uses_the_final_geometry_not_the_peak(self):
@@ -161,9 +188,9 @@ class TestFlaggingRule:
         summary = uncertainty_summary(
             self._rows([3.476, 0.01]),
             _latest({"member_a": -1.0, "member_b": -3.0}, [0.005, 0.01]),
-            threshold=0.05, threshold_source="fmax")
+            threshold=0.05, threshold_source="explicit")
         assert summary["flagged"] is False
-        assert summary["sigma_max_peak_eV_per_A"] == pytest.approx(3.476,
+        assert summary["sigma_max_free_peak_eV_per_A"] == pytest.approx(3.476,
                                                                    abs=1e-12)
         assert summary["peak_step"] == 0
 
@@ -178,14 +205,149 @@ class TestFlaggingRule:
         summary = uncertainty_summary(
             self._rows([0.5]),
             _latest({"member_a": -1.0, "member_b": -3.0}, [0.01, 0.5]),
-            threshold=0.05, threshold_source="fmax", symbols=["Cu", "C"])
-        assert summary["worst_atom"] == 1
-        assert summary["worst_atom_symbol"] == "C"
+            threshold=0.05, threshold_source="explicit", symbols=["Cu", "C"])
+        assert summary["worst_atom_free"] == 1
+        assert summary["worst_atom_free_symbol"] == "C"
 
     def test_an_empty_trace_reports_no_flag_rather_than_crashing(self):
         """A run that died before its first optimizer step still has to
-        finish its record."""
+        finish its record. With no evaluation to check, `flagged` is `None`
+        even though a threshold was given -- `False` would claim a check
+        that never ran, the exact bug this task removes elsewhere."""
         summary = uncertainty_summary([], None, threshold=0.05,
-                                      threshold_source="fmax")
-        assert summary["flagged"] is False
-        assert summary["sigma_max_final_eV_per_A"] is None
+                                      threshold_source="explicit")
+        assert summary["flagged"] is None
+        assert summary["sigma_max_free_final_eV_per_A"] is None
+
+
+class TestTraceCarriesBothSigmas:
+    def test_the_row_carries_the_masked_and_unmasked_maxima(self, tmp_path):
+        writer = CommitteeTraceWriter(tmp_path / "t.csv", ["a", "b"], False)
+        latest = {
+            "energies": {"a": -1.0, "b": -3.0},
+            "energy_mean": -2.0, "sigma_max_free": 0.1,
+            "sigma_mean_free": 0.05, "worst_atom_free": 1,
+            "sigma_max_all": 0.9, "sigma_mean_all": 0.5, "n_free_atoms": 1,
+        }
+        row = writer.write_step(0, latest, fmax_value=0.04)
+        writer.close()
+        assert row["sigma_max_free_eV_per_A"] == pytest.approx(0.1)
+        assert row["sigma_max_all_eV_per_A"] == pytest.approx(0.9)
+        assert row["sigma_mean_free_eV_per_A"] == pytest.approx(0.05)
+        assert row["sigma_mean_all_eV_per_A"] == pytest.approx(0.5)
+        assert row["n_free_atoms"] == 1
+
+    def test_the_header_names_the_new_columns(self, tmp_path):
+        writer = CommitteeTraceWriter(tmp_path / "t.csv", ["a", "b"], False)
+        writer.close()
+        header = (tmp_path / "t.csv").read_text().splitlines()[0]
+        assert "sigma_max_all_eV_per_A" in header
+        assert "sigma_mean_all_eV_per_A" in header
+        assert "n_free_atoms" in header
+
+    def test_no_sigma_column_leaves_its_population_implicit(self, tmp_path):
+        """The naming rule, asserted rather than left to review: a bare
+        `sigma_max_eV_per_A` reads as "the" disagreement to anyone who has
+        not memorised which convention this file follows."""
+        writer = CommitteeTraceWriter(tmp_path / "t.csv", ["a", "b"], False)
+        writer.close()
+        header = (tmp_path / "t.csv").read_text().splitlines()[0].split(",")
+        sigma_columns = [c for c in header if "sigma" in c]
+        assert sigma_columns          # guard against an empty header
+        assert all("free" in c or "all" in c for c in sigma_columns)
+
+
+class TestPerAtomFileMarksConstrainedAtoms:
+    def test_every_atom_still_gets_a_row(self, tmp_path):
+        """Seeing the frozen atoms is how a reader checks the masking on
+        their own run, so constrained atoms are listed, not dropped."""
+        path = tmp_path / "p.csv"
+        write_peratom_sigma(path, ["Cu", "C"], [0.9, 0.1],
+                            sigma_free=[0.0, 0.1],
+                            free_mask=[[False, False, False],
+                                       [True, True, True]])
+        lines = path.read_text().splitlines()
+        assert len(lines) == 3
+        assert lines[1].split(",")[:2] == ["0", "Cu"]
+
+    def test_the_free_component_count_is_recorded(self, tmp_path):
+        path = tmp_path / "p.csv"
+        write_peratom_sigma(path, ["Cu", "C"], [0.9, 0.1],
+                            sigma_free=[0.0, 0.1],
+                            free_mask=[[False, False, False],
+                                       [True, True, True]])
+        rows = _read(path)
+        assert rows[0]["free_components"] == "0"
+        assert rows[1]["free_components"] == "3"
+        assert float(rows[0]["sigma_free_eV_per_A"]) == pytest.approx(0.0)
+
+    def test_a_partly_fixed_atom_counts_its_free_directions(self, tmp_path):
+        path = tmp_path / "p.csv"
+        write_peratom_sigma(path, ["Cu"], [0.5], sigma_free=[0.3],
+                            free_mask=[[True, True, False]])
+        rows = _read(path)
+        assert rows[0]["free_components"] == "2"
+
+    def test_omitting_the_mask_treats_every_atom_as_free(self, tmp_path):
+        """Keeps the Python API callable with three arguments."""
+        path = tmp_path / "p.csv"
+        write_peratom_sigma(path, ["Cu", "C"], [0.9, 0.1])
+        rows = _read(path)
+        assert rows[0]["free_components"] == "3"
+        assert float(rows[0]["sigma_free_eV_per_A"]) == pytest.approx(0.9)
+
+
+class TestNoThresholdAssertsNothing:
+    def _rows(self, sigmas):
+        return [{"step": i, "sigma_max_free_eV_per_A": s,
+                 "energy_spread_aligned_eV": 0.0, "fmax_eV_per_A": 0.04}
+                for i, s in enumerate(sigmas)]
+
+    def test_without_a_threshold_flagged_is_none_not_false(self):
+        """`false` must keep meaning "checked and passed". Reusing it for
+        "not checked" is the failure PR #46 fixed for device_resolved."""
+        summary = uncertainty_summary(
+            self._rows([0.30, 0.12]),
+            _latest({"member_a": -1.0, "member_b": -3.0}, [0.02, 0.08]))
+        assert summary["flagged"] is None
+        assert summary["threshold_eV_per_A"] is None
+        assert summary["threshold_source"] == "none"
+
+    def test_the_numbers_are_reported_with_no_threshold(self):
+        summary = uncertainty_summary(
+            self._rows([0.30, 0.12]),
+            _latest({"member_a": -1.0, "member_b": -3.0}, [0.02, 0.08]))
+        assert summary["sigma_max_free_final_eV_per_A"] == pytest.approx(0.08)
+        assert summary["sigma_mean_free_final_eV_per_A"] is not None
+
+    def test_the_ratio_to_fmax_is_reported(self):
+        """The dimensionless number that replaces the pass/fail verdict."""
+        summary = uncertainty_summary(
+            self._rows([0.30, 0.12]),
+            _latest({"member_a": -1.0, "member_b": -3.0}, [0.02, 0.08]))
+        assert summary["sigma_max_free_over_fmax_final"] == pytest.approx(
+            0.08 / 0.04, abs=1e-9)
+
+    def test_an_explicit_threshold_still_flags(self):
+        summary = uncertainty_summary(
+            self._rows([0.30, 0.12]),
+            _latest({"member_a": -1.0, "member_b": -3.0}, [0.02, 0.08]),
+            threshold=0.05, threshold_source="explicit")
+        assert summary["flagged"] is True
+        assert summary["threshold_eV_per_A"] == pytest.approx(0.05)
+
+    def test_an_empty_trace_reports_nothing_rather_than_crashing(self):
+        summary = uncertainty_summary([], None)
+        assert summary["flagged"] is None
+        assert summary["sigma_max_free_final_eV_per_A"] is None
+        assert summary["sigma_max_free_over_fmax_final"] is None
+
+    def test_the_unmasked_maximum_and_free_count_reach_the_record(self):
+        latest = _latest({"member_a": -1.0, "member_b": -3.0}, [0.02, 0.08])
+        latest["sigma_max_all"] = 0.9
+        latest["n_free_atoms"] = 1
+        latest["unhandled_constraints"] = ["FixBondLength"]
+        summary = uncertainty_summary(self._rows([0.30]), latest)
+        assert summary["sigma_max_all_final_eV_per_A"] == pytest.approx(0.9)
+        assert summary["n_free_atoms"] == 1
+        assert summary["unhandled_constraints"] == ["FixBondLength"]
