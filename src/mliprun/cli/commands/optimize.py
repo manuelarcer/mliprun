@@ -219,17 +219,19 @@ def _report_committee_uncertainty(committee_calc) -> None:
     if committee_calc is None:
         return
     summary = committee_calc.latest_uncertainty_summary
-    if summary is None or summary["sigma_max_final_eV_per_A"] is None:
+    if summary is None or summary["sigma_max_free_final_eV_per_A"] is None:
         return
-    ratio = summary["sigma_max_over_fmax_final"]
+    ratio = summary["sigma_max_free_over_fmax_final"]
     ratio_text = "" if ratio is None else f", {ratio:.1f}x the final fmax"
     typer.echo(
         f"\n📊 Committee disagreement at the final geometry: "
-        f"sigma_max = {summary['sigma_max_final_eV_per_A']:.4f} eV/Å"
-        f"{ratio_text}, sigma_mean = "
-        f"{summary['sigma_mean_final_eV_per_A']:.4f} eV/Å over "
+        f"sigma_max_free = "
+        f"{summary['sigma_max_free_final_eV_per_A']:.4f} eV/Å"
+        f"{ratio_text}, sigma_mean_free = "
+        f"{summary['sigma_mean_free_final_eV_per_A']:.4f} eV/Å over "
         f"{summary['n_free_atoms']} free atoms. Worst atom: "
-        f"{summary['worst_atom_symbol']} (#{summary['worst_atom']}).")
+        f"{summary['worst_atom_free_symbol']} "
+        f"(#{summary['worst_atom_free']}).")
     if summary["unhandled_constraints"]:
         typer.echo(
             f"   Note: constraint type(s) "
@@ -237,7 +239,7 @@ def _report_committee_uncertainty(committee_calc) -> None:
             f"so sigma is over-reported for their atoms.")
     if summary["flagged"]:
         typer.echo(
-            f"\n⚠️  sigma_max exceeds the threshold you set "
+            f"\n⚠️  sigma_max_free exceeds the threshold you set "
             f"({summary['threshold_eV_per_A']:.4f} eV/Å). The located "
             f"minimum sits inside the committee's own noise; this "
             f"configuration deserves a DFT check.")
@@ -267,8 +269,9 @@ def run(
     uncertainty_threshold: float = typer.Option(
         None, "--uncertainty-threshold",
         help="Flag the final configuration when the committee's per-atom "
-             "force disagreement exceeds this (eV/Å). NO DEFAULT: without "
-             "it the run reports sigma and its ratio to fmax but asserts no "
+             "force disagreement over the free atoms exceeds this (eV/Å). "
+             "NO DEFAULT: without it the run reports sigma_max_free and its "
+             "ratio to fmax but asserts no "
              "verdict. There is no calibrated value yet -- same-level "
              "committees disagree by ~0.1 eV/Å. See docs/OUTPUTS.md."),
     optimizer: str = typer.Option("bfgs", help=f"Optimizer algorithm: {', '.join(OPTIMIZER_MAP.keys())}"),

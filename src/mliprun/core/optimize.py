@@ -81,8 +81,9 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
 
     Two panels normally -- energy and max force. A committee run gets a third
     carrying the per-atom force disagreement, on the same log scale as the
-    force panel so the two are read against each other: where sigma_max
-    approaches fmax, the minimum sits inside the committee's own noise.
+    force panel so the two are read against each other: where
+    sigma_max_free approaches fmax, the minimum sits inside the committee's
+    own noise.
 
     Returns
     -------
@@ -114,12 +115,14 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
     if committee_rows:
         ax3 = axes[2]
         steps = [row["step"] for row in committee_rows]
-        sigma_max = [row["sigma_max_eV_per_A"] for row in committee_rows]
-        sigma_mean = [row["sigma_mean_eV_per_A"] for row in committee_rows]
-        ax3.plot(steps, sigma_max, marker="o", markersize=4, linewidth=1.5,
-                 label="sigma_max")
-        ax3.plot(steps, sigma_mean, marker="s", markersize=3, linewidth=1.0,
-                 label="sigma_mean")
+        sigma_max_free = [row["sigma_max_free_eV_per_A"]
+                          for row in committee_rows]
+        sigma_mean_free = [row["sigma_mean_free_eV_per_A"]
+                           for row in committee_rows]
+        ax3.plot(steps, sigma_max_free, marker="o", markersize=4,
+                 linewidth=1.5, label="sigma_max_free")
+        ax3.plot(steps, sigma_mean_free, marker="s", markersize=3,
+                 linewidth=1.0, label="sigma_mean_free")
         ax3.axhline(y=fmax, color="r", linestyle="--",
                     label=f"fmax target = {fmax}")
         ax3.set_xlabel("Optimization Step")
@@ -135,7 +138,8 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
         # render as an empty panel. Never clamp a true zero to a fake
         # epsilon: that falsifies the figure. Instead pick the scale from
         # what is actually being plotted.
-        positive_values = [v for v in sigma_max + sigma_mean if v > 0]
+        positive_values = [v for v in sigma_max_free + sigma_mean_free
+                           if v > 0]
         if not positive_values:
             # No disagreement at any step: linear keeps both flat-zero
             # traces on screen, and the annotation says why the panel is
@@ -148,7 +152,7 @@ def _plot_convergence(df, fmax: float, optimizer: str, committee_rows=None):
                      fontsize=9, style="italic",
                      bbox=dict(boxstyle="round", facecolor="white",
                                alpha=0.85))
-        elif len(positive_values) < len(sigma_max) + len(sigma_mean):
+        elif len(positive_values) < len(sigma_max_free) + len(sigma_mean_free):
             # Mixed: some steps agree exactly, others don't. A log scale
             # would drop precisely the exact-agreement steps while plotting
             # the rest normally -- more misleading than an empty panel,
@@ -252,7 +256,7 @@ def run_optimization(
         The parsed ``committee.yaml``, for the run record: member list, envs,
         resolved levels of theory, and the file's SHA-256.
     uncertainty_threshold : float, optional
-        sigma_max above which the final configuration is flagged as
+        sigma_max_free above which the final configuration is flagged as
         high-disagreement. No default: same-level committees disagree by
         0.11-0.15 eV/Ang against typical fmax targets of 0.02-0.05, so
         defaulting to fmax flagged ordinary healthy relaxations. With no
@@ -448,12 +452,13 @@ def run_optimization(
         # A verdict (the second line) prints only when a threshold was
         # actually applied and it was exceeded.
         logger.info(
-            "Committee disagreement at the final geometry: sigma_max = "
-            "%.4f eV/Ang over %s free atoms (worst: %s #%s), sigma_mean = "
-            "%.4f eV/Ang.",
-            summary["sigma_max_final_eV_per_A"], summary["n_free_atoms"],
-            summary["worst_atom_symbol"], summary["worst_atom"],
-            summary["sigma_mean_final_eV_per_A"])
+            "Committee disagreement at the final geometry: sigma_max_free = "
+            "%.4f eV/Ang over %s free atoms (worst: %s #%s), "
+            "sigma_mean_free = %.4f eV/Ang.",
+            summary["sigma_max_free_final_eV_per_A"],
+            summary["n_free_atoms"],
+            summary["worst_atom_free_symbol"], summary["worst_atom_free"],
+            summary["sigma_mean_free_final_eV_per_A"])
         if summary["flagged"]:
             # INFO, not WARNING: with no logging configured anywhere in this
             # codebase (confirmed by grep for basicConfig/addHandler/setLevel/
@@ -464,8 +469,8 @@ def run_optimization(
             # CLI echo (reading `committee.latest_uncertainty_summary`, not
             # this call) is the one terminal report at default settings.
             logger.info(
-                "sigma_max exceeds the chosen threshold %.4f eV/Ang; this "
-                "configuration deserves a DFT check.", threshold)
+                "sigma_max_free exceeds the chosen threshold %.4f eV/Ang; "
+                "this configuration deserves a DFT check.", threshold)
 
     record.complete(
         status="converged" if converged else "not_converged",

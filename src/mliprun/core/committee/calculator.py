@@ -444,13 +444,17 @@ class CommitteeTraceWriter:
         a real energy uncertainty. Zero by construction on the first row.
     E_<member>_eV
         Each member's raw energy.
-    sigma_max_eV_per_A, sigma_mean_eV_per_A, worst_atom
+    sigma_max_free_eV_per_A, sigma_mean_free_eV_per_A, worst_atom_free
         Per-atom force disagreement, reduced -- free components only.
-    sigma_max_all_eV_per_A, n_free_atoms
-        The unmasked maximum (all components, constrained or not) and how
-        many atoms had at least one free component, so a reader can see how
-        much of the disagreement sat in a frozen region without recomputing
-        anything.
+    sigma_max_all_eV_per_A, sigma_mean_all_eV_per_A, n_free_atoms
+        The same two reductions with no masking (every component, constrained
+        or not), and how many atoms had at least one free component, so a
+        reader can see how much of the disagreement sat in a frozen region
+        without recomputing anything.
+
+    Every sigma column names its population -- ``_free`` or ``_all``. A bare
+    ``sigma_max_eV_per_A`` would be read as "the" disagreement by anyone who
+    has not memorised which convention this file follows.
     mixed_theory
         The warn-don't-refuse flag, repeated on every row so downstream
         analysis can filter on it without having read the terminal.
@@ -471,9 +475,10 @@ class CommitteeTraceWriter:
         self._fieldnames = (
             ["step", "energy_mean_eV", "energy_spread_aligned_eV"]
             + [f"E_{name}_eV" for name in member_names]
-            + ["fmax_eV_per_A", "sigma_max_eV_per_A", "sigma_mean_eV_per_A",
-               "worst_atom", "sigma_max_all_eV_per_A", "n_free_atoms",
-               "mixed_theory"]
+            + ["fmax_eV_per_A", "sigma_max_free_eV_per_A",
+               "sigma_mean_free_eV_per_A", "worst_atom_free",
+               "sigma_max_all_eV_per_A", "sigma_mean_all_eV_per_A",
+               "n_free_atoms", "mixed_theory"]
         )
         self._handle = open(self.path, "w", newline="", encoding="utf-8")
         self._writer = csv.DictWriter(self._handle,
@@ -492,10 +497,11 @@ class CommitteeTraceWriter:
             "energy_spread_aligned_eV": aligned_energy_spread(
                 energies, self._baseline),
             "fmax_eV_per_A": float(fmax_value),
-            "sigma_max_eV_per_A": float(latest["sigma_max_free"]),
-            "sigma_mean_eV_per_A": float(latest["sigma_mean_free"]),
-            "worst_atom": int(latest["worst_atom_free"]),
+            "sigma_max_free_eV_per_A": float(latest["sigma_max_free"]),
+            "sigma_mean_free_eV_per_A": float(latest["sigma_mean_free"]),
+            "worst_atom_free": int(latest["worst_atom_free"]),
             "sigma_max_all_eV_per_A": float(latest["sigma_max_all"]),
+            "sigma_mean_all_eV_per_A": float(latest["sigma_mean_all"]),
             "n_free_atoms": int(latest["n_free_atoms"]),
             "mixed_theory": self.mixed_theory,
         }
@@ -520,15 +526,17 @@ def write_peratom_sigma(path, symbols, sigma_all, sigma_free=None,
     """Write the final geometry's per-atom force disagreement.
 
     Final geometry only: a per-atom field at every step would be a large file
-    for little gain, and ``worst_atom`` already traces where the disagreement
-    lives during the run. This file is the most diagnostically useful output
-    -- it says *which* atoms the models disagree about, which is usually the
-    adsorbate or the reacting bond.
+    for little gain, and ``worst_atom_free`` already traces where the
+    disagreement lives during the run. This file is the most diagnostically
+    useful output -- it says *which* atoms the models disagree about, which
+    is usually the adsorbate or the reacting bond.
 
-    Constrained atoms keep their row. ``sigma_eV_per_A`` is the unmasked
+    Constrained atoms keep their row. ``sigma_all_eV_per_A`` is the unmasked
     value and ``sigma_free_eV_per_A`` drops the held components, so a reader
     can see for themselves how much of the disagreement sits in a region that
-    cannot move. ``free_components`` is 0 for a fully fixed atom.
+    cannot move. ``free_components`` is 0 for a fully fixed atom. Neither
+    column is named bare: which population a sigma covers is the one thing
+    the header must not leave to convention.
     """
     symbols = list(symbols)
     sigma_all = np.asarray(sigma_all, dtype=float).reshape(-1)
@@ -552,7 +560,7 @@ def write_peratom_sigma(path, symbols, sigma_all, sigma_free=None,
     n_free = free_mask.sum(axis=1)
     with open(path, "w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["atom_index", "symbol", "sigma_eV_per_A",
+        writer.writerow(["atom_index", "symbol", "sigma_all_eV_per_A",
                          "sigma_free_eV_per_A", "free_components"])
         for index, symbol in enumerate(symbols):
             writer.writerow([index, symbol, float(sigma_all[index]),
@@ -569,7 +577,7 @@ def uncertainty_summary(rows, latest, *, threshold=None,
     would put a claim in the record that nobody made.
 
     When ``--uncertainty-threshold`` is given, a configuration is flagged
-    when ``sigma_max`` at the **final** geometry exceeds it. A path that
+    when ``sigma_max_free`` at the **final** geometry exceeds it. A path that
     passed through a strained geometry but converged to a well-constrained
     minimum is not flagged, which is why the peak is reported separately.
 
@@ -592,8 +600,8 @@ def uncertainty_summary(rows, latest, *, threshold=None,
         calculator attaches it, ``committee_statistics`` does not, so a
         caller reducing raw statistics need not supply it.)
     threshold : float, optional
-        The sigma_max above which the configuration is flagged. ``None``
-        (the default) means no verdict is asserted.
+        The ``sigma_max_free`` above which the configuration is flagged.
+        ``None`` (the default) means no verdict is asserted.
     threshold_source : {"none", "explicit"}
         Where the threshold came from.
     symbols : sequence of str, optional
@@ -603,46 +611,51 @@ def uncertainty_summary(rows, latest, *, threshold=None,
         "n_steps": len(rows),
         "threshold_eV_per_A": None if threshold is None else float(threshold),
         "threshold_source": threshold_source,
-        "sigma_max_final_eV_per_A": None,
-        "sigma_mean_final_eV_per_A": None,
+        "sigma_max_free_final_eV_per_A": None,
+        "sigma_mean_free_final_eV_per_A": None,
         "sigma_max_all_final_eV_per_A": None,
-        "sigma_max_peak_eV_per_A": None,
-        "sigma_max_over_fmax_final": None,
+        "sigma_mean_all_final_eV_per_A": None,
+        "sigma_max_free_peak_eV_per_A": None,
+        "sigma_max_free_over_fmax_final": None,
         "peak_step": None,
-        "worst_atom": None,
-        "worst_atom_symbol": None,
+        "worst_atom_free": None,
+        "worst_atom_free_symbol": None,
         "n_free_atoms": None,
         "unhandled_constraints": [],
         "energy_spread_aligned_final_eV": None,
         "flagged": None,
     }
     if rows:
-        peak = max(rows, key=lambda r: r["sigma_max_eV_per_A"])
-        summary["sigma_max_peak_eV_per_A"] = float(peak["sigma_max_eV_per_A"])
+        peak = max(rows, key=lambda r: r["sigma_max_free_eV_per_A"])
+        summary["sigma_max_free_peak_eV_per_A"] = float(
+            peak["sigma_max_free_eV_per_A"])
         summary["peak_step"] = int(peak["step"])
         summary["energy_spread_aligned_final_eV"] = float(
             rows[-1]["energy_spread_aligned_eV"])
     if latest is not None:
         sigma_max_free = float(latest["sigma_max_free"])
         worst_free = int(latest["worst_atom_free"])
-        summary["sigma_max_final_eV_per_A"] = sigma_max_free
-        summary["sigma_mean_final_eV_per_A"] = float(latest["sigma_mean_free"])
-        summary["worst_atom"] = worst_free
+        summary["sigma_max_free_final_eV_per_A"] = sigma_max_free
+        summary["sigma_mean_free_final_eV_per_A"] = float(
+            latest["sigma_mean_free"])
+        summary["worst_atom_free"] = worst_free
         # Read unguarded, like CommitteeTraceWriter.write_step reads them:
-        # `committee_statistics` always emits both, so a membership check
+        # `committee_statistics` always emits all four, so a membership check
         # here would only ever hide a malformed `latest` behind a null in
         # the run record instead of raising.
         summary["sigma_max_all_final_eV_per_A"] = float(
             latest["sigma_max_all"])
+        summary["sigma_mean_all_final_eV_per_A"] = float(
+            latest["sigma_mean_all"])
         summary["n_free_atoms"] = int(latest["n_free_atoms"])
         summary["unhandled_constraints"] = list(
             latest.get("unhandled_constraints", []))
         if symbols is not None and worst_free < len(symbols):
-            summary["worst_atom_symbol"] = symbols[worst_free]
+            summary["worst_atom_free_symbol"] = symbols[worst_free]
         final_fmax = rows[-1].get("fmax_eV_per_A") if rows else None
         if final_fmax:
-            summary["sigma_max_over_fmax_final"] = (sigma_max_free
-                                                    / float(final_fmax))
+            summary["sigma_max_free_over_fmax_final"] = (sigma_max_free
+                                                         / float(final_fmax))
         if threshold is not None:
             summary["flagged"] = bool(sigma_max_free > float(threshold))
     return summary

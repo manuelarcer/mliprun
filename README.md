@@ -190,7 +190,7 @@ optimize batch --parent runs/ --mlip uma-s-1p2 --fmax 0.05
 
 ### Committee evaluation
 
-Run several MLIPs, each in its own environment, against the same structure. The relaxation follows their **mean** force; their disagreement is reported as a per-atom force spread, sigma (eV/Å), over the same free atoms ASE's `fmax` uses. `--uncertainty-threshold` is opt-in and has no default: without it the run still reports sigma and its ratio to fmax, but flags nothing (see [OUTPUTS.md](docs/OUTPUTS.md#committee-outputs)).
+Run several MLIPs, each in its own environment, against the same structure. The relaxation follows their **mean** force; their disagreement is reported as a per-atom force spread, sigma (eV/Å), over the same free atoms ASE's `fmax` uses. Every reported sigma names its population — `sigma_max_free_*` over the free atoms, `sigma_max_all_*` over every atom in the cell — so no column or record key leaves it implicit. `--uncertainty-threshold` is opt-in and has no default: without it the run still reports `sigma_max_free` and its ratio to fmax, but flags nothing (see [OUTPUTS.md](docs/OUTPUTS.md#committee-outputs)).
 
 ```bash
 optimize run --structure POSCAR --committee committee.yaml --fmax 0.05

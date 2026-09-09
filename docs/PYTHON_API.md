@@ -16,7 +16,7 @@ The CLI commands wrap a small set of pure-Python functions and one class. This p
 | `mliprun.core.committee.calculator` | `CommitteeCalculator(members, ...)` | ASE calculator over N members: mean force drives the relaxation, their spread is reported |
 | `mliprun.core.committee.calculator` | `free_component_mask(atoms)` | The `(N, 3)` free/fixed mask `committee_statistics` needs, from `atoms.constraints` |
 | `mliprun.core.committee.calculator` | `committee_statistics(energies, forces, free_mask=None)` | Reduce one evaluation's per-member energies/forces to a consensus and a masked + unmasked spread |
-| `mliprun.core.committee.calculator` | `write_peratom_sigma(path, symbols, sigma_per_atom, ...)` | Write `<stem>_committee_peratom.csv` for the final geometry |
+| `mliprun.core.committee.calculator` | `write_peratom_sigma(path, symbols, sigma_all, ...)` | Write `<stem>_committee_peratom.csv` for the final geometry |
 | `mliprun.core.committee.calculator` | `uncertainty_summary(rows, latest, *, threshold=None, ...)` | Reduce a run's trace into the `results.committee_uncertainty` block |
 | `mliprun.core.md` | `setup_dynamics(atoms, ...)` | Build a configured ASE dynamics object |
 | `mliprun.core.md` | `run_md(atoms, ...)` | Full MD run with logging, CSV, and plots |
@@ -267,7 +267,7 @@ write_peratom_sigma(path, symbols, sigma_all, sigma_free=None,
 ```
 
 Writes `<stem>_committee_peratom.csv` (columns: `atom_index`, `symbol`,
-`sigma_eV_per_A`, `sigma_free_eV_per_A`, `free_components`) for the final
+`sigma_all_eV_per_A`, `sigma_free_eV_per_A`, `free_components`) for the final
 geometry. `sigma_all` is `committee_statistics()`'s `sigma_per_atom_all`;
 pass its `sigma_per_atom_free` and the same `free_mask` as `sigma_free` /
 `free_mask` to get the masked column and the free-component count.

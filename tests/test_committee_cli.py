@@ -118,7 +118,7 @@ class TestEndToEnd:
         assert record["provenance"]["committee"]["config_sha256"] == \
             config.sha256
         uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
-        assert uncertainty["sigma_max_final_eV_per_A"] == pytest.approx(
+        assert uncertainty["sigma_max_free_final_eV_per_A"] == pytest.approx(
             0.0, abs=1e-12)
         # No threshold was passed on this invocation, so no verdict is
         # reached -- see "flagged semantics" in the design note. This is not
@@ -234,7 +234,7 @@ class TestFlaggedPath:
             (structure.parent / "mliprun_run.json").read_text())
         uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
         assert uncertainty["flagged"] is True
-        assert uncertainty["sigma_max_final_eV_per_A"] > 0.01
+        assert uncertainty["sigma_max_free_final_eV_per_A"] > 0.01
 
 
 class TestCommitteeUncertaintyEcho:

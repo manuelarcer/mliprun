@@ -174,32 +174,71 @@ All notable changes to this project are documented here. Format follows [Keep a 
   which claims the value *changed* — so a same-head resume of a legacy run
   wrongly asserted the head had switched. `schema_version` is left as stage 0
   wrote it; see [docs/OUTPUTS.md](docs/OUTPUTS.md#stages).
-- **Breaking:** the committee's `sigma_max` and `sigma_mean` now exclude
-  constrained force components, so they are taken over the same atoms as
+- **Breaking:** the committee's headline force disagreement now excludes
+  constrained force components, so it is taken over the same atoms as
   ASE's `fmax`. Previously a frozen slab atom could carry the reported
   maximum: 8 of 17 atoms were fixed in one measured O/Pt(111) relaxation, 32
-  of 82 in a CH/FeNi one. The unmasked values are kept as `sigma_max_all` /
-  `sigma_mean_all` / `worst_atom_all`. Only `FixAtoms` and `FixCartesian` are
+  of 82 in a CH/FeNi one. The unmasked values are kept alongside it. Only
+  `FixAtoms` and `FixCartesian` are
   masked — the only stock ASE constraints whose `adjust_forces` is a pure
   component mask; every other constraint type leaves its atoms counted as
   free (sigma over-reported, never under-reported) and its type name is
   recorded in `unhandled_constraints`.
+- **Breaking: every sigma name now states which atoms it covers.** A name
+  carries `free` (the atoms free to move) or `all` (every atom in the
+  cell); there is no bare form. A bare `sigma_max` silently meant "free
+  atoms only", which is a convention a reader had to already know — and the
+  two CSVs had picked *opposite* conventions for the same word. The rename
+  is deliberate and total, with no aliases and no duplicate compatibility
+  columns; it covers the trace CSV, the per-atom CSV, the run record, and
+  the `committee_statistics` dict a Python caller sees:
+
+  | file / dict | before | after |
+  |---|---|---|
+  | trace CSV | `sigma_max_eV_per_A` | `sigma_max_free_eV_per_A` |
+  | trace CSV | `sigma_mean_eV_per_A` | `sigma_mean_free_eV_per_A` |
+  | trace CSV | `worst_atom` | `worst_atom_free` |
+  | per-atom CSV | `sigma_eV_per_A` | `sigma_all_eV_per_A` |
+  | run record | `sigma_max_final_eV_per_A` | `sigma_max_free_final_eV_per_A` |
+  | run record | `sigma_mean_final_eV_per_A` | `sigma_mean_free_final_eV_per_A` |
+  | run record | `sigma_max_peak_eV_per_A` | `sigma_max_free_peak_eV_per_A` |
+  | run record | `sigma_max_over_fmax_final` | `sigma_max_free_over_fmax_final` |
+  | run record | `worst_atom` / `worst_atom_symbol` | `worst_atom_free` / `worst_atom_free_symbol` |
+  | stats dict | `sigma_per_atom` | `sigma_per_atom_all` |
+  | stats dict | `sigma_max` / `sigma_mean` / `worst_atom` | `sigma_max_free` / `sigma_mean_free` / `worst_atom_free` |
+
+  The `_all` names (`sigma_max_all_eV_per_A`, `sigma_max_all_final_eV_per_A`,
+  `sigma_per_atom_free`, `sigma_free_eV_per_A`, `n_free_atoms`,
+  `free_components`) already named their population and are unchanged.
 - **Breaking:** `--uncertainty-threshold` no longer defaults to `--fmax`.
-  With no threshold the run still reports `sigma_max`, `sigma_mean`, the
-  worst atom, and their ratio to fmax (`sigma_max_over_fmax_final`), but
+  With no threshold the run still reports `sigma_max_free`,
+  `sigma_mean_free`, the worst free atom, and their ratio to fmax
+  (`sigma_max_free_over_fmax_final`), but
   asserts no verdict, and `flagged` is `null` rather than `false`. The old
   default fired on ordinary healthy relaxations (same-level committees
   measured 0.11-0.15 eV/Å against convergence targets of 0.02-0.05).
   `flagged` is now tri-state: `true`/`false` when a threshold was checked,
   `null` when none was applied *or* when a threshold was set but the run
   died before its first evaluation — `null` is not the same as `false`.
-- **Breaking: run record schema 4 → 5.** `results.committee_uncertainty`
-  gains `sigma_max_all_final_eV_per_A`, `n_free_atoms`,
-  `unhandled_constraints` and `sigma_max_over_fmax_final`; `threshold_source`
+- **Breaking: run record schema 4 → 5.** Three changes, not one. (1) The
+  *meaning* of the reported disagreement changed: it now excludes
+  constrained force components, so a schema-5 `sigma` is not comparable to a
+  schema-4 one at the same key. That is why this bump matters more than the
+  previous two, which only added keys. (2) Every sigma key was renamed to
+  carry its population (table above), so the meaning change is visible from
+  the key rather than only from the version — a consumer reading a schema-4
+  record for `sigma_max_free_final_eV_per_A` gets a `KeyError`, not the
+  wrong number. (3) `results.committee_uncertainty` gains
+  `sigma_max_all_final_eV_per_A`, `sigma_mean_all_final_eV_per_A`,
+  `n_free_atoms`, `unhandled_constraints` and
+  `sigma_max_free_over_fmax_final`; `threshold_source`
   is now `"explicit"` or `"none"` (`"fmax"` can no longer be produced).
-- `<stem>_committee.csv` gains `sigma_max_all_eV_per_A` and `n_free_atoms`;
+- **Breaking:** both committee CSVs changed their headers. `<stem>_committee.csv`
+  gains `sigma_max_all_eV_per_A`, `sigma_mean_all_eV_per_A` and
+  `n_free_atoms` and renames three columns (table above);
   `<stem>_committee_peratom.csv` gains `sigma_free_eV_per_A` and
-  `free_components`, and still lists every atom, constrained ones included.
+  `free_components`, renames `sigma_eV_per_A` to `sigma_all_eV_per_A`, and
+  still lists every atom, constrained ones included.
 - **Breaking:** `mace` (MACE-MP-0) and `chgnet` now resolve to one level of
   theory, `PBE(+U)/MPtrj`, because they share one training set. A committee
   of the two is no longer reported as mixed theory, and its spread is an

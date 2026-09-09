@@ -20,8 +20,8 @@ def convergence_frame():
 
 
 def _rows(sigmas):
-    return [{"step": i, "sigma_max_eV_per_A": s,
-             "sigma_mean_eV_per_A": s / 2.0}
+    return [{"step": i, "sigma_max_free_eV_per_A": s,
+             "sigma_mean_free_eV_per_A": s / 2.0}
             for i, s in enumerate(sigmas)]
 
 

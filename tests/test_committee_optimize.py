@@ -118,7 +118,7 @@ class TestCommitteeRun:
             reference.get_positions(), abs=1e-8)
 
         trace = _read_csv(tmp_path / "opt_committee.csv")
-        assert all(float(r["sigma_max_eV_per_A"]) == pytest.approx(0.0,
+        assert all(float(r["sigma_max_free_eV_per_A"]) == pytest.approx(0.0,
                                                                    abs=1e-12)
                    for r in trace)
         assert all(float(r["energy_spread_aligned_eV"]) == pytest.approx(
@@ -186,7 +186,7 @@ class TestRunRecord:
         uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
         assert uncertainty["threshold_source"] == "none"
         assert uncertainty["threshold_eV_per_A"] is None
-        assert uncertainty["sigma_max_final_eV_per_A"] == pytest.approx(
+        assert uncertainty["sigma_max_free_final_eV_per_A"] == pytest.approx(
             0.0, abs=1e-12)
         assert uncertainty["flagged"] is None
 
@@ -276,9 +276,9 @@ class TestReusedCommittee:
         # attached to a Cu atom.
         first = _record(first_dir)["stages"][0]["results"][
             "committee_uncertainty"]
-        assert first["sigma_max_final_eV_per_A"] == pytest.approx(
+        assert first["sigma_max_free_final_eV_per_A"] == pytest.approx(
             BIAS_EV_PER_A / math.sqrt(2.0), rel=1e-9)
-        assert first["worst_atom_symbol"] == "Cu"
+        assert first["worst_atom_free_symbol"] == "Cu"
         # No threshold was passed to this run, so no verdict is asserted
         # even though the disagreement is real and large -- `flagged` is
         # `None` (opt-in threshold, Task 5), not a leftover `True` from the
@@ -290,12 +290,12 @@ class TestReusedCommittee:
         second = second_record["stages"][0]["results"][
             "committee_uncertainty"]
         assert second["n_steps"] == 0
-        assert second["sigma_max_final_eV_per_A"] is None
-        assert second["sigma_mean_final_eV_per_A"] is None
-        assert second["sigma_max_peak_eV_per_A"] is None
+        assert second["sigma_max_free_final_eV_per_A"] is None
+        assert second["sigma_mean_free_final_eV_per_A"] is None
+        assert second["sigma_max_free_peak_eV_per_A"] is None
         assert second["peak_step"] is None
-        assert second["worst_atom"] is None
-        assert second["worst_atom_symbol"] is None
+        assert second["worst_atom_free"] is None
+        assert second["worst_atom_free_symbol"] is None
         assert second["energy_spread_aligned_final_eV"] is None
         # No evaluation ever ran for this structure, so there is nothing to
         # check against a threshold -- `flagged` is `None`, not `False`.
@@ -338,7 +338,7 @@ class TestReusedCommittee:
         # is `None`, not `False`, when there is no verdict to give).
         assert committee.latest_uncertainty_summary["flagged"] is None
         assert (committee.latest_uncertainty_summary[
-            "sigma_max_final_eV_per_A"] is None)
+            "sigma_max_free_final_eV_per_A"] is None)
 
 
 class TestMeasuredProvenance:
