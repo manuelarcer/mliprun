@@ -239,6 +239,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `<stem>_committee_peratom.csv` gains `sigma_free_eV_per_A` and
   `free_components`, renames `sigma_eV_per_A` to `sigma_all_eV_per_A`, and
   still lists every atom, constrained ones included.
+- **`ase>=3.23` is now a hard floor.** The constraint masking reads
+  `constraint.index` and `constraint.mask` directly, and ASE changed both:
+  `FixAtoms`/`FixCartesian` moved onto `IndexedConstraint` at 3.23, and
+  before that `FixCartesian` stored the inverted mask. An older ASE would
+  either raise or silently flip which components count toward sigma.
 - **Breaking:** `mace` (MACE-MP-0) and `chgnet` now resolve to one level of
   theory, `PBE(+U)/MPtrj`, because they share one training set. A committee
   of the two is no longer reported as mixed theory, and its spread is an

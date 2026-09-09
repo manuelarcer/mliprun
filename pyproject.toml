@@ -38,7 +38,16 @@ dependencies = [
     # green-lit. The [all] extra is empty in modern typer (>=0.12 bundles rich
     # and shellingham) and only produces a pip warning on fresh installs.
     "typer>=0.20,<0.28",
-    "ase",
+    # Lower bound is deliberate. `free_component_mask` (committee sigma
+    # masking) reads ASE constraint internals — `constraint.index` and
+    # `constraint.mask` — whose semantics ASE changed: `FixAtoms` and
+    # `FixCartesian` were refactored onto `IndexedConstraint` at 3.23, and
+    # before that `FixCartesian` stored the INVERTED mask (True meaning
+    # free). On an older ASE this code either raises AttributeError or,
+    # worse, silently inverts which force components count toward sigma —
+    # and no test would catch it, because the suite runs on 3.29.0. Raising
+    # the floor is a deliberate act that re-runs the suite.
+    "ase>=3.23",
     "pandas",
     "matplotlib",
     "scipy",
