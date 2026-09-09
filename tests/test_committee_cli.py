@@ -292,9 +292,16 @@ class TestCommitteeUncertaintyEcho:
 
     def test_no_warning_is_printed_without_a_threshold(
             self, structure, fake_committee_file):
-        """A verdict nobody asked for is what this change removes."""
+        """A verdict nobody asked for is what this change removes.
+
+        The exit code and the positive assertion are what stop this passing
+        vacuously: a `not in` on the output of a run that died would be
+        satisfied by an empty terminal.
+        """
         path, _ = fake_committee_file
         result = self._invoke(structure, path)
+        assert result.exit_code == 0, result.output
+        assert "Committee disagreement at the final geometry" in result.output
         assert "deserves a DFT check" not in result.output
 
     def test_a_tripped_explicit_threshold_warns(
@@ -312,6 +319,7 @@ class TestCommitteeUncertaintyEcho:
         path, _ = fake_committee_file
         result = self._invoke(structure, path,
                               "--uncertainty-threshold", "1e9")
+        assert result.exit_code == 0, result.output
         assert "deserves a DFT check" not in result.output
         assert "Committee disagreement at the final geometry" in result.output
 

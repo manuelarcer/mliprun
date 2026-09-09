@@ -1,10 +1,13 @@
 """Committee arithmetic: mean force field and per-atom disagreement."""
 import numpy as np
 import pytest
+from ase import Atoms
+from ase.constraints import FixAtoms, FixCartesian
 
 from mliprun.core.committee.calculator import (
     aligned_energy_spread,
     committee_statistics,
+    free_component_mask,
 )
 
 
@@ -93,12 +96,6 @@ class TestAlignedEnergySpread:
         """A committee of one has no disagreement to report."""
         with pytest.raises(ValueError, match="at least two"):
             aligned_energy_spread({"member_a": -1.0}, {"member_a": -1.0})
-
-
-from ase import Atoms
-from ase.constraints import FixAtoms, FixCartesian
-
-from mliprun.core.committee.calculator import free_component_mask
 
 
 def _two_atoms_sigma_on_x(sigma_0, sigma_1):

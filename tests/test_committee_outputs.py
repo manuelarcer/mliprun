@@ -144,6 +144,19 @@ class TestPerAtomFile:
         with pytest.raises(ValueError):
             write_peratom_sigma(tmp_path / "p.csv", ["Cu"], [0.1, 0.2])
 
+    def test_a_masked_column_of_the_wrong_length_is_rejected(self, tmp_path):
+        """The two sigma columns describe the same atoms; a length mismatch
+        would silently write one atom's masked value against another's."""
+        with pytest.raises(ValueError):
+            write_peratom_sigma(tmp_path / "p.csv", ["Cu", "C"], [0.1, 0.2],
+                                sigma_free=[0.1])
+
+    def test_a_mask_of_the_wrong_shape_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="free_mask"):
+            write_peratom_sigma(tmp_path / "p.csv", ["Cu", "C"], [0.1, 0.2],
+                                sigma_free=[0.0, 0.2],
+                                free_mask=[[True, True, True]])
+
 
 class TestFlaggingRule:
     def _rows(self, sigmas):
