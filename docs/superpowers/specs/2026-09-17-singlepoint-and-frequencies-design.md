@@ -161,16 +161,40 @@ full, and its held components enter the Hessian as though they were free.
 ASE's `indices` selects whole atoms, so a partial Hessian cannot be expressed
 through it.
 
-The command therefore **warns and continues**. Detection reuses the existing
-`free_component_mask`, whose second return value is already the sorted list of
-constraint type names it could not mask; that list is echoed, logged, and
-recorded as `unhandled_constraints`. Wording names the affected types and
-states the consequence: those atoms were displaced in full and their held
-components are in the Hessian as if free, so `--indices` is the way to exclude
-them.
+The command therefore **warns and continues**. `select_indices` returns the
+sorted names of the constraint types it could not honour; that list is echoed,
+logged, and recorded as `unhandled_constraints`. Wording names the affected
+types and states the consequence: those atoms were displaced in full and their
+held components are in the Hessian as if free, so `--indices` is the way to
+exclude them.
 
-This mirrors what the committee sigma path already does with the same
-constraint types, so one rule covers both.
+**Correction, 2026-09-18 (Task 8).** This document originally said detection
+could reuse `free_component_mask`'s second return value, and that "one rule
+covers both" this and the committee sigma path. **That is wrong**, and the
+error is worth recording because the two look interchangeable and are not.
+
+`free_component_mask` answers *which force components are free*, for a
+statistic over components. It **handles** `FixCartesian` — it masks the held
+components and reports nothing unhandled, which is correct there: a held
+component simply does not enter the sum.
+
+`select_indices` answers *which whole atoms to displace*. ASE's `indices`
+selects whole atoms, so a `FixCartesian` atom is displaced in all three
+directions no matter what, and its held components land in the Hessian as
+though free. For this question `FixCartesian` is precisely **not** handled.
+
+Verified on ASE 3.29 against a `FixCartesian(0, mask=(True, True, False))`
+slab: `free_component_mask` returns `unhandled == []` with mask row
+`[False, False, True]`, while `select_indices` returns
+`unhandled == ["FixCartesian"]` and still displaces atom 0. Both are right for
+their own question. The functions must therefore scan constraints separately,
+and `free_component_mask`'s own frozen test pins the behaviour that makes
+reuse impossible.
+
+**Also note the type name.** ASE 3.29's `FixBondLength(a, b)` is a deprecated
+factory that constructs a `FixBondLengths` instance, so the name that reaches
+`unhandled_constraints` is the plural. The same trap is already documented in
+this repo's committee tests.
 
 ### The stationary-point warning (D5)
 
