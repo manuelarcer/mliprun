@@ -11,6 +11,7 @@ The CLI commands wrap a small set of pure-Python functions and one class. This p
 | `mliprun.cli.utils` | `detect_mlip()` / `validate_mlip(name)` / `resolve_mlip(name)` | Auto-detect / validate MLIP availability |
 | `mliprun.core.optimize` | `run_optimization(atoms, ...)` | Geometry optimization with progress logging and plots |
 | `mliprun.core.optimize` | `OPTIMIZER_MAP` | dict of supported ASE optimizers |
+| `mliprun.core.singlepoint` | `run_singlepoint(atoms, ...)` | Evaluate a structure once: energy, per-atom forces, stress — no relaxation |
 | `mliprun.core.committee.config` | `load_committee(path)` | Parse and validate a `committee.yaml` into a `CommitteeConfig` |
 | `mliprun.core.committee.remote` | `RemoteMember(name, python_exe, ...)` | One committee member's worker subprocess, addressed as a calculator |
 | `mliprun.core.committee.calculator` | `CommitteeCalculator(members, ...)` | ASE calculator over N members: mean force drives the relaxation, their spread is reported |
@@ -108,14 +109,78 @@ Side effects (written to `output_dir`):
 
 ---
 
+## Single-point evaluation
+
+Evaluates a structure once and stops: energy, per-atom forces, and (when the
+cell allows it) stress. No optimizer, no trajectory. Replaces the
+`optimize run --max-steps 0` workaround, which performed the same single
+evaluation but reported it as a failed relaxation (`status: not_converged`,
+a trajectory and a `CONTCAR` for a geometry that never moved, and no
+per-atom forces).
+
+```python
+from ase.io import read
+from mliprun.cli.utils import setup_calculator
+from mliprun.core.singlepoint import run_singlepoint
+
+atoms = read("structure.vasp")
+setup_calculator(atoms, "uma-s-1p2", "omat")
+
+results = run_singlepoint(
+    atoms,
+    output_dir="./eval",
+    prefix="singlepoint",
+    model_name="uma-s-1p2",
+    uma_task="omat",   # or mace_head="omat_pbe" — see "Run-record keywords"
+    stress=None,       # default: attempt only when the cell is periodic in
+                        # all three directions; True forces it, False skips it
+)
+```
+
+Side effects (written to `output_dir`):
+
+- `<prefix>_forces.csv` — one row per atom: the **raw** forces the model
+  predicts, plus the free-component mask. Raw, not constrained: a CSV of
+  zeros on a fixed layer says nothing about what the model thinks.
+- `mliprun_run.json` — the run record, stage kind `singlepoint`.
+
+`results` is also the `results` block written into the run record:
+`energy_eV`, `fmax_free_eV_per_A` (from `atoms.get_forces()`, constraints
+applied — what an optimizer would converge against),
+`fmax_all_eV_per_A` (from the calculator directly, constraints bypassed —
+what the model predicts before anything is held fixed), `n_free_atoms`,
+`worst_force_atom_all` / `worst_force_atom_all_symbol`,
+`worst_force_atom_free` / `worst_force_atom_free_symbol`,
+`unhandled_constraints`, `stress_eV_per_A3` / `stress_GPa` /
+`stress_unavailable_reason`, and `committee_uncertainty` when a committee
+ran. `worst_force_atom_free` (largest force) and
+`committee_uncertainty.worst_atom_free` (largest committee disagreement) are
+two different atoms answering two different questions — see
+[OUTPUTS.md](OUTPUTS.md#singlepoint-run) for the full field-by-field
+reference and the reasoning behind the two `fmax` values.
+
+Stress is attempted only when `atoms.get_pbc()` is `True` in all three
+directions — a slab's stress along the vacuum direction is not a physical
+quantity — and `stress=True` forces the attempt anyway.
+
+A committee runs here too, evaluated once at this one configuration rather
+than driving a relaxation: pass `committee=` and `committee_config=` exactly
+as for `run_optimization` (see [Committee evaluation](#committee-evaluation)
+below). There is no per-step trace or plot — nothing moved — only
+`<prefix>_committee_peratom.csv` and `results["committee_uncertainty"]`.
+
+---
+
 ## Committee evaluation
 
 A committee runs several MLIPs, each in its own environment, against the
-same structure: the relaxation follows their mean force, and their
-disagreement is reported as a per-configuration uncertainty (see
+same structure: in a relaxation the optimizer follows their mean force, and
+their disagreement is reported as a per-configuration uncertainty (see
 [OUTPUTS.md](OUTPUTS.md#committee-outputs) for what the numbers mean and the
 CLI's `optimize run --committee` for the equivalent one-liner). Supported by
-`run_optimization` only, not `run_md` or `CustomNEB`.
+`run_optimization` and `run_singlepoint` (see [Single-point
+evaluation](#single-point-evaluation) above for the one-configuration case),
+not `run_md` or `CustomNEB`.
 
 ```python
 from ase.io import read

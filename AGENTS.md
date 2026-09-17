@@ -56,8 +56,9 @@ MLIP is installed — script against its exit code.
 
 ## Running
 
-- Entry points: `mlip <subcmd>` or standalone `optimize`, `md`, `neb`,
-  `autoneb`, `autoneb-results`, `benchmark`. All support `--help`.
+- Entry points: `mlip <subcmd>` or standalone `optimize`, `singlepoint`,
+  `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark`. All support
+  `--help`.
 - Typical: `optimize run --structure POSCAR --fmax 0.05`. Model selection via
   `--mlip` (default `auto`), device via `--device` (note: `neb` defaults to
   CPU, the others to auto).

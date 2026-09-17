@@ -67,6 +67,30 @@ def test_a_typed_auto_mlip_is_still_rejected(structure, tmp_path):
     assert "--mlip" in result.stdout
 
 
+def test_every_listed_output_file_actually_exists(structure, monkeypatch):
+    """The terminal lists what it wrote. A listing that names a missing file
+    is worse than a short listing."""
+    _use_emt(monkeypatch)
+    result = runner.invoke(app, ["run", "--structure", str(structure)])
+    listed = [line.split("📄")[1].strip()
+              for line in result.stdout.splitlines() if "📄" in line]
+    assert listed
+    for path in listed:
+        assert Path(path).exists(), f"listed but missing: {path}"
+
+
+def test_the_selected_task_is_echoed(structure, monkeypatch):
+    """The head/task actually used must be visible on the terminal, not just
+    recorded in the run record -- it is an explicit decision that must never
+    be silently assumed."""
+    _use_emt(monkeypatch)
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--mlip", "uma-s-1p2", "--uma-task", "oc20"])
+    assert result.exit_code == 0, result.stdout
+    assert "UMA task: oc20" in result.stdout
+
+
 def _use_emt(monkeypatch):
     """Attach ASE's EMT wherever the command would attach an MLIP.
 

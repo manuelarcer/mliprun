@@ -6,6 +6,7 @@
 A modular CLI toolkit for evaluating Machine Learning Interatomic Potentials (MLIPs) via:
 
 - **Geometry Optimization**
+- **Single-point evaluation** — energy, forces, and stress for one structure, no relaxation
 - **Molecular Dynamics (MD)** with NVE, NVT, and NPT ensembles
 - **Nudged Elastic Band (NEB) simulations** with restart support
 - **AutoNEB** with dynamic image insertion
@@ -48,7 +49,7 @@ CSV, per step and per atom. See
 
 ## Key Features
 
-- Unified CLI commands: `optimize run`, `md run`, `neb run`, `autoneb run`
+- Unified CLI commands: `optimize run`, `singlepoint run`, `md run`, `neb run`, `autoneb run`
 - Auto-detection of available MLIP models (UMA > MACE > SevenNet > CHGNet)
 - UMA model support with multiple task types (OMat, OC20, OMol, ODAC)
 - MACE multi-head foundation models (`mace-mh-*`) with selectable heads (`omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, …)
@@ -157,13 +158,13 @@ For detailed Windows installation instructions, see: [Windows Setup Guide](docs/
 The package installs the following entry points:
 
 - `mlip` — top-level namespace; `mlip --help` lists every subcommand (including `mlip doctor`, the environment self-check)
-- `optimize`, `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark` — standalone aliases
+- `optimize`, `singlepoint`, `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark` — standalone aliases
 
 `mlip <subcmd>` is equivalent to running `<subcmd>` directly. For example, `mlip md run --structure POSCAR` and `md run --structure POSCAR` do the same thing. The examples below use the standalone form for brevity. All commands support `--help`.
 
 ### Common model options
 
-These apply to `optimize`, `md`, `neb`, `autoneb`, and `benchmark`:
+These apply to `optimize`, `singlepoint`, `md`, `neb`, `autoneb`, and `benchmark`:
 
 - `--mlip`: Model tag. `auto` (default) picks the first installed in order **UMA → MACE → SevenNet → CHGNet** (UMA preferred when present, MACE as the readily-usable fallback), or pass an explicit tag: any `uma-*` (e.g. `uma-s-1p2`), `mace` (MACE-MP-0), `mace-mh-1` (multi-head foundation), any `7net-*` tag (e.g. `7net-omni`, which requires `--sevennet-task`), `chgnet`.
 - `--uma-task`: Task head for UMA models. **No default and required for every `uma-*` model** — the heads are independent fine-tunes with independent energy zeros, so a guessed head silently changes the level of theory. One of `omat` (bulk inorganic), `omc` (molecular crystals), `omol` (molecules), `oc20` (catalysis/surfaces), `oc22`, `oc25`, `odac`. Ignored for non-UMA models.
@@ -230,6 +231,35 @@ optimize run --structure POSCAR --committee committee.yaml --fmax 0.05
 `committee.yaml` declares two or more members, each with its own env, MLIP tag, and task/head: see [examples/committee.yaml](examples/committee.yaml). `--committee` replaces `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, and `--device`: passing any of those alongside it is an error, since the file already owns model selection and each member's device. Members may sit at different levels of theory (e.g. an RPBE/OC20 head next to a PBE/OMat24 one); mliprun does not refuse this, but the reported spread then becomes a comparison *between* levels of theory rather than an error bar within one, and mliprun warns loudly when it detects the mismatch. Supported by `optimize run` only, not `optimize batch`, `md`, or `neb`/`autoneb`.
 
 **Outputs (in addition to the usual `optimize run` files):** `opt_committee.csv` (per-step disagreement trace), `opt_committee_peratom.csv` (per-atom disagreement at the final geometry), `committee_<member>.log` (one per member). Full column reference: [OUTPUTS.md](docs/OUTPUTS.md#committee-outputs).
+
+---
+
+### Single-Point Evaluation
+```bash
+singlepoint run --structure POSCAR --mlip uma-s-1p2 --uma-task oc20
+```
+
+Evaluates a structure once and stops: energy, per-atom forces, and (when the
+cell is periodic in all three directions) stress. No optimizer, no
+trajectory. Replaces the `optimize run --max-steps 0` workaround, which
+performed the same single evaluation but mislabelled it a failed relaxation
+(`status: not_converged`) and wrote no per-atom forces.
+
+**Key options:**
+- `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, `--device`: same model-selection options as `optimize`.
+- `--stress / --no-stress`: force or skip the stress attempt. Default: attempted only when the cell is periodic in all three directions — a slab's stress along the vacuum direction means nothing.
+- `--committee committee.yaml`: evaluate this one configuration with a committee instead of a single MLIP; reports the same disagreement statistics as `optimize run --committee`, at this one geometry, with no relaxation.
+- `--prefix`: stem for the output file names (default `singlepoint`).
+
+Reports two separately named maximum forces: `fmax_free` (constraints
+applied — what an optimizer would converge against) and `fmax_all` (the raw
+calculator output, constraints bypassed). The per-atom CSV always carries
+the raw forces, since a CSV of zeros on a fixed layer says nothing about
+what the model predicts.
+
+**Outputs:** `singlepoint_forces.csv`, `mliprun_run.json` (plus
+`singlepoint_committee_peratom.csv` with `--committee`). Full field
+reference: [OUTPUTS.md](docs/OUTPUTS.md#singlepoint-run).
 
 ---
 
@@ -424,6 +454,7 @@ pytest -m uma                          # UMA integration tests only
 ## Scientific Use Cases
 
 - **Optimization**: Relax atomic structures to minimum energy configurations
+- **Single-point**: Energy, forces, and stress for one structure, no relaxation — e.g. checking a hand-built or DFT-relaxed geometry against an MLIP
 - **MD**: Simulate temperature and pressure-dependent atomic dynamics
 - **NEB**: Compute Minimum Energy Pathways (MEP) and transition barriers
 - **AutoNEB**: Automatically find complex reaction pathways with adaptive image insertion
@@ -433,13 +464,13 @@ pytest -m uma                          # UMA integration tests only
 
 ## Python API
 
-The CLI commands are thin wrappers over a small set of public functions and one class. To call them directly from a script or notebook, see [PYTHON_API.md](docs/PYTHON_API.md). It covers `setup_calculator`, `run_optimization`, `run_md` / `setup_dynamics`, the `CustomNEB` class, parameter-file helpers, and small utilities.
+The CLI commands are thin wrappers over a small set of public functions and one class. To call them directly from a script or notebook, see [PYTHON_API.md](docs/PYTHON_API.md). It covers `setup_calculator`, `run_optimization`, `run_singlepoint`, `run_md` / `setup_dynamics`, the `CustomNEB` class, parameter-file helpers, and small utilities.
 
 ---
 
 ## Output Files
 
-For a complete reference of every file each command writes — filename, format, and which command produces it — see [OUTPUTS.md](docs/OUTPUTS.md). It also documents the (different) output-directory conventions: `optimize` and `md` write next to the input structure; `neb` and `autoneb` write into the current working directory.
+For a complete reference of every file each command writes — filename, format, and which command produces it — see [OUTPUTS.md](docs/OUTPUTS.md). It also documents the (different) output-directory conventions: `optimize`, `singlepoint` and `md` write next to the input structure; `neb` and `autoneb` write into the current working directory.
 
 ---
 
@@ -456,6 +487,7 @@ For a complete reference of every file each command writes — filename, format,
   autoneb-results = "mliprun.cli.commands.autoneb_results:app"
   benchmark = "mliprun.cli.commands.benchmark:app"
   optimize = "mliprun.cli.commands.optimize:app"
+  singlepoint = "mliprun.cli.commands.singlepoint:app"
   ```
 - Lazy imports for fast CLI startup (no heavy dependencies loaded until needed)
 - Output locations: `optimize`/`md` write next to the input structure; `neb`/`autoneb` write into the current working directory (see [OUTPUTS.md](docs/OUTPUTS.md))
