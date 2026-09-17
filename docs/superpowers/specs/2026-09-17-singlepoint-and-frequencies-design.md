@@ -222,12 +222,22 @@ Hessian and the atoms, and it is how D3 is honoured: a later `thermo` command
 reads this file and runs `HarmonicThermo` or `IdealGasThermo` without
 recomputing a single force.
 
-`<prefix>_cache/` — ASE's per-displacement JSON cache. Restart is free: an
+`<prefix>/` — ASE's per-displacement JSON cache directory. Restart is free: an
 interrupted sweep resumes at the displacement it stopped on, because every
-completed displacement is already on disk.
+completed displacement is already on disk. The name is not ours to choose
+freely: `Vibrations` takes one `name` and derives both this directory and the
+mode filenames from it, so the command passes `name = <output_dir>/<prefix>`.
 
-`<prefix>_mode_<i>.traj` — per `--write-modes`. The default writes only the
-imaginary modes, which is what a transition-state check needs to look at.
+`<prefix>.<n>.traj` — one animated trajectory per written mode, `n` being the
+mode index. ASE's `write_mode` composes this path as `f"{vib.name}.{n}.traj"`,
+which is why the cache directory above carries the bare prefix. Which modes get
+written follows `--write-modes`; the default writes only the imaginary ones,
+which is what a transition-state check needs to look at.
+
+**A trap in `vib.summary()`**: its `log` argument opens a path in *append*
+mode, so a restarted run would write a second table into the same file and the
+result would read as twice as many modes. The command passes an open handle in
+write mode instead.
 
 `mliprun_run.json` — a stage of kind `freq`, `results`:
 
