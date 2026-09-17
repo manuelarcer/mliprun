@@ -101,12 +101,38 @@ def run_singlepoint(
         Where the CSV and the run record go.
     prefix : str
         Stem for this command's output files.
+    model_name : str
+        Name of MLIP model for parameter file.
     stress : bool, optional
         None attempts the stress only when the cell is periodic in all three
         directions; True always attempts it; False never does.
+    run_context : RunContext, optional
+        Declares the command, batch identity, and where each parameter value
+        came from. When omitted the record still gets written, with every
+        parameter tagged ``unspecified``.
+    device_requested : str
+        The device as asked for (e.g. ``'auto'``), recorded for provenance.
+        Ignored on a committee run: both device fields become the string
+        ``'committee'``, because the driver process resolves no device at all
+        and each member's own ``device``/``gpu`` is recorded per member.
+    device_resolved : str
+        The device actually used (e.g. ``'cuda'``). See ``device_requested``
+        for the committee case.
+    uma_task : str, optional
+        UMA task actually used, recorded for provenance. Ignored for
+        non-UMA models.
+    mace_head : str, optional
+        MACE head actually used, recorded for provenance. Ignored for
+        non-MACE models.
+    sevennet_task : str, optional
+        SevenNet inference task, recorded in the run record when the model is
+        a ``7net*`` tag. No default: see ``validate_mlip``.
     committee : CommitteeCalculator, optional
         When given, it must already be started and attached as ``atoms.calc``.
         Teardown belongs to whoever built it.
+    committee_config : CommitteeConfig, optional
+        The parsed ``committee.yaml``, for the run record: member list, envs,
+        resolved levels of theory, and the file's SHA-256.
     uncertainty_threshold : float, optional
         No default, matching ``run_optimization``: without one, sigma is
         reported and no verdict asserted.

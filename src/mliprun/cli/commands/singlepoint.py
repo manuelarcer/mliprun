@@ -130,6 +130,12 @@ def run(
             atoms.calc = committee_calc
         else:
             typer.echo(f"⚙️  Attaching {mlip} calculator (device={device})...")
+            if mlip.startswith("uma-"):
+                typer.echo(f"   UMA task: {uma_task}")
+            if mlip.startswith("mace-mh-"):
+                typer.echo(f"   MACE head: {mace_head}")
+            if mlip.startswith("7net"):
+                typer.echo(f"   SevenNet task: {sevennet_task}")
             atoms = setup_calculator(atoms, mlip, uma_task, device=device,
                                      mace_head=mace_head,
                                      sevennet_task=sevennet_task)
