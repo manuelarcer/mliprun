@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- **Draft PRs only. Never push to `main`.** One concern per PR. This plan is three PRs: Task 1 (PR A), Tasks 2–6 (PR B), Tasks 7–14 (PR C).
+- **Draft PRs only. Never push to `main`.** One concern per PR. This plan is three PRs plus a verification pass: Task 1 (PR A), Tasks 2–6 (PR B), Tasks 7–14 (PR C), and Task 15 on cos-cluster before either PR B or PR C is marked ready for review.
 - **Branch:** `feat/singlepoint-and-frequencies` already exists and carries the spec commit. PR B and PR C branch from the merged predecessor, not from each other.
 - **Every test asserts a numerical value or an invariant.** Loosening a tolerance is acceptable only by recording the observed delta. Silently changed numerics are not.
 - **Every test in this plan runs with no MLIP installed.** Use `ase.calculators.emt.EMT` directly, or the reserved `emt` tag through the committee worker path. Never import `mace`, `fairchem`, `sevenn` or `chgnet`.
@@ -3257,6 +3257,200 @@ Expected: the body above. If empty, patch with `gh api` and check again — `gh 
 
 ---
 
+---
+
+# Verification on cos-cluster
+
+### Task 15: Verify both commands against real MLIPs on cos-cluster
+
+Runs with PR C's branch checked out, which contains PR B's work. Do this **before** either PR is marked ready for review: a green unit suite on EMT is not evidence that a frequency is a frequency.
+
+**Files:** none in the repo. The deliverable is a written verification report appended to `CHANGELOG.md`'s entry and quoted in the PR bodies, plus the numbers recorded in the prov ledger (canon K2).
+
+**Model and head, which canon C1 says are never guessed:**
+- Slab and adsorbate legs: `uma-s-1p2` with `--uma-task oc20`. Surface + adsorbate work, per the cos-cluster skill's lesson 1.
+- Gas-molecule leg: `uma-s-1p2` with `--uma-task omol`.
+- These two legs are **separate comparisons**. No energy difference is ever taken between them — canon C3, one head per energy formula. A frequency is a curvature, not an energy difference, so using two heads across two independent legs is legitimate; combining their numbers into one table would not be.
+- Committee members: `uma-s-1p2` (oc20), `mace`, `chgnet`. Mixed level of theory by construction, which the run will say out loud. That is the point: it exercises the mixed-theory path, and the spread is a method comparison, not an error bar.
+
+**If Juan has not confirmed those choices, stop and ask before running anything.** They are his call, and a verification run reported under a head nobody chose is worse than no verification.
+
+- [ ] **Step 1: Reset the cos-cluster test clone, which is in a known mixed state**
+
+`.claude/handoffs/committee-followups.md` item 4 records it: `/scratchb/juar/committee-test/mliprun` sits on commit `321013b` with two files hand-copied over it during the PR #47 session. It is neither `main` nor a clean branch. Reusing it would test a chimera.
+
+```bash
+mkdir -p /tmp/ssh_mux && ssh -O check cos-cluster
+```
+
+If no master is running, do **not** authenticate non-interactively — ask Juan to run `! ssh -fN cos-cluster` and type the password, then re-check.
+
+```bash
+ssh cos-cluster 'cd /scratchb/juar/committee-test/mliprun && git status --short && git rev-parse HEAD'
+```
+
+Expected: the two modified files and `321013b`. Then reset it:
+
+```bash
+ssh cos-cluster 'cd /scratchb/juar/committee-test/mliprun && git fetch --all --prune && git checkout -- . && git checkout feat/freq && git rev-parse HEAD && git status --short'
+```
+
+Expected: the branch tip, and **empty** `git status --short`. A non-empty status here means the reset did not take; stop and report rather than running on a dirty tree.
+
+- [ ] **Step 2: Confirm the PYTHONPATH injection actually wins**
+
+Never switch branches on the shared editable install at `/app1-cos/mlip-platform/mlip-platform` — it is the tool every venv and every running job on the node is using.
+
+```bash
+ssh cos-cluster 'PYTHONPATH=/scratchb/juar/committee-test/mliprun/src /scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/bin/python -c "import mliprun, mliprun.core.vibrations as v; print(mliprun.__file__); print(v.__file__)"'
+```
+
+Expected: **both** paths under `/scratchb/juar/committee-test/mliprun/src`. If either points at `/app1-cos`, the venv's editable install has changed from the legacy `.pth` style to the modern import-hook finder, `PYTHONPATH` has silently lost, and every number below would describe the wrong code. Stop and report.
+
+Also confirm the shared install was not disturbed:
+
+```bash
+ssh cos-cluster 'cd /app1-cos/mlip-platform/mlip-platform && git branch --show-current && git status --short'
+```
+
+Expected: `main`, empty status.
+
+- [ ] **Step 3: Pre-flight the shared node**
+
+It has no scheduler and everyone shares it. Overcommitting can take the node down for other users.
+
+```bash
+ssh cos-cluster '/app1-cos/checkNodeUserStatus.sh; nvidia-smi; top -bn1 | head -5; df -h /scratchb'
+```
+
+Record which GPU is free. If all three are busy with someone else's work, stop and report rather than adding load.
+
+- [ ] **Step 4: `singlepoint` against `optimize --max-steps 0`, the exact-equality cross-check**
+
+Both do one evaluation of the same geometry with the same model. Their energies must agree to the last bit; anything else means one of them is not doing what it claims.
+
+Stage a relaxed O/Pt(111) slab (the structure PR #50's README figure used) into `/scratchb/juar/freq-verify/sp/`, then:
+
+```bash
+ssh cos-cluster 'cd /scratchb/juar/freq-verify/sp && PYTHONPATH=/scratchb/juar/committee-test/mliprun/src /scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/bin/mlip singlepoint run --structure POSCAR --mlip uma-s-1p2 --uma-task oc20 --device cuda 2>&1 | tail -20'
+```
+
+Then the same structure through the old path, in a separate directory so the records do not collide, and compare:
+
+```bash
+ssh cos-cluster 'cd /scratchb/juar/freq-verify/sp_opt && PYTHONPATH=... mlip optimize run --structure POSCAR --mlip uma-s-1p2 --uma-task oc20 --device cuda --max-steps 0 2>&1 | tail -5'
+```
+
+Record both energies to full precision from the two `mliprun_run.json` files. Expected: **identical**. Record the delta whatever it is; a non-zero delta is a finding, not a tolerance to widen.
+
+Also check by hand: `singlepoint_forces.csv` has one row per atom, the `free_*` columns are False exactly on the fixed layers, and `fmax_all` exceeds `fmax_free`.
+
+- [ ] **Step 5: `freq` on a gas molecule against a known number**
+
+The first real physics check. A CO molecule's stretch is ~2143 cm⁻¹ experimentally.
+
+```bash
+ssh cos-cluster 'cd /scratchb/juar/freq-verify/co && PYTHONPATH=... mlip freq run --structure CO.vasp --mlip uma-s-1p2 --uma-task omol --device cuda 2>&1 | tail -20'
+```
+
+Relax it first with the same model and head, or the stationary-point warning will fire and the number will be wrong for a reason the command already told you about.
+
+Expected: one large real mode, the rest near zero (translations and rotations), no imaginary modes. **Record the stretch and its delta from 2143 cm⁻¹. Do not assert a verdict on whether the delta is acceptable** — that is a question about the model, not about this code, and it is Juan's to judge.
+
+- [ ] **Step 6: `freq` on a constrained slab — the constraint path against a real structure**
+
+The EMT tests prove `select_indices` reads `FixAtoms`. This proves it survives a real VASP POSCAR's selective dynamics, which is how constraints actually reach this tool (canon S8: the constraint is invisible on the command line).
+
+```bash
+ssh cos-cluster 'cd /scratchb/juar/freq-verify/slab && PYTHONPATH=... mlip freq run --structure CONTCAR --mlip uma-s-1p2 --uma-task oc20 --device cuda 2>&1 | tail -25'
+```
+
+Check: `n_displaced_atoms` equals the number of atoms free in the POSCAR's selective dynamics; `n_force_calls` equals `1 + 6 × n_displaced`; `n_modes` equals `3 × n_displaced`. Record the wall clock.
+
+Check the stationary-point line: the directory holds the `mliprun_run.json` from the relaxation that produced this CONTCAR, so `fmax_expectation_source` should read `run_record` and name the fmax that run converged to. **This is the only place the run-record lookup is exercised against a record it did not write itself.**
+
+- [ ] **Step 7: The transition-state case, opportunistic**
+
+If a converged NEB saddle from an earlier project is available, run `freq` on it. Expected: **exactly one imaginary mode**, along the reaction coordinate, and `freq.<n>.traj` written for it. This is the use case the imaginary-mode default exists for.
+
+If no saddle is to hand, say so in the report rather than skipping it silently. Do not construct one for this purpose — that is a calculation, not a verification.
+
+- [ ] **Step 8: Committee frequencies with three real MLIPs in three real environments**
+
+The thing no EMT test can reach: three packages with mutually incompatible torch pins, driven as subprocess workers from a driver with no torch at all.
+
+Build the driver venv if it is not there (ADR 0001 — it must have no MLIP):
+
+```bash
+ssh cos-cluster 'cd /scratchb/juar/freq-verify && python -m venv .venv/driver && .venv/driver/bin/pip install -q -e /scratchb/juar/committee-test/mliprun && .venv/driver/bin/python -c "import torch" 2>&1 | tail -1'
+```
+
+Expected: `ModuleNotFoundError: No module named 'torch'` — that is the architecture working, not a failure.
+
+Write `committee.yaml` with the three members named above, each pointing at its own venv's python, then run `freq --committee` on a **small** adsorbate-only selection — use `--indices` to displace just the adsorbate. A full slab at three members is a long run and this step is about correctness, not endurance.
+
+Check every one of these:
+- `freq_committee_frequencies.csv` exists, one `<member>_cm-1` column per member, one `<member>_overlap` column per member.
+- The mixed-theory warning was printed. These three members are deliberately not same-level.
+- `frequency_committee_cm-1` matches `freq_frequencies.csv` row for row — the headline is the mean potential's, not the mean of members (D8).
+- `worst_mode_overlap` and `mode_pairing_suspect` in the run record. **Record the worst overlap.** If it is below 0.9 the run warned; that is the diagnostic doing its job on real near-degenerate modes, and the number matters more than the flag.
+- Per-member ZPE and `zpe_std_eV`. Record them.
+
+- [ ] **Step 9: Measure the cost claim instead of asserting it**
+
+The design says cost is `max(member)`, not `sum(member)`. Measure it.
+
+Time the three-member committee sweep from Step 8. Time the same sweep with one member alone, for each member. Expected: the committee wall clock is close to the slowest single member's, not to their sum. **Record all four numbers and the ratio.** If the committee time approaches the sum, the concurrency claim in the design note and in `docs/OUTPUTS.md` is wrong and must be corrected there before the PR merges.
+
+- [ ] **Step 10: Measure whether `delta = 0.01 Å` is above the model's force noise**
+
+The docs currently say a merely noisy member contributes to the spread alongside genuine disagreement, and that two values of `--delta` distinguish them. That is reasoning. Turn it into a number.
+
+Re-run Step 8's committee selection at `--delta 0.02`, and re-run it at `--delta 0.01` into a fresh directory (delete the `freq/` cache, or it will reuse the first sweep and prove nothing — **this is the easiest way to get a meaningless result in this whole task**).
+
+Compare the per-mode spread at the two deltas. Record both. If the spread is roughly unchanged, it is model disagreement. If it shrinks markedly at the larger delta, part of what the smaller delta reported was numerical noise, and the docs' caveat needs the measured number written into it.
+
+- [ ] **Step 11: Teardown on the committee path, unsandboxed**
+
+`freq --committee` is a new caller of the committee session extracted in Task 1. The SIGTERM path is the one whose failure left workers holding CUDA contexts on this exact node.
+
+Start a committee `freq` run, note the driver pid, `kill` it, then check:
+
+```bash
+ssh cos-cluster 'pgrep -af "committee.worker"; nvidia-smi'
+```
+
+Expected: no worker process, no CUDA context left by this run, exit code 143.
+
+**Run this check unsandboxed.** `ps` and `pgrep` are blocked inside the Claude Bash sandbox and fail in a way that reads as empty output — a check that only tests for an empty result would report success on a blocked syscall. Pass `dangerouslyDisableSandbox: true` for this step specifically, or have Juan run it with `!`.
+
+- [ ] **Step 12: Leave the node as you found it, and record the run**
+
+```bash
+ssh cos-cluster 'cd /app1-cos/mlip-platform/mlip-platform && git branch --show-current && git status --short'
+ssh cos-cluster 'nvidia-smi'
+```
+
+Expected: `main`, empty status, and no GPU memory held by any process of this verification.
+
+Then record the calculations in the prov ledger (canon K2): every MLIP calculation outside catplat's management is recorded before its numbers are reported or used. Use the project root the ledger already knows for this work; a deeper root silently doubles the ledger under a second id namespace.
+
+- [ ] **Step 13: Write the verification report**
+
+Into the PR bodies of both PRs and into the `CHANGELOG.md` entries. It states, with numbers:
+
+- The energy delta between `singlepoint` and `optimize --max-steps 0` (expected exactly zero).
+- The CO stretch and its delta from 2143 cm⁻¹, with **no verdict** on whether the delta is acceptable.
+- The slab run's displaced-atom count, force-call count, and wall clock.
+- Whether the run-record fmax lookup fired, and against what value.
+- The transition state's imaginary-mode count, or an explicit statement that no saddle was available.
+- The committee's three timings, the ratio, and whether `max(member)` held.
+- The worst mode overlap and the per-member ZPE spread.
+- The per-mode spread at both deltas and what that says about force noise.
+- The teardown result.
+
+Anything that did not run says so by name. A verification report with a silent gap is worse than a short one.
+
 ## Verification before claiming done
 
 Run all of these and read the output before reporting anything complete:
@@ -3268,15 +3462,10 @@ mlip freq run --help >/dev/null && echo "freq OK"
 gh pr list --draft --json number,title
 ```
 
-The goal's `done-when` is met only when: `mlip singlepoint` reports energy, forces and both fmax values; `mlip freq` reports frequencies and ZPE; both work with a committee, `freq` reporting per-member frequencies and the per-mode spread; and the unit suite passes with no MLIP installed.
+The goal's `done-when` is met only when: `mlip singlepoint` reports energy, forces and both fmax values; `mlip freq` reports frequencies and ZPE; both work with a committee, `freq` reporting per-member frequencies and the per-mode spread; the unit suite passes with no MLIP installed; **and Task 15's cos-cluster verification has run against real MLIPs with its report written.**
 
 **Still unratified by Juan, carried forward for review at PR time:** the `--expect-fmax` default reading a converged `optimize` stage out of the input directory's run record, and `MODE_OVERLAP_WARN = 0.9`.
 
-## Not verified by any test in this plan
+## What EMT cannot prove
 
-Every test here runs on EMT in one process. These need a real GPU env on cos-cluster before the work is called finished:
-
-- A real MLIP's frequencies at all — EMT proves the plumbing, not the physics.
-- Committee members in genuinely separate environments with different MLIP packages, which is what the worker subprocess protocol exists for.
-- Wall-clock cost of a real sweep: a 50-free-atom slab is 301 committee evaluations, and whether `max(member)` holds at that repetition rate is measured, not assumed.
-- Whether `delta = 0.01 Å` is above a real MLIP's force noise. The spread caveat in the docs is reasoning, not a measurement.
+Every test in Tasks 1–14 runs on ASE's EMT in one process. That proves the plumbing and says nothing about the physics, about MLIP packages in genuinely separate environments, or about cost at real repetition rates. Task 15 closes that gap on cos-cluster and is part of this plan, not a follow-up.
