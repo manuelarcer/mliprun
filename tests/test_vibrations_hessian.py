@@ -1,6 +1,6 @@
 """Our Hessian assembly against ASE's own, by exact equality.
 
-ASE builds the Hessian inside Vibrations._read from its displacement cache.
+ASE builds the Hessian inside Vibrations.read from its displacement cache.
 A committee needs one Hessian per member, which that path cannot express, so
 the assembly is reimplemented here -- and pinned to ASE's by exact equality
 rather than a tolerance, because the two run the same arithmetic on the same

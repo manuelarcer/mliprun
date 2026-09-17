@@ -102,3 +102,111 @@ def assemble_hessian(forces, indices, delta, nfree=2,
 
     hessian += hessian.copy().T
     return hessian
+
+
+def parse_indices(text, n_atoms):
+    """Turn ``'0,1,5'`` / ``'12-30'`` / a mix of both into a sorted list.
+
+    Ranges are inclusive at both ends, which is what a user writing
+    ``12-30`` for "layers 12 through 30" means. Duplicates collapse.
+
+    Parameters
+    ----------
+    text : str or None
+        The option value. None returns None, meaning "no explicit
+        selection", which :func:`select_indices` reads as "use the
+        constraints".
+    n_atoms : int
+        For the range check.
+
+    Returns
+    -------
+    list of int, or None
+
+    Raises
+    ------
+    ValueError
+        On an unparsable token or an index outside ``0..n_atoms-1``.
+    """
+    if text is None:
+        return None
+    chosen = set()
+    for token in str(text).split(","):
+        token = token.strip()
+        if not token:
+            continue
+        if "-" in token.lstrip("-"):
+            lo_text, _, hi_text = token.partition("-")
+            try:
+                lo, hi = int(lo_text), int(hi_text)
+            except ValueError:
+                raise ValueError(
+                    f"could not parse '{token}' as an index range") from None
+            if hi < lo:
+                raise ValueError(
+                    f"could not parse '{token}': range ends below its start")
+            chosen.update(range(lo, hi + 1))
+        else:
+            try:
+                chosen.add(int(token))
+            except ValueError:
+                raise ValueError(
+                    f"could not parse '{token}' as an atom index") from None
+    out_of_range = sorted(i for i in chosen if not 0 <= i < n_atoms)
+    if out_of_range:
+        raise ValueError(
+            f"atom index out of range for a {n_atoms}-atom structure: "
+            f"{out_of_range}")
+    return sorted(chosen)
+
+
+def select_indices(atoms, explicit=None):
+    """Which atoms to displace, and which constraints we could not honour.
+
+    The default comes from the structure's constraints, which is also ASE's
+    own default: every atom not held by ``FixAtoms``. An explicit selection
+    overrides it entirely, including selecting a fixed atom -- ASE's
+    ``Vibrations`` collects forces through ``calc.get_forces(atoms)``, which
+    bypasses the constraint machinery, so such a row carries real forces
+    rather than zeros.
+
+    Any constraint type other than ``FixAtoms`` cannot be honoured here:
+    ASE's ``indices`` selects whole atoms, so a partially held atom has no
+    partial Hessian to express. Those atoms are displaced in full and the
+    type names are returned, so the caller can say so (D6 in the design
+    note). They are never a refusal.
+
+    This deliberately does *not* reuse
+    :func:`mliprun.core.committee.calculator.free_component_mask`'s
+    ``unhandled`` list, even though that function also scans ``atoms``'
+    constraints: that function additionally masks ``FixCartesian``, because a
+    per-component mask is exactly what its force-averaging statistic needs,
+    and its own tests pin ``unhandled == []`` for a ``FixCartesian``-only
+    structure (``tests/test_committee_stats.py::
+    TestFreeComponentMask::test_fixcartesian_frees_the_directions_it_does_not_hold``).
+    Atom *selection* has no such partial option -- a half-held atom still
+    gets displaced in full -- so ``FixCartesian`` belongs in *this*
+    function's ``unhandled`` even though ``free_component_mask`` correctly
+    leaves it out of its own. The two functions answer different questions
+    about the same constraint and are expected to disagree about it.
+
+    Returns
+    -------
+    (list of int, list of str)
+        The indices to displace, and the sorted names of the constraint
+        types that were not honoured.
+    """
+    fixed = set()
+    unhandled = set()
+    for constraint in getattr(atoms, "constraints", ()) or ():
+        kind = type(constraint).__name__
+        if kind == "FixAtoms":
+            fixed.update(int(i) for i in constraint.get_indices())
+        else:
+            unhandled.add(kind)
+    unhandled = sorted(unhandled)
+
+    if explicit is not None:
+        return list(explicit), unhandled
+
+    return [i for i in range(len(atoms)) if i not in fixed], unhandled
