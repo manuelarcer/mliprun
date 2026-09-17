@@ -11,10 +11,8 @@ from mliprun.core.run_record import BatchInfo, RunContext, new_batch_id
 from mliprun.core.committee.config import CommitteeConfigError, load_committee
 from mliprun.core.committee.remote import DEFAULT_CALC_TIMEOUT_S
 from mliprun.cli.committee_session import (
-    build_committee,
     reject_conflicting_options,
     report_committee_uncertainty,
-    sigterm_as_interrupt,
     started_committee,
 )
 from mliprun.cli.utils import (
