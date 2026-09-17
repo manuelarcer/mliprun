@@ -302,9 +302,17 @@ synthetic two-member committee on EMT:
 
 3. **`assemble_hessian(forces_by_displacement, indices, delta, nfree,
    direction, method)`** — a pure function mirroring ASE's own assembly in
-   `Vibrations._read`. Applied to the mean forces it reproduces ASE's `vib.H`
-   with a maximum absolute difference of **exactly 0.0** in the probe, and the
-   test suite asserts that equality rather than a tolerance.
+   `Vibrations.read`, which is **public** API in ASE 3.29 (this document
+   originally called it `_read`; there is no such private method, corrected
+   2026-09-18 during Task 7). Applied to the mean forces it reproduces ASE's
+   `vib.H` with a maximum absolute difference of **exactly 0.0** in the probe,
+   and the test suite asserts that equality rather than a tolerance.
+
+   This narrows the fragility this design carries. The arithmetic being
+   mirrored comes from public API; the only ASE-private names used anywhere
+   in this work are `Vibrations._disp` and `_eq_disp`, which read the
+   displacement cache, and those are confined to reading cached forces back
+   out — see the note under the restart discussion.
 
 4. **Per member**: `VibrationsData.from_2d(atoms, H_member, indices)` yields
    that member's frequencies and ZPE. Mass weighting and diagonalization stay

@@ -1175,7 +1175,9 @@ Create `tests/test_vibrations_hessian.py`:
 ```python
 """Our Hessian assembly against ASE's own, by exact equality.
 
-ASE builds the Hessian inside Vibrations._read from its displacement cache.
+ASE builds the Hessian inside Vibrations.read (public API in 3.29; an
+earlier draft of this plan called it _read, which does not exist) from its
+displacement cache.
 A committee needs one Hessian per member, which that path cannot express, so
 the assembly is reimplemented here -- and pinned to ASE's by exact equality
 rather than a tolerance, because the two run the same arithmetic on the same
@@ -1284,7 +1286,7 @@ Create `src/mliprun/core/vibrations.py` with the module docstring and this funct
 Wraps ``ase.vibrations.Vibrations`` rather than reimplementing the
 displacement sweep. The one piece that is reimplemented is the Hessian
 assembly, because a committee needs one Hessian per member and ASE's
-``Vibrations._read`` can only build the single Hessian implied by whatever
+``Vibrations.read`` can only build the single Hessian implied by whatever
 ``atoms.calc`` returned. ``assemble_hessian`` is pinned to ASE's arithmetic
 by exact equality in tests/test_vibrations_hessian.py.
 
@@ -1301,7 +1303,7 @@ def assemble_hessian(forces, indices, delta, nfree=2,
                      direction="central", method="standard"):
     """Build the Hessian from one displacement sweep's forces.
 
-    Mirrors ``ase.vibrations.Vibrations._read`` exactly. Kept separate so it
+    Mirrors ``ase.vibrations.Vibrations.read`` exactly. Kept separate so it
     can be applied to any set of force arrays -- in particular to one
     committee member's own forces, which never reach ``atoms.calc``.
 
@@ -1399,7 +1401,7 @@ Expected: `8 passed`, **`0 skipped`**.
 git add src/mliprun/core/vibrations.py tests/test_vibrations_hessian.py
 git commit -m "feat(freq): Hessian assembly pinned to ASE by exact equality
 
-A committee needs one Hessian per member, which Vibrations._read cannot
+A committee needs one Hessian per member, which Vibrations.read cannot
 express. The assembly is reimplemented and tested against ase's own vib.H
 with np.array_equal, for central, forward, backward, nfree 2 and 4, and
 Frederiksen.
