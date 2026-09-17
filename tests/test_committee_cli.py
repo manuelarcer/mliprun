@@ -56,7 +56,7 @@ def _reroute_one_member_to_the_biased_worker(monkeypatch, name="member_b"):
     difference between a masked and an unmasked column. ``biased_worker.py``
     adds a fixed force offset, so sigma is a known non-zero number.
     """
-    import mliprun.cli.commands.optimize as optimize_cli
+    import mliprun.cli.committee_session as committee_session
     from mliprun.core.committee.remote import RemoteMember as _RealRemoteMember
 
     stub = STUB_DIR / "biased_worker.py"
@@ -65,7 +65,7 @@ def _reroute_one_member_to_the_biased_worker(monkeypatch, name="member_b"):
         argv = [python_exe, str(stub)] if member_name == name else None
         return _RealRemoteMember(member_name, python_exe, argv=argv, **kwargs)
 
-    monkeypatch.setattr(optimize_cli, "RemoteMember", _mixed_remote_member)
+    monkeypatch.setattr(committee_session, "RemoteMember", _mixed_remote_member)
 
 
 class TestMutualExclusion:
@@ -246,7 +246,7 @@ class TestFlaggedPath:
     def test_a_genuinely_disagreeing_committee_trips_the_threshold(
             self, structure, fake_committee_file, monkeypatch):
         path, config = fake_committee_file
-        import mliprun.cli.commands.optimize as optimize_cli
+        import mliprun.cli.committee_session as committee_session
         from mliprun.core.committee.remote import RemoteMember as _RealRemoteMember
 
         stub = STUB_DIR / "biased_worker.py"
@@ -255,7 +255,7 @@ class TestFlaggedPath:
             argv = [python_exe, str(stub)] if name == "member_b" else None
             return _RealRemoteMember(name, python_exe, argv=argv, **kwargs)
 
-        monkeypatch.setattr(optimize_cli, "RemoteMember", _mixed_remote_member)
+        monkeypatch.setattr(committee_session, "RemoteMember", _mixed_remote_member)
 
         result = runner.invoke(app, ["run", "--structure", str(structure),
                                      "--committee", str(path),
@@ -568,10 +568,10 @@ class TestSigtermTeardown:
     def test_the_guard_installs_and_restores_the_sigterm_disposition(self):
         """``run_optimization`` is a Python API entry point too, so the
         handler must not outlive the committee window."""
-        from mliprun.cli.commands.optimize import _sigterm_as_interrupt
+        from mliprun.cli.committee_session import sigterm_as_interrupt
 
         before = signal.getsignal(signal.SIGTERM)
-        with _sigterm_as_interrupt():
+        with sigterm_as_interrupt():
             during = signal.getsignal(signal.SIGTERM)
             assert callable(during)
             assert during is not before
@@ -579,9 +579,9 @@ class TestSigtermTeardown:
 
     def test_the_installed_handler_unwinds_instead_of_terminating(self):
         """The whole fix is this: SIGTERM raises, so ``finally`` runs."""
-        from mliprun.cli.commands.optimize import _sigterm_as_interrupt
+        from mliprun.cli.committee_session import sigterm_as_interrupt
 
-        with _sigterm_as_interrupt():
+        with sigterm_as_interrupt():
             handler = signal.getsignal(signal.SIGTERM)
             with pytest.raises(KeyboardInterrupt):
                 handler(signal.SIGTERM, None)
@@ -591,12 +591,12 @@ class TestSigtermTeardown:
         thread ever runs one. A caller driving this command from another
         thread must not have the process's disposition changed underneath
         them."""
-        from mliprun.cli.commands.optimize import _sigterm_as_interrupt
+        from mliprun.cli.committee_session import sigterm_as_interrupt
 
         observed = {}
 
         def _inside():
-            with _sigterm_as_interrupt():
+            with sigterm_as_interrupt():
                 observed["during"] = signal.getsignal(signal.SIGTERM)
 
         before = signal.getsignal(signal.SIGTERM)
