@@ -3261,6 +3261,134 @@ Expected: the body above. If empty, patch with `gh api` and check again — `gh 
 
 ---
 
+# Added after the plan was written
+
+### Task 16: `--output-dir` on `singlepoint`
+
+**Added 2026-09-18 on Juan's decision.** Runs into a real problem the plan did not anticipate: a run record is destroyed by the next command that writes in the same directory. Measured — after `optimize` then `singlepoint` in one directory, the record's `stages` goes from `['optimize']` to `['singlepoint']` and the optimize stage is gone. This is pre-existing and repo-wide; only `md` (on `--resume`) and `neb` ever pass `append=True`.
+
+It became newly consequential because `freq` reads the expected fmax from the optimize record in the structure's directory and then overwrites it, so a **second** `freq` run there silently loses its expectation and the stationary-point warning stops firing.
+
+Juan chose an output-location flag over changing append behaviour, and it is the better fix: the engine already keeps `structure_dir` (where the prior record is read) separate from `output_dir` (where this run writes), so `--output-dir freq/` preserves the optimize record *and* keeps the warning working on every re-run.
+
+**Scope ruling.** This task adds the flag to `singlepoint` only, on the `feat/singlepoint` branch (PR B). `freq` gets it built in when Task 13 writes its CLI. The five shipped commands — `optimize`, `md`, `neb`, `autoneb`, `benchmark` — are a **separate PR**: it changes shipped behaviour, and it should also resolve the existing inconsistency that `optimize`/`md` write next to the structure while `neb`/`autoneb` write into the current working directory.
+
+**Files:**
+- Modify: `src/mliprun/cli/commands/singlepoint.py`
+- Test: `tests/test_cli_singlepoint.py`
+
+**Interfaces:**
+- Consumes: `run_singlepoint(atoms, output_dir=..., ...)` — the core already takes the directory, so this is CLI plumbing only.
+- Produces: nothing new for later tasks.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_output_dir_redirects_every_output(structure, monkeypatch, tmp_path):
+    """The whole point: outputs land elsewhere, so a run does not clobber
+    the record of the optimization that produced the structure."""
+    _use_emt(monkeypatch)
+    out = tmp_path / "sp"
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure), "--output-dir", str(out)])
+    assert result.exit_code == 0, result.stdout
+    assert (out / "singlepoint_forces.csv").exists()
+    assert (out / "mliprun_run.json").exists()
+    # and nothing was written beside the structure
+    assert not (structure.parent / "singlepoint_forces.csv").exists()
+    assert not (structure.parent / "mliprun_run.json").exists()
+
+
+def test_output_dir_is_created_when_missing(structure, monkeypatch, tmp_path):
+    _use_emt(monkeypatch)
+    out = tmp_path / "does" / "not" / "exist"
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure), "--output-dir", str(out)])
+    assert result.exit_code == 0, result.stdout
+    assert (out / "singlepoint_forces.csv").exists()
+
+
+def test_the_default_still_writes_beside_the_structure(structure, monkeypatch):
+    """Unchanged behaviour without the flag — this is a regression guard on
+    everyone's existing scripts."""
+    _use_emt(monkeypatch)
+    result = runner.invoke(app, ["run", "--structure", str(structure)])
+    assert result.exit_code == 0, result.stdout
+    assert (structure.parent / "singlepoint_forces.csv").exists()
+
+
+def test_a_prior_record_in_the_structure_directory_survives(
+        structure, monkeypatch, tmp_path):
+    """The reason this flag exists. A record already beside the structure is
+    untouched when output goes elsewhere."""
+    _use_emt(monkeypatch)
+    prior = structure.parent / "mliprun_run.json"
+    prior.write_text('{"schema_version": 5, "command": "optimize", '
+                     '"stages": [{"index": 0, "kind": "optimize", '
+                     '"status": "converged"}]}')
+    before = prior.read_text()
+    runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--output-dir", str(tmp_path / "sp")])
+    assert prior.read_text() == before
+```
+
+- [ ] **Step 2: Run them and watch the first, second and fourth fail**
+
+Run: `.venv/bin/pytest tests/test_cli_singlepoint.py -q -k "output_dir or survives"`
+Expected: FAIL with `No such option: --output-dir`. The third test (default behaviour) passes already — it is a regression guard, not a new requirement.
+
+- [ ] **Step 3: Add the option**
+
+In `src/mliprun/cli/commands/singlepoint.py`, add to `run`'s signature:
+
+```python
+    output_dir: Path = typer.Option(
+        None, "--output-dir",
+        help="Directory for this run's outputs. Default: next to the input "
+             "structure. Use it to keep a single-point out of the "
+             "optimization folder that produced the structure — a run record "
+             "is replaced by the next command that writes in the same "
+             "directory."),
+```
+
+and replace `output_dir = structure.parent` with:
+
+```python
+    # Separate from the structure's own directory on purpose: a prior run
+    # record stays where it is, and this run writes elsewhere.
+    output_dir = output_dir if output_dir is not None else structure.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
+```
+
+- [ ] **Step 4: Run the tests**
+
+Run: `.venv/bin/pytest tests/test_cli_singlepoint.py -q`
+Expected: all PASS.
+
+- [ ] **Step 5: Document and commit**
+
+Add `--output-dir` to the `singlepoint` option table in `docs/OUTPUTS.md` and to the `README.md` example, saying plainly what it is for: a run record is replaced by the next command that writes in the same directory, so put a single-point somewhere else.
+
+```bash
+git add src/mliprun/cli/commands/singlepoint.py tests/test_cli_singlepoint.py docs/ README.md
+git commit -m "feat(singlepoint): --output-dir to keep a run out of the optimize folder
+
+A run record is replaced by the next command that writes in the same
+directory. Measured: optimize then singlepoint in one directory leaves
+stages ['singlepoint'] and the optimize stage gone.
+
+Default is unchanged — next to the input structure.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
+```
+
+**Note for Task 13:** `freq` takes the same flag, with the same default, built in from the start. Its engine already separates `structure_dir` from `output_dir`, so the flag must set `output_dir` while `structure_dir` stays `structure.parent` — otherwise the fmax lookup would search the empty output directory and the warning would never fire.
+
+**Raised with Juan and unanswered:** a complementary safety net — one warning line when `RunRecord.begin` is about to replace a record whose `command` differs from the incoming one. No refusal, no behaviour change. Without it the default stays destructive *and* silent, which the flag alone does not fix.
+
+---
+
 # Verification on cos-cluster
 
 ### Task 15: Verify both commands against real MLIPs on cos-cluster
