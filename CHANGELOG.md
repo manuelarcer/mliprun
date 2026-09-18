@@ -33,6 +33,43 @@ All notable changes to this project are documented here. Format follows [Keep a 
   Additive to the run record: new stage kind `singlepoint`, schema version
   unchanged. See `docs/OUTPUTS.md#singlepoint-run` and `docs/PYTHON_API.md`.
 
+- **Anisotropic (masked) barostat for NPT MD**
+  (`md run --ensemble npt --barostat-mask "0,0,1"`). The barostat previously
+  coupled to all three cell axes together, which strains the solid in-plane
+  in a slab–liquid interface cell and changes the surface being studied. The
+  mask is three 0/1 values in Cartesian `(x, y, z)` order: `1` lets that axis
+  change, `0` holds its length fixed. A liquid-filled oxide slab can now
+  equilibrate its z length at constant normal pressure — so the water reaches
+  its correct density at 1 bar — while the in-plane lattice stays at the
+  relaxed bulk value it was cleaved with. The alternatives it replaces were a
+  per-system packing calibration, which does not transfer between facets,
+  terminations or MLIPs, and an unknown density error in every interfacial
+  energy computed from the run.
+  Both barostats are wired: `--barostat berendsen` switches from
+  `NPTBerendsen` to ASE's `Inhomogeneous_NPTBerendsen`, which scales each
+  axis separately, and `--barostat npt` (MTK) passes the mask to `ase.md.npt.NPT`.
+  Because ASE's `NPT` stores the outer product of the mask vector, `"0,0,1"`
+  there frees the zz strain alone: no in-plane strain and no xz/yz shear
+  either. Measured on a strained EMT Cu cell, the masked in-plane axes move
+  by exactly 0.0 Å while z contracts (Berendsen −2.261e-3 Å over 10 steps;
+  MTK −1.302e-2 Å over 20).
+  **The default `"1,1,1"` is the previous behaviour and takes the previous
+  code path**: plain `NPTBerendsen`, and `mask=None` (ASE's own default) for
+  MTK, so an existing NPT run is unchanged. A non-default mask outside NPT is
+  rejected rather than ignored, because NVE and NVT never scale the cell and
+  a silent no-op would leave the user believing an axis had been constrained.
+  Malformed masks (`"1,1"`, `"0,0,2"`, `"a,b,c"`) are rejected with a message
+  naming the flag, not a traceback.
+  The resolved mask is echoed in the NPT setup block, written to
+  `md_params.txt`, and recorded in the run record under
+  `parameters.barostat_mask` with the usual `user` / `default` /
+  `unspecified` source tag — so a run whose cell could move only along z is
+  distinguishable from an isotropic one without opening the trajectory.
+  Not semi-isotropic: a mask of `"1,1,0"` scales x and y independently, which
+  is a different thing from tying them together, and that case is deliberately
+  not implemented. Run record schema stays at 5: `parameters` is already
+  command-specific and open, and no existing key changes meaning.
+
 - **Committee evaluation with per-configuration uncertainty**
   (`optimize run --committee committee.yaml`). Several MLIPs, each in its own
   Python environment, evaluate the same structure as subprocess workers; the

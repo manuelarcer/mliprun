@@ -1,7 +1,11 @@
 import typer
 from pathlib import Path
 from ase.io import read
-from mliprun.core.md import run_md
+from mliprun.core.md import (
+    DEFAULT_BAROSTAT_MASK,
+    normalize_barostat_mask,
+    run_md,
+)
 from mliprun.core.run_record import RunContext
 from mliprun.cli.utils import (
     DEVICE_HELP,
@@ -19,6 +23,41 @@ from mliprun.cli.utils import (
 
 app = typer.Typer(help="Run molecular dynamics simulations.")
 
+BAROSTAT_MASK_HELP = (
+    "Axes the barostat may change, as three 0/1 values, e.g. \"0,0,1\" to "
+    "relax only z while the in-plane lattice stays fixed (slab-liquid "
+    "interface). Default \"1,1,1\" (isotropic). NPT only."
+)
+
+
+def _format_barostat_mask(mask) -> str:
+    """Render a mask the way ``--barostat-mask`` accepts it back."""
+    return ",".join(str(int(v)) for v in mask)
+
+
+def _parse_barostat_mask(raw: str) -> tuple:
+    """Parse ``"0,0,1"`` into ``(0, 0, 1)``.
+
+    Raises ``typer.BadParameter`` rather than letting a ValueError escape:
+    a wrong mask silently changes which cell axes move, and the user needs a
+    message naming the flag, not a traceback.
+    """
+    fields = [field.strip() for field in str(raw).split(",")]
+    try:
+        values = [int(field) for field in fields]
+    except ValueError:
+        raise typer.BadParameter(
+            f"expected three 0/1 values separated by commas, e.g. \"0,0,1\"; "
+            f"got {raw!r}",
+            param_hint="--barostat-mask",
+        ) from None
+
+    try:
+        return normalize_barostat_mask(values)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--barostat-mask") from None
+
+
 @app.command()
 def run(
     ctx: typer.Context,
@@ -32,6 +71,11 @@ def run(
     # Thermostat/Barostat selection
     thermostat: str = typer.Option("langevin", help="Thermostat for NVT: 'langevin', 'nose-hoover', 'berendsen'"),
     barostat: str = typer.Option("npt", help="Barostat for NPT: 'npt' (MTK), 'berendsen'"),
+    barostat_mask: str = typer.Option(
+        _format_barostat_mask(DEFAULT_BAROSTAT_MASK),
+        "--barostat-mask",
+        help=BAROSTAT_MASK_HELP,
+    ),
 
     # Advanced thermostat/barostat parameters
     friction: float = typer.Option(0.01, help="Langevin friction coefficient (1/fs)"),
@@ -114,6 +158,17 @@ def run(
     if ensemble == 'npt' and pressure is None:
         raise typer.Exit("❌ Pressure must be specified for NPT ensemble.")
 
+    barostat_mask_value = _parse_barostat_mask(barostat_mask)
+    # Refused, not ignored: NVE and NVT never scale the cell, so a user who
+    # masked axes there would believe they had constrained something.
+    if ensemble != 'npt' and barostat_mask_value != DEFAULT_BAROSTAT_MASK:
+        raise typer.BadParameter(
+            f"only applies to --ensemble npt, not '{ensemble}'. The cell "
+            f"does not change in NVE or NVT, so masking its axes has no "
+            f"effect.",
+            param_hint="--barostat-mask",
+        )
+
     # Detect or use specified model
     if mlip == "auto":
         mlip = detect_mlip()
@@ -142,6 +197,8 @@ def run(
             typer.echo(f"   Tau T:       {taut} fs")
     elif ensemble == 'npt':
         typer.echo(f"   Barostat:    {barostat}")
+        typer.echo(f"   Barostat mask: {_format_barostat_mask(barostat_mask_value)}"
+                   f" (x,y,z; 1 = axis free)")
         typer.echo(f"   Pressure:    {pressure} GPa")
         if barostat == 'npt':
             typer.echo(f"   Time const:  {ttime} fs")
@@ -195,6 +252,9 @@ def run(
 
         elif ensemble == 'npt':
             f.write(f"Barostat:          {barostat}\n")
+            f.write(f"Barostat mask:     "
+                    f"{_format_barostat_mask(barostat_mask_value)}"
+                    f"   (x,y,z; 1 = axis free to change)\n")
             f.write(f"Pressure (GPa):    {pressure}\n")
             if barostat == 'npt':
                 f.write(f"Time constant (fs): {ttime}\n")
@@ -226,6 +286,7 @@ def run(
         ensemble=ensemble,
         thermostat=thermostat,
         barostat=barostat,
+        barostat_mask=barostat_mask_value,
         temperature=temperature,
         pressure=pressure,
         timestep=timestep,

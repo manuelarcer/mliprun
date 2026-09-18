@@ -67,6 +67,15 @@ MLIP is installed — script against its exit code.
   input structure; `neb`/`autoneb` write into the current working
   directory. Full file reference: `docs/OUTPUTS.md`.
 - Python API (for scripts/notebooks): `docs/PYTHON_API.md`.
+- `md run --ensemble npt` couples the barostat to all three axes by default.
+  `--barostat-mask "0,0,1"` restricts it to z, which is what a slab–liquid
+  cell needs: the liquid reaches its own density at the set pressure while
+  the in-plane lattice stays at the relaxed bulk value it was cleaved with.
+  The mask is NPT-only and refused elsewhere rather than ignored; it selects
+  `Inhomogeneous_NPTBerendsen` for `--barostat berendsen` and passes straight
+  through for `--barostat npt` (MTK). `"1,1,1"` takes the pre-existing code
+  path unchanged. Not semi-isotropic: `"1,1,0"` scales x and y
+  *independently*, it does not tie them together.
 - `optimize run --committee committee.yaml` relaxes with several MLIPs at
   once, one per env, and reports their disagreement as an uncertainty;
   `singlepoint run --committee` evaluates one configuration with a
