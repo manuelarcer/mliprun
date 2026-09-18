@@ -12,7 +12,7 @@ from ase.io.trajectory import Trajectory
 from ase.md import MDLogger
 from ase.md.langevin import Langevin
 from ase.md.npt import NPT
-from ase.md.nptberendsen import NPTBerendsen
+from ase.md.nptberendsen import Inhomogeneous_NPTBerendsen, NPTBerendsen
 from ase.md.nvtberendsen import NVTBerendsen
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.verlet import VelocityVerlet
@@ -38,10 +38,68 @@ DYNAMICS_MAP = {
         "berendsen": NVTBerendsen,
     },
     "npt": {
+        # The class each barostat keyword resolves to with the default,
+        # isotropic mask. A non-default ``barostat_mask`` keeps the keyword
+        # but swaps ``berendsen`` for the Inhomogeneous_NPTBerendsen
+        # subclass, which scales each axis separately; ``npt`` (MTK) takes
+        # the mask on the same class. See :func:`setup_dynamics`.
         "npt": NPT,
         "berendsen": NPTBerendsen,
     },
 }
+
+#: Every axis coupled to the barostat -- the historical, isotropic behaviour.
+DEFAULT_BAROSTAT_MASK = (1, 1, 1)
+
+
+def normalize_barostat_mask(barostat_mask) -> tuple:
+    """Validate a barostat mask and return it as a 3-tuple of ints.
+
+    Parameters
+    ----------
+    barostat_mask : sequence
+        Three values, each 0 or 1, in Cartesian ``(x, y, z)`` order. ``1``
+        couples that axis to the barostat; ``0`` holds its length fixed.
+
+    Returns
+    -------
+    tuple
+        ``(x, y, z)`` as plain Python ints.
+
+    Raises
+    ------
+    ValueError
+        If the mask is not exactly three values, or any value is not 0 or 1.
+        Rejected rather than coerced: a silently truncated or rounded mask
+        would change which axes of the cell are allowed to move, and the
+        trajectory is the only place that error would show up.
+    """
+    try:
+        values = list(barostat_mask)
+    except TypeError:
+        raise ValueError(
+            f"barostat_mask must be three values (x, y, z), got {barostat_mask!r}"
+        ) from None
+
+    if len(values) != 3:
+        raise ValueError(
+            f"barostat_mask must have exactly 3 values (x, y, z), "
+            f"got {len(values)}: {barostat_mask!r}"
+        )
+
+    normalized = []
+    for axis, value in zip("xyz", values):
+        # bool is a subclass of int, so True/False are accepted as 1/0.
+        # Strings and floats are not: they are far more likely to be a typo
+        # than an intent, and 0.5 has no meaning here.
+        if not isinstance(value, (bool, int, np.integer)) or int(value) not in (0, 1):
+            raise ValueError(
+                f"barostat_mask {axis} value must be 0 or 1, "
+                f"got {value!r} in {barostat_mask!r}"
+            )
+        normalized.append(int(value))
+
+    return tuple(normalized)
 
 
 def setup_dynamics(
@@ -49,6 +107,7 @@ def setup_dynamics(
     ensemble: str = "nvt",
     thermostat: str = "langevin",
     barostat: str = "npt",
+    barostat_mask=DEFAULT_BAROSTAT_MASK,
     temperature: float = 300,
     pressure: float = 0.0,
     timestep: float = 1.0,
@@ -71,7 +130,16 @@ def setup_dynamics(
     thermostat : str
         Thermostat for NVT: ``'langevin'``, ``'nose-hoover'``, ``'berendsen'``.
     barostat : str
-        Barostat for NPT: ``'npt'`` (isotropic MTK), ``'berendsen'``.
+        Barostat for NPT: ``'npt'`` (MTK), ``'berendsen'``.
+    barostat_mask : sequence of 3 ints
+        Which Cartesian axes the barostat may change, ``(x, y, z)``. ``1``
+        couples that axis; ``0`` holds its length fixed. Defaults to
+        ``(1, 1, 1)`` -- isotropic coupling, identical to the behaviour
+        before this parameter existed. ``(0, 0, 1)`` relaxes only z, which
+        is what a slab-liquid interface needs: the in-plane lattice stays at
+        its relaxed bulk value while the liquid finds its own density.
+        Meaningful only for ``ensemble='npt'``; a non-default mask with any
+        other ensemble raises rather than being silently ignored.
     temperature : float
         Temperature in Kelvin.
     pressure : float
@@ -103,6 +171,17 @@ def setup_dynamics(
         If Nose-Hoover is requested but not available.
     """
     ensemble = ensemble.lower()
+    barostat_mask = normalize_barostat_mask(barostat_mask)
+
+    # A mask outside NPT is a silent no-op in ASE: neither NVE nor NVT has a
+    # cell-scaling step for it to reach. Refusing is the only way the caller
+    # learns that the axes they asked to hold were never being moved anyway.
+    if ensemble != "npt" and barostat_mask != DEFAULT_BAROSTAT_MASK:
+        raise ValueError(
+            f"barostat_mask={barostat_mask} is only meaningful for "
+            f"ensemble='npt', not '{ensemble}'. The cell does not change in "
+            f"NVE or NVT, so masking its axes would have no effect."
+        )
 
     if set_velocities and ensemble in ["nvt", "npt"] and temperature > 0:
         MaxwellBoltzmannDistribution(atoms, temperature_K=temperature)
@@ -140,6 +219,8 @@ def setup_dynamics(
         pressure_ase = pressure * GPA_TO_EV_PER_ANG3
         externalstress = pressure_ase * np.ones(6)
 
+        isotropic = barostat_mask == DEFAULT_BAROSTAT_MASK
+
         if barostat == "npt":
             if pfactor is None:
                 pfactor = (ttime * 75 * units.GPa) ** 2
@@ -147,13 +228,29 @@ def setup_dynamics(
                 atoms, timestep=timestep_ase,
                 temperature_K=temperature, externalstress=externalstress,
                 ttime=ttime * units.fs, pfactor=pfactor,
+                # None, not (1, 1, 1): ASE's own default, so an unmasked run
+                # takes exactly the call it took before this parameter
+                # existed. NPT.set_mask turns a 3-vector into its outer
+                # product, so (0, 0, 1) frees the zz strain alone -- no
+                # in-plane strain and no xz/yz shear.
+                mask=None if isotropic else barostat_mask,
             )
         elif barostat == "berendsen":
-            return NPTBerendsen(
+            if isotropic:
+                return NPTBerendsen(
+                    atoms, timestep=timestep_ase,
+                    temperature_K=temperature, taut=taut * units.fs,
+                    pressure_au=pressure_ase, taup=taup * units.fs,
+                    compressibility_au=compressibility / units.GPa,
+                )
+            # NPTBerendsen itself takes no mask: the anisotropic version is a
+            # separate subclass that scales each axis independently.
+            return Inhomogeneous_NPTBerendsen(
                 atoms, timestep=timestep_ase,
                 temperature_K=temperature, taut=taut * units.fs,
                 pressure_au=pressure_ase, taup=taup * units.fs,
                 compressibility_au=compressibility / units.GPa,
+                mask=barostat_mask,
             )
         else:
             raise ValueError(f"Unknown barostat: {barostat}. Use 'npt' or 'berendsen'")
@@ -215,6 +312,7 @@ def run_md(
     ensemble: str = "nvt",
     thermostat: str = "langevin",
     barostat: str = "npt",
+    barostat_mask=DEFAULT_BAROSTAT_MASK,
     temperature: float = 300,
     pressure: float = 0.0,
     timestep: float = 1.0,
@@ -288,6 +386,10 @@ def run_md(
 
     (Other parameters as in :func:`setup_dynamics`.)
     """
+    # Validated before the record is opened, not at setup_dynamics time: a
+    # malformed mask must not leave behind a record stuck in state "running".
+    barostat_mask = normalize_barostat_mask(barostat_mask)
+
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -328,6 +430,7 @@ def run_md(
             "ensemble": ensemble, "steps": steps, "temperature": temperature,
             "pressure": pressure, "timestep": timestep,
             "thermostat": thermostat, "barostat": barostat,
+            "barostat_mask": barostat_mask,
             "friction": friction, "ttime": ttime, "taut": taut, "taup": taup,
             "log_interval": log_interval, "traj_interval": traj_interval,
         },
@@ -346,6 +449,7 @@ def run_md(
 
     dyn = setup_dynamics(
         atoms, ensemble=ensemble, thermostat=thermostat, barostat=barostat,
+        barostat_mask=barostat_mask,
         temperature=temperature, pressure=pressure, timestep=timestep,
         friction=friction, ttime=ttime, pfactor=pfactor,
         taut=taut, taup=taup, compressibility=compressibility,

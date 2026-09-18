@@ -62,6 +62,52 @@ Nose-Hoover requires a recent ASE; the platform raises `ImportError` if it is mi
 | `npt` (default) | `ase.md.npt.NPT` (Martyna-Tobias-Klein) | `--ttime` (fs); `pfactor` is auto-computed | Lattice constant optimization, isotropic expansion |
 | `berendsen` | `ase.md.nptberendsen.NPTBerendsen` | `--taut`, `--taup` (fs) | Quick volume relaxation; not for production statistics |
 
+### Restricting which axes may change (`--barostat-mask`)
+
+By default the barostat couples to all three cell axes. `--barostat-mask`
+takes three 0/1 values in Cartesian `(x, y, z)` order: `1` lets that axis
+change, `0` holds its length fixed.
+
+| Mask | Effect |
+|------|--------|
+| `"1,1,1"` (default) | Isotropic. Identical to the behaviour before this flag existed, and takes the same code path. |
+| `"0,0,1"` | Only z may change. The intended case for a slab–liquid interface. |
+| `"1,1,0"` | x and y may change **independently** of each other. This is *not* semi-isotropic coupling, which would tie them together; that is not implemented. |
+
+The backing class changes with the mask:
+
+- `--barostat berendsen` with a non-default mask uses
+  `ase.md.nptberendsen.Inhomogeneous_NPTBerendsen`, which applies a separate
+  scale factor per axis. Note it also multiplies by the periodic boundary
+  flags, so an axis with `pbc=False` never scales regardless of the mask.
+- `--barostat npt` passes the mask to `ase.md.npt.NPT`, which stores its
+  **outer product**. `"0,0,1"` therefore frees the zz strain component alone:
+  no in-plane strain and no xz/yz shear either.
+
+The mask applies to NPT only. A non-default mask with `--ensemble nve` or
+`nvt` is an error, not a silent no-op — neither ensemble scales the cell, so
+accepting it would leave you believing an axis had been constrained.
+
+**Worked case — oxide slab with liquid water, no vacuum gap.** The in-plane
+lattice is fixed by the relaxed bulk oxide and must not be strained; the z
+length must be free so the water reaches its own density at 1 bar
+(`1e-4` GPa) instead of whatever the initial packing produced:
+
+```bash
+md run --structure interface.vasp --ensemble npt \
+       --temperature 300 --pressure 0.0001 --steps 50000 \
+       --barostat berendsen --barostat-mask "0,0,1"
+```
+
+Without this, the alternatives are a per-system packing calibration — which
+does not transfer between facets, terminations, or MLIPs — or an unknown
+density error in every interfacial energy computed from the run.
+
+The resolved mask is echoed in the NPT setup block, written to
+`md_params.txt`, and stored in the run record under
+`parameters.barostat_mask`, so a masked run is distinguishable from an
+isotropic one without opening the trajectory.
+
 ---
 
 ## CLI parameter reference
@@ -76,6 +122,7 @@ Nose-Hoover requires a recent ASE; the platform raises `ImportError` if it is mi
 | `--timestep` | `1.0` | fs | Safe default for solids; lower (0.5) for high T or H-rich systems |
 | `--thermostat` | `langevin` | — | NVT only: `langevin`, `nose-hoover`, `berendsen` |
 | `--barostat` | `npt` | — | NPT only: `npt`, `berendsen` |
+| `--barostat-mask` | `"1,1,1"` | — | NPT only: which axes the barostat may change, `(x,y,z)` as three 0/1 values. `"0,0,1"` relaxes z alone (slab–liquid interface). Rejected for NVE/NVT unless it is the default |
 | `--friction` | `0.01` | 1/fs | Langevin friction coefficient |
 | `--ttime` | `25.0` | fs | Time constant for Nose-Hoover and NPT (MTK) |
 | `--taut` | `100.0` | fs | Berendsen temperature coupling time |
