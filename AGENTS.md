@@ -64,11 +64,11 @@ MLIP is installed — script against its exit code.
   CPU, the others to auto).
 - Plots are **opt-in** (`--plot`); CSV outputs are always written.
 - Output locations differ: `optimize`/`singlepoint`/`freq`/`md` write next
-  to the input structure (`freq` unless `--output-dir` says otherwise —
-  give a frequency run its own folder, since a run record is replaced, not
-  appended to, by the next command that writes into the same directory);
-  `neb`/`autoneb` write into the current working directory. Full file
-  reference: `docs/OUTPUTS.md`.
+  to the input structure (`singlepoint` and `freq` unless `--output-dir`
+  says otherwise — give a frequency or single-point run its own folder,
+  since a run record is replaced, not appended to, by the next command that
+  writes into the same directory); `neb`/`autoneb` write into the current
+  working directory. Full file reference: `docs/OUTPUTS.md`.
 - Python API (for scripts/notebooks): `docs/PYTHON_API.md`.
 - `optimize run --committee committee.yaml` relaxes with several MLIPs at
   once, one per env, and reports their disagreement as an uncertainty;
@@ -77,8 +77,10 @@ MLIP is installed — script against its exit code.
   one displacement sweep and reports each member's own frequencies plus
   the per-mode spread and a mode-overlap diagnostic (mode pairing is by
   index, so a near-degenerate ordering swap between members shows up as a
-  low overlap rather than as disagreement), instead of the consensus force
-  uncertainty the other two commands report. `mliprun` must be installed
+  low overlap rather than as disagreement) **in addition to** the consensus
+  force uncertainty the other two commands report, which it measures at the
+  input geometry and flags against its own `--uncertainty-threshold`.
+  `mliprun` must be installed
   (`pip install -e .`) in **every** member env: each runs as a worker
   subprocess driven by its own interpreter, not the driver's. The bridge is
   POSIX-only (it uses `select` on a pipe), so committees are not supported

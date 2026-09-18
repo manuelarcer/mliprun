@@ -449,6 +449,35 @@ force spread), and it carries its own caveats — mode pairing by index, and
 noise-vs-disagreement at small `--delta` — documented in
 [OUTPUTS.md#committee-frequencies](OUTPUTS.md#committee-frequencies).
 
+A committee run **also** reports the ordinary consensus disagreement, in
+`results["committee_uncertainty"]` — the same block `run_optimization` and
+`run_singlepoint` write, with the same keys. `run_frequencies` measures it
+at the **input geometry** of the sweep (the members are evaluated once,
+explicitly, after `Vibrations.run()` has restored the positions), so a
+fully cached restart still reports it with the same numbers as a fresh run.
+`uncertainty_threshold=` is opt-in with no default, matching the other two:
+without it sigma is reported and no verdict asserted. It is independent of
+`expect_fmax=`, which asks a different question (is this a stationary
+point?) of a different quantity:
+
+```python
+results = run_frequencies(
+    atoms,
+    output_dir="freq/",
+    committee=calc,
+    committee_config=config,
+    uncertainty_threshold=0.05,     # eV/A; no default
+)
+results["committee_uncertainty"]["sigma_max_free_final_eV_per_A"]
+results["committee_uncertainty"]["flagged"]        # None without a threshold
+```
+
+The displacement cache in `<output_dir>/<prefix>` is keyed by displacement,
+not by model, so `run_frequencies` verifies a reused cache belongs to this
+run's calculator — and, for a committee, that it carries per-member forces —
+and raises `mliprun.core.vibrations.FrequencyCacheError` when it does not.
+See [OUTPUTS.md#the-displacement-cache-and-what-it-is-checked-against](OUTPUTS.md#the-displacement-cache-and-what-it-is-checked-against).
+
 ---
 
 ## Molecular dynamics

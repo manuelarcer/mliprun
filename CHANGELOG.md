@@ -70,12 +70,28 @@ All notable changes to this project are documented here. Format follows [Keep a 
   vector normalised to unit Cartesian length first, since ASE's own modes
   are normalised in the mass-weighted basis instead) makes an ordering swap
   visible rather than letting it hide inside the spread, and the run warns
-  when any overlap drops below 0.9.
+  when any overlap drops below 0.9. That warning takes its minimum over
+  every mode, near-zero ones included, and has been exercised against EMT
+  only: expect it to be noisy until it has been tried against real
+  potentials.
+  A committee run **also** reports the ordinary consensus force
+  disagreement — the same `results.committee_uncertainty` block `optimize
+  run --committee` and `singlepoint run --committee` write, with the same
+  keys — measured at the **input geometry** of the displacement sweep, not
+  at a displaced one. `freq run --uncertainty-threshold X` (eV/Å) flags it,
+  opt-in with no default exactly as on the other two commands, and never
+  stops the run. It is independent of `--expect-fmax`, which asks a
+  different question of a different quantity.
   Thermochemistry is deliberately absent from this work — no
   `HarmonicThermo`/`IdealGasThermo` call is made here — but stays reachable
   at no extra cost: `<prefix>_vibrations.json` writes the full Hessian via
   `VibrationsData.write()` and reloads through `VibrationsData.read`, so a
   later free-energy calculation costs no forces.
+  `--output-dir` puts a frequency run's files in their own folder (default:
+  next to `--structure`). Give a frequency run one: a run record is
+  *replaced*, not appended to, by the next command that writes into the same
+  directory. The fmax-expectation lookup still reads the structure's own
+  directory regardless, so the stationary-point warning keeps working.
   Additive to the run record: new stage kind `freq`, schema version
   unchanged. See `docs/OUTPUTS.md#freq-run` and `docs/PYTHON_API.md`.
 
@@ -103,6 +119,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   disagreement statistics `optimize run --committee` reports at a
   relaxation's final geometry are reported here at the one configuration
   given, with no per-step trace and no plots, since nothing moved.
+  `worst_force_atom_free` and `worst_force_atom_free_symbol` are `null` when
+  every atom is fixed: there is then no free atom to be the worst one, and
+  an explicit null says so where an index would not.
+  `--output-dir` puts a single point's files in their own folder (default:
+  next to `--structure`), so running one next to a relaxation does not
+  replace that relaxation's run record.
   Additive to the run record: new stage kind `singlepoint`, schema version
   unchanged. See `docs/OUTPUTS.md#singlepoint-run` and `docs/PYTHON_API.md`.
 

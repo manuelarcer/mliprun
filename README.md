@@ -229,7 +229,7 @@ Run several MLIPs, each in its own environment, against the same structure. The 
 optimize run --structure POSCAR --committee committee.yaml --fmax 0.05
 ```
 
-`committee.yaml` declares two or more members, each with its own env, MLIP tag, and task/head: see [examples/committee.yaml](examples/committee.yaml). `--committee` replaces `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, and `--device`: passing any of those alongside it is an error, since the file already owns model selection and each member's device. Members may sit at different levels of theory (e.g. an RPBE/OC20 head next to a PBE/OMat24 one); mliprun does not refuse this, but the reported spread then becomes a comparison *between* levels of theory rather than an error bar within one, and mliprun warns loudly when it detects the mismatch. `optimize run`, `singlepoint run` (see [Single-Point Evaluation](#single-point-evaluation) below) and `freq run` (see [Vibrational Frequencies](#vibrational-frequencies) below) are the only commands that support committees; `optimize batch`, `md`, and `neb`/`autoneb` do not. `freq run --committee` reports each member's own frequencies rather than the consensus statistics documented here — see [Vibrational Frequencies](#vibrational-frequencies).
+`committee.yaml` declares two or more members, each with its own env, MLIP tag, and task/head: see [examples/committee.yaml](examples/committee.yaml). `--committee` replaces `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, and `--device`: passing any of those alongside it is an error, since the file already owns model selection and each member's device. Members may sit at different levels of theory (e.g. an RPBE/OC20 head next to a PBE/OMat24 one); mliprun does not refuse this, but the reported spread then becomes a comparison *between* levels of theory rather than an error bar within one, and mliprun warns loudly when it detects the mismatch. `optimize run`, `singlepoint run` (see [Single-Point Evaluation](#single-point-evaluation) below) and `freq run` (see [Vibrational Frequencies](#vibrational-frequencies) below) are the only commands that support committees; `optimize batch`, `md`, and `neb`/`autoneb` do not. `freq run --committee` reports each member's own frequencies **in addition to** the consensus statistics documented here: it measures the same `sigma_max_free` disagreement at the input geometry of the displacement sweep, takes the same opt-in `--uncertainty-threshold`, and writes the same `results.committee_uncertainty` block into the run record — see [Vibrational Frequencies](#vibrational-frequencies).
 
 **Outputs (in addition to the usual `optimize run` files):** `opt_committee.csv` (per-step disagreement trace), `opt_committee_peratom.csv` (per-atom disagreement at the final geometry), `committee_<member>.log` (one per member). Full column reference: [OUTPUTS.md](docs/OUTPUTS.md#committee-outputs).
 
@@ -276,7 +276,8 @@ imaginary-mode count, and the zero-point energy (ZPE).
 
 **Key options:**
 - `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, `--device`: same model-selection options as `optimize`.
-- `--committee committee.yaml`: one Hessian per member from a **single** displacement sweep, with per-member frequencies, per-member ZPE, and the per-mode spread across members — see [Committee evaluation](#committee-evaluation) above and [Committee frequencies](docs/OUTPUTS.md#committee-frequencies) for the two caveats that make the spread a qualified number rather than a clean one.
+- `--committee committee.yaml`: one Hessian per member from a **single** displacement sweep, with per-member frequencies, per-member ZPE, and the per-mode spread across members — see [Committee evaluation](#committee-evaluation) above and [Committee frequencies](docs/OUTPUTS.md#committee-frequencies) for the two caveats that make the spread a qualified number rather than a clean one. A committee run **also** reports the ordinary consensus force disagreement (`results.committee_uncertainty`), measured at the input geometry of the sweep.
+- `--uncertainty-threshold`: flag the input geometry when the committee's force disagreement over the free atoms exceeds this (eV/Å). Opt-in with **no default**, as on `optimize` and `singlepoint`: without it sigma is reported and no verdict asserted. It never stops the run, and it is independent of `--expect-fmax` below, which asks a different question of a different quantity. Only meaningful with `--committee`.
 - `--indices`: atoms to displace, e.g. `0,1,5` or `12-30` (inclusive), or a mix. Default: every atom **not** held by a `FixAtoms` constraint — the structure's own answer. Any other constraint type warns and is displaced in full, since ASE's `indices` selects whole atoms and cannot express a partial Hessian.
 - `--delta`: displacement in Å (default `0.01`, ASE's own default).
 - `--nfree`: `2` (three-point stencil, default) or `4` (five-point stencil, doubling the cost).
@@ -514,7 +515,7 @@ The CLI commands are thin wrappers over a small set of public functions and one 
 
 ## Output Files
 
-For a complete reference of every file each command writes — filename, format, and which command produces it — see [OUTPUTS.md](docs/OUTPUTS.md). It also documents the (different) output-directory conventions: `optimize`, `singlepoint`, `freq` and `md` write next to the input structure (`freq` unless `--output-dir` says otherwise); `neb` and `autoneb` write into the current working directory.
+For a complete reference of every file each command writes — filename, format, and which command produces it — see [OUTPUTS.md](docs/OUTPUTS.md). It also documents the (different) output-directory conventions: `optimize`, `singlepoint`, `freq` and `md` write next to the input structure (`singlepoint` and `freq` unless `--output-dir` says otherwise); `neb` and `autoneb` write into the current working directory.
 
 ---
 
@@ -535,7 +536,7 @@ For a complete reference of every file each command writes — filename, format,
   freq = "mliprun.cli.commands.freq:app"
   ```
 - Lazy imports for fast CLI startup (no heavy dependencies loaded until needed)
-- Output locations: `optimize`/`singlepoint`/`freq`/`md` write next to the input structure (`freq` unless `--output-dir` overrides it); `neb`/`autoneb` write into the current working directory (see [OUTPUTS.md](docs/OUTPUTS.md))
+- Output locations: `optimize`/`singlepoint`/`freq`/`md` write next to the input structure (`singlepoint` and `freq` unless `--output-dir` overrides it); `neb`/`autoneb` write into the current working directory (see [OUTPUTS.md](docs/OUTPUTS.md))
 - Plots are opt-in via `--plot`; CSV data is always written
 - Shared utilities in `core/utils.py` (fmax calculation, unit conversions)
 - Parameter I/O in `core/params_io.py` (reduces duplication across commands)

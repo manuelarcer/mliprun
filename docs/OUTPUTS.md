@@ -817,6 +817,37 @@ one directory — both default to the same directory and the same prefix — is
 therefore refused by the same check, with the same two remedies, rather
 than crashing partway through with the run record left saying `running`.
 
+### `freq run --committee`
+
+A committee run reports **two different things**, not one:
+
+1. **Per-member frequencies** — one Hessian per member from a single
+   displacement sweep, in `<prefix>_committee_frequencies.csv` and
+   `results.committee_frequencies`. This is `freq`'s own mechanism; see
+   [Committee frequencies](#committee-frequencies) above.
+2. **The consensus force disagreement** — the same `committee_uncertainty`
+   block `optimize run --committee` and `singlepoint run --committee` write,
+   with the same keys and the same meaning (see [Committee
+   outputs](#committee-outputs)). `freq` measures it **at the input
+   geometry of the sweep**, not at a displaced one: `Vibrations.run()`
+   restores the positions after every displacement, so the members are
+   evaluated once, explicitly, at the geometry the frequencies describe.
+   That one evaluation is also why a fully cached restart still reports this
+   block, with the same numbers as a fresh run.
+
+`--uncertainty-threshold X` (eV/Å) is opt-in here exactly as it is on the
+other two commands: there is **no default**, and without it sigma is
+reported and no verdict asserted (`threshold_source: "none"`,
+`flagged: null`). With it, `sigma_max_free` above `X` sets `flagged: true`
+and prints a warning saying the configuration deserves a DFT check. It
+never stops the run, and it is independent of `--expect-fmax`, which
+answers a different question (is this geometry a stationary point?) against
+a different quantity.
+
+The terminal echo after a committee run names the geometry it describes —
+"Committee disagreement at the input geometry" — because this is the same
+shared reporter `optimize` uses at a relaxation's final geometry.
+
 ---
 
 ## Parameter file conventions
@@ -840,7 +871,7 @@ layer — so a script that calls `run_optimization` directly gets one too.
 |-----|---------|
 | `schema_version` | Currently `5`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. The `singlepoint` and `freq` stage kinds are additive and do not bump the schema: `provenance` is untouched, and no existing field changes meaning. |
 | `command` | `optimize`, `md`, `neb`, `autoneb`, `singlepoint` or `freq`. |
-| `status` | Status of the **latest** stage: `running`, `converged`, `not_converged`, `completed` (a `singlepoint` stage: there is nothing to converge) or `failed`. A record left saying `running` means the job died without reporting back. |
+| `status` | Status of the **latest** stage: `running`, `converged`, `not_converged`, `completed` (a `singlepoint` or `freq` stage: there is nothing to converge) or `failed`. A record left saying `running` means the job died without reporting back. |
 | `run.mode` | `one-off` or `batch`. |
 | `run.batch` | `null` for one-off runs; otherwise `batch_id`, `driver`, `argv`, `root`, `config_file`. Every run of one batch shares a `batch_id`. |
 | `inputs` | For `optimize` and `md`: structure filename and absolute path, atom count, formula. For `neb` and `autoneb`: `n_images` and `n_atoms` (there is no single input structure). |
@@ -972,10 +1003,13 @@ means.
 run`](#freq-run) above), `fmax_at_input_free_eV_per_A`,
 `fmax_at_input_all_eV_per_A`, `fmax_expectation`,
 `fmax_expectation_source`, `fmax_warning`, `n_displaced_atoms`,
-`n_force_calls`, `unhandled_constraints`, and — with `--committee` —
-`committee_frequencies` (see [Committee frequencies](#committee-frequencies)
-above). Status is always `completed` on success — there is nothing to
-converge — or `failed`.
+`n_force_calls`, `unhandled_constraints`, and — with `--committee` — both
+`committee_frequencies` (see [Committee
+frequencies](#committee-frequencies) above) and `committee_uncertainty`
+(the same consensus-disagreement block `optimize` and `singlepoint` write,
+here measured at the **input geometry** of the displacement sweep; see
+[`freq run --committee`](#freq-run---committee) below). Status is always
+`completed` on success — there is nothing to converge — or `failed`.
 
 ### Failure behavior
 
