@@ -9,11 +9,16 @@ by exact equality in tests/test_vibrations_hessian.py.
 
 Design: docs/superpowers/specs/2026-09-17-singlepoint-and-frequencies-design.md
 """
+import csv
 import json
 import logging
 from pathlib import Path
 
 import numpy as np
+from ase.vibrations import Vibrations
+
+from mliprun.core.run_record import RunRecord, collect_provenance
+from mliprun.core.utils import calc_fmax
 
 logger = logging.getLogger(__name__)
 
@@ -283,12 +288,12 @@ def resolve_fmax_expectation(explicit, structure_dir):
     """
     from mliprun.core.run_record import RECORD_FILENAME
 
-    if explicit is not None:
-        return float(explicit), "explicit"
-    if structure_dir is None:
-        return None, "none"
-
     try:
+        if explicit is not None:
+            return float(explicit), "explicit"
+        if structure_dir is None:
+            return None, "none"
+
         path = Path(structure_dir) / RECORD_FILENAME
         payload = json.loads(path.read_text(encoding="utf-8"))
 
@@ -315,3 +320,218 @@ def resolve_fmax_expectation(explicit, structure_dir):
     except Exception as exc:  # noqa: BLE001 -- provenance is never fatal
         logger.debug("no fmax expectation from a run record: %s", exc)
     return None, "none"
+
+
+class CountingVibrations(Vibrations):
+    """``Vibrations`` that counts the force calls it actually makes.
+
+    ``run()`` skips any displacement already in the cache, so a restarted
+    sweep makes fewer calls than its geometry implies. Counting from
+    ``len(indices)`` would report work that never happened.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.n_force_calls = 0
+
+    def calculate(self, atoms, disp):
+        results = super().calculate(atoms, disp)
+        self.n_force_calls += 1
+        return results
+
+
+def _write_frequency_csv(path, frequencies, energies_eV, imaginary):
+    """Magnitudes plus a boolean, never a signed number.
+
+    Writing an imaginary frequency as a negative one is the widespread
+    convention and a silent trap for anything that sums or sorts the column.
+    """
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["mode_index", "frequency_cm-1", "energy_meV",
+                         "imaginary"])
+        for index, (freq, energy, imag) in enumerate(
+                zip(frequencies, energies_eV, imaginary)):
+            writer.writerow([index, float(freq), float(energy) * 1000.0,
+                             bool(imag)])
+
+
+def run_frequencies(
+    atoms,
+    output_dir=".",
+    prefix: str = "freq",
+    model_name: str = "mlip",
+    indices=None,
+    delta: float = 0.01,
+    nfree: int = 2,
+    direction: str = "central",
+    method: str = "standard",
+    write_modes: str = "imaginary",
+    expect_fmax=None,
+    structure_dir=None,
+    run_context=None,
+    device_requested: str = "auto",
+    device_resolved: str = "auto",
+    uma_task=None,
+    mace_head=None,
+    sevennet_task=None,
+    committee=None,
+    committee_config=None,
+    uncertainty_threshold=None,
+) -> dict:
+    """Vibrational frequencies by finite differences.
+
+    Parameters
+    ----------
+    atoms : ase.Atoms
+        With a calculator attached.
+    indices : sequence of int, optional
+        Atoms to displace. None derives them from the structure's
+        ``FixAtoms`` constraints; see :func:`select_indices`.
+    delta : float
+        Displacement in Angstrom.
+    nfree : int
+        2 or 4.
+    direction, method : str
+        Passed to :func:`assemble_hessian` and to ASE's own reader.
+    write_modes : str
+        ``'none'``, ``'imaginary'`` or ``'all'``.
+    expect_fmax : float, optional
+        Warn when fmax at the input geometry exceeds this. Never refuses.
+    structure_dir : str or Path, optional
+        Where to look for a run record supplying the expectation when
+        ``expect_fmax`` is None. Defaults to ``output_dir``.
+
+    Returns
+    -------
+    dict
+        The results block, as written to the run record.
+    """
+    if write_modes not in ("none", "imaginary", "all"):
+        raise ValueError(
+            f"write_modes must be 'none', 'imaginary' or 'all', "
+            f"got {write_modes!r}")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    frequencies_csv = output_path / f"{prefix}_frequencies.csv"
+    summary_txt = output_path / f"{prefix}_summary.txt"
+    vibrations_json = output_path / f"{prefix}_vibrations.json"
+
+    chosen, unhandled = select_indices(atoms, explicit=indices)
+    expectation, expectation_source = resolve_fmax_expectation(
+        expect_fmax,
+        structure_dir if structure_dir is not None else output_path)
+
+    if committee is not None:
+        committee.latest = None
+        committee.latest_uncertainty_summary = None
+        device_requested = "committee"
+        device_resolved = "committee"
+
+    stage_parameters = {
+        "prefix": prefix,
+        "delta": delta,
+        "nfree": nfree,
+        "direction": direction,
+        "method": method,
+        "write_modes": write_modes,
+        "indices": list(chosen),
+        "expect_fmax": expectation,
+        **({} if committee is None else {
+            "uncertainty_threshold": uncertainty_threshold,
+            "n_members": len(committee.members),
+        }),
+    }
+    record = RunRecord.begin(
+        output_path,
+        command="freq",
+        stage_kind="freq",
+        parameters=stage_parameters,
+        inputs={
+            "n_atoms": len(atoms),
+            "formula": atoms.get_chemical_formula(),
+        },
+        provenance=collect_provenance(
+            mlip_model=model_name,
+            device_requested=device_requested,
+            device_resolved=device_resolved,
+            uma_task=uma_task,
+            mace_head=mace_head,
+            sevennet_task=sevennet_task,
+            committee=(None if committee_config is None
+                       else committee_config.as_provenance(
+                           measured_versions=getattr(
+                               committee, "member_versions", None))),
+        ),
+        run_context=run_context,
+        stage_parameters=stage_parameters,
+    )
+
+    # `name` sets both the cache directory and the mode filenames: ASE's
+    # write_mode composes f"{vib.name}.{n}.traj". One name, two artefacts.
+    vibration_name = str(output_path / prefix)
+    vib = _vibrations_class(committee)(
+        atoms, indices=list(chosen), name=vibration_name,
+        delta=delta, nfree=nfree)
+
+    try:
+        vib.run()
+        vib.read(method=method, direction=direction)
+    except Exception as exc:
+        record.complete(status="failed", results={"error": str(exc)})
+        raise
+
+    # The undisplaced geometry is already in the cache -- run() evaluates it
+    # first -- so this costs nothing.
+    eq_forces = np.asarray(vib._eq_disp().forces(), dtype=float)
+    fmax_at_input = calc_fmax(eq_forces)
+    fmax_warning = (None if expectation is None
+                    else bool(fmax_at_input > expectation))
+
+    data = vib.get_vibrations(method=method, direction=direction)
+    energies = np.asarray(data.get_energies())
+    frequencies = np.asarray(data.get_frequencies())
+    imaginary = np.abs(frequencies.imag) > 0
+    magnitudes = np.where(imaginary, np.abs(frequencies.imag),
+                          frequencies.real)
+
+    with vibrations_json.open("w") as handle:
+        data.write(handle)
+    # A handle in write mode, not a path: summary()'s log argument opens a
+    # path with mode 'a', so a restart would write a second table into the
+    # same file and the result would read as twice as many modes.
+    with summary_txt.open("w") as handle:
+        vib.summary(method=method, direction=direction, log=handle)
+    _write_frequency_csv(frequencies_csv, magnitudes, energies.real,
+                         imaginary)
+
+    if write_modes == "all":
+        for index in range(len(frequencies)):
+            vib.write_mode(index)
+    elif write_modes == "imaginary":
+        for index in np.flatnonzero(imaginary):
+            vib.write_mode(int(index))
+
+    results = {
+        "n_modes": int(len(frequencies)),
+        "n_imaginary": int(imaginary.sum()),
+        "frequencies_cm-1": [float(v) for v in magnitudes],
+        "imaginary_mask": [bool(v) for v in imaginary],
+        "zpe_eV": float(data.get_zero_point_energy()),
+        "fmax_at_input_free_eV_per_A": float(fmax_at_input),
+        "fmax_expectation": expectation,
+        "fmax_expectation_source": expectation_source,
+        "fmax_warning": fmax_warning,
+        "n_displaced_atoms": int(len(chosen)),
+        "n_force_calls": int(vib.n_force_calls),
+        "unhandled_constraints": unhandled,
+    }
+
+    record.complete(status="completed", results=results)
+    return results
+
+
+def _vibrations_class(committee):
+    """``CountingVibrations``, or the committee-aware subclass from Task 12."""
+    return CountingVibrations
