@@ -214,6 +214,44 @@ def test_a_single_model_cache_is_refused_by_a_committee_run(structure,
     assert "per-member forces" in record["stages"][-1]["results"]["error"]
 
 
+def test_a_sidecar_that_lies_about_per_member_forces_is_still_caught(
+        structure, tmp_path):
+    """The post-sweep committee guard is the backstop to the pre-sweep
+    identity check, which now catches this crossover first. Reaching the
+    backstop means making the recorded identity agree with the committee run
+    while the cache entries do not -- a hand-edited sidecar here, a future
+    code path that writes one some other way in reality.
+
+    Without this, the backstop would be a `raise` that has never executed.
+    """
+    from ase.calculators.emt import EMT
+    from ase.io import read
+
+    from mliprun.cli.commands.freq import app
+    from mliprun.core.vibrations import run_frequencies
+
+    single = read(structure)
+    single.calc = EMT()
+    run_frequencies(single, output_dir=structure.parent, model_name="emt")
+
+    # Claim the cache is what a committee run would have written.
+    sidecar = structure.parent / "freq_cache.json"
+    recorded = json.loads(sidecar.read_text())
+    recorded["model"] = "committee"
+    recorded["per_member_forces"] = True
+    sidecar.write_text(json.dumps(recorded), encoding="utf-8")
+
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path))])
+
+    assert result.exit_code == 1
+    assert "single-model run" in result.stdout
+    assert "per-member forces" in result.stdout
+    record = json.loads((structure.parent / "mliprun_run.json").read_text())
+    assert record["stages"][-1]["status"] == "failed"
+
+
 def test_member_frequencies_refuses_a_single_model_cache_directly(tmp_path):
     """`member_frequencies` is a public entry point, so the backstop inside
     `_member_forces` is reachable without going through `run_frequencies`.
