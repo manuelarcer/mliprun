@@ -489,6 +489,11 @@ def _write_frequency_csv(path, frequencies, energies_eV, imaginary):
 
     Writing an imaginary frequency as a negative one is the widespread
     convention and a silent trap for anything that sums or sorts the column.
+
+    Both numeric columns are magnitudes, and for the same reason: an
+    imaginary mode's energy is purely imaginary, so taking ``.real`` of it
+    wrote 0.0 meV next to a nonzero frequency on the same row. Caller passes
+    ``np.abs(energies)``, matching ``np.abs(frequencies)``.
     """
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
@@ -709,6 +714,12 @@ def run_frequencies(
     # modes_are_imaginary and the regression it caught in
     # test_frequencies_match_ases_own_for_the_same_settings).
     magnitudes = np.abs(frequencies)
+    # The same modulus, for the same reason, applied to the mode energies:
+    # an imaginary mode's energy is purely imaginary, so `.real` of it is
+    # exactly 0.0 and the CSV row reported a nonzero frequency beside a zero
+    # energy (654.41 cm-1 written as 0.0 meV, where the honest value is 81.1
+    # meV).
+    energy_magnitudes = np.abs(energies)
 
     with vibrations_json.open("w") as handle:
         data.write(handle)
@@ -717,7 +728,7 @@ def run_frequencies(
     # same file and the result would read as twice as many modes.
     with summary_txt.open("w") as handle:
         vib.summary(method=method, direction=direction, log=handle)
-    _write_frequency_csv(frequencies_csv, magnitudes, energies.real,
+    _write_frequency_csv(frequencies_csv, magnitudes, energy_magnitudes,
                          imaginary)
 
     results_committee = None

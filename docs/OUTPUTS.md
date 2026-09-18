@@ -666,14 +666,17 @@ keeps working.
 |--------|---------|
 | `mode_index` | 0-based, in ASE's ascending-eigenvalue order |
 | `frequency_cm-1` | **magnitude**, always positive |
-| `energy_meV` | The same mode, in meV |
+| `energy_meV` | The same mode's energy, in meV — a **magnitude** like `frequency_cm-1`, positive for an imaginary mode too |
 | `imaginary` | bool |
 
 **The frequency column is a magnitude plus a boolean, never a signed
 number.** Writing an imaginary frequency as a negative one is the widespread
 convention elsewhere, and it is a silent trap here: anything that sums or
 sorts this column would treat an imaginary mode as an unusually soft real
-one rather than flagging it.
+one rather than flagging it. `energy_meV` follows the same rule: it is the
+same mode's energy magnitude, so the two numeric columns on a row always
+describe the same mode in two units (`energy_meV = frequency_cm-1 ×
+ase.units.invcm × 1000`), imaginary rows included.
 
 A mode counts as imaginary when `abs(energy.imag) > 1e-8` eV — the same
 threshold ASE's own `im_tol` uses in

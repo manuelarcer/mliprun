@@ -84,6 +84,34 @@ def test_an_imaginary_frequency_is_written_as_a_positive_magnitude(tmp_path):
         assert float(row["frequency_cm-1"]) > 0.0
 
 
+def test_the_energy_column_is_a_magnitude_for_an_imaginary_mode(tmp_path):
+    """An imaginary mode's energy is purely imaginary, so ``.real`` of it is
+    exactly 0.0 -- and the row then reported a nonzero frequency beside a
+    zero energy for the same mode.
+
+    The consistency check is the point: every row's ``energy_meV`` must be
+    its ``frequency_cm-1`` in energy units (``ase.units.invcm`` eV per
+    cm^-1), imaginary rows included.
+    """
+    from ase import units
+
+    atoms = molecule("N2")
+    atoms.positions[1][2] += 1.6
+    atoms.calc = EMT()
+    run_frequencies(atoms, output_dir=tmp_path)
+    rows = list(csv.DictReader((tmp_path / "freq_frequencies.csv").open()))
+    imaginary = [r for r in rows if r["imaginary"] == "True"]
+    assert imaginary                       # the case is not vacuous
+    for row in imaginary:
+        assert float(row["energy_meV"]) > 0.0
+        assert float(row["energy_meV"]) == pytest.approx(
+            float(row["frequency_cm-1"]) * units.invcm * 1000.0, rel=1e-9)
+    for row in rows:
+        assert float(row["energy_meV"]) == pytest.approx(
+            float(row["frequency_cm-1"]) * units.invcm * 1000.0,
+            rel=1e-9, abs=1e-12)
+
+
 def test_an_imaginary_mode_contributes_nothing_to_the_zpe(tmp_path):
     atoms = molecule("N2")
     atoms.positions[1][2] += 1.6
