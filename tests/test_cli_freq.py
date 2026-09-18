@@ -104,6 +104,26 @@ def test_the_echo_reports_fmax_at_the_input_geometry(structure, monkeypatch):
     _use_emt(monkeypatch)
     result = runner.invoke(app, ["run", "--structure", str(structure)])
     assert "fmax at the input geometry" in result.stdout
+    # Both populations, each named -- see C1.
+    assert "over the free components" in result.stdout
+    assert "over all" in result.stdout
+
+
+def test_the_stationary_point_warning_names_which_fmax_it_compared(
+        structure, monkeypatch):
+    """The line above the warning carries two numbers, so "That is above
+    the ..." had no unambiguous antecedent. The warning must say which of
+    the two it measured.
+
+    `--expect-fmax 1e-9` is below anything N2 at ASE's tabulated geometry
+    can reach, so the warning is guaranteed to fire.
+    """
+    _use_emt(monkeypatch)
+    result = runner.invoke(app, ["run", "--structure", str(structure),
+                                 "--expect-fmax", "1e-9"])
+    assert result.exit_code == 0, result.stdout
+    assert "The free-component value is above" in result.stdout
+    assert "That is above" not in result.stdout
 
 
 def test_committee_with_an_explicit_mlip_is_rejected(structure, tmp_path):

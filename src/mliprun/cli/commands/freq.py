@@ -254,11 +254,15 @@ def run(
         typer.echo("   (no relaxation provenance next to this structure, so "
                    "nothing to compare it against)")
     elif results["fmax_warning"]:
+        # Names which of the two numbers on the line above is being
+        # compared. "That is above ..." had no unambiguous antecedent once
+        # that line started carrying both the free and the all-atom value.
         typer.echo(
-            f"\n⚠️  That is above the {results['fmax_expectation']:.6f} eV/Å "
-            f"expected from {results['fmax_expectation_source']}. A geometry "
-            f"that is not a stationary point produces spurious imaginary "
-            f"modes; the run continued.")
+            f"\n⚠️  The free-component value is above the "
+            f"{results['fmax_expectation']:.6f} eV/Å expected from "
+            f"{results['fmax_expectation_source']}. A geometry that is not a "
+            f"stationary point produces spurious imaginary modes; the run "
+            f"continued.")
     if results["n_imaginary"]:
         typer.echo(f"\n⚠️  {results['n_imaginary']} imaginary mode(s). ZPE "
                    f"above counts the real modes only.")
