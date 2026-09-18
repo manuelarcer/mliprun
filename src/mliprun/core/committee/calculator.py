@@ -249,7 +249,7 @@ class CommitteeCalculator(Calculator):
         self.latest = None
         #: The ``uncertainty_summary(...)`` dict for the last relaxation
         #: driven through this committee, set by ``run_optimization`` once it
-        #: finishes. The CLI's ``_report_committee_uncertainty`` reads this
+        #: finishes. The CLI's ``report_committee_uncertainty`` reads this
         #: back instead of recomputing it -- on every successful run, not
         #: only on a flagged one -- so the printed number can never diverge
         #: from what the run record stored.
