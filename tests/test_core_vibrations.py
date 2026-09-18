@@ -153,6 +153,187 @@ def test_a_restart_makes_only_the_remaining_calls(n2, tmp_path):
         results_one["frequencies_cm-1"], abs=1e-12)
 
 
+# -- the cache records what it was swept under, and is checked first ----
+
+def _sidecar(tmp_path, prefix="freq"):
+    return tmp_path / f"{prefix}_cache.json"
+
+
+@pytest.fixture
+def n2_as_built():
+    """N2 at ASE's tabulated geometry, NOT relaxed under EMT.
+
+    The `n2` fixture above relaxes to fmax 1e-6 first, which moves the
+    stretch frequency. The delta measurements quoted in this section were
+    taken on the unrelaxed molecule, so the tests that pin those numbers use
+    this geometry and not that one.
+    """
+    atoms = molecule("N2")
+    atoms.calc = EMT()
+    return atoms
+
+
+def test_the_cache_identity_is_recorded_beside_the_cache(n2, tmp_path):
+    """Neither --delta nor --nfree leaves any trace in the cached forces, so
+    the only way a later run can know them is if this one writes them
+    down."""
+    run_frequencies(n2, output_dir=tmp_path, delta=0.02, nfree=4,
+                    model_name="emt")
+    recorded = json.loads(_sidecar(tmp_path).read_text())
+    assert recorded == {
+        "delta": 0.02,
+        "nfree": 4,
+        "model": "emt",
+        "per_member_forces": False,
+    }
+
+
+def test_a_second_run_at_a_different_delta_is_refused(n2_as_built, tmp_path):
+    """The measurement this guard exists for. ASE names its cache entries by
+    atom, axis and sign only, so a sweep at a new delta reused the old
+    forces and divided them by the new one:
+
+        delta 0.01, fresh dir : 13 calls, top mode 928.14 cm-1
+        delta 0.05, SAME dir  :  0 calls, top mode 415.08 cm-1
+        delta 0.05, clean dir : 13 calls, top mode 930.86 cm-1
+
+    Wrong by a factor of 2.24, `status: completed`, no warning. And
+    docs/OUTPUTS.md tells the reader to run at two deltas to separate member
+    noise from model disagreement, which is exactly this.
+    """
+    from mliprun.core.vibrations import FrequencyCacheError
+
+    first = run_frequencies(n2_as_built, output_dir=tmp_path, delta=0.01,
+                            model_name="emt")
+    assert first["n_force_calls"] == 13
+    assert max(first["frequencies_cm-1"]) == pytest.approx(928.14, abs=0.05)
+
+    with pytest.raises(FrequencyCacheError) as caught:
+        run_frequencies(n2_as_built, output_dir=tmp_path, delta=0.05,
+                        model_name="emt")
+
+    message = str(caught.value)
+    assert "--delta" in message           # names the field that differs
+    assert "0.01" in message and "0.05" in message      # and both values
+    assert str(tmp_path / "freq") in message
+    assert "--prefix" in message
+
+
+def test_the_two_honest_deltas_agree_where_the_reused_cache_did_not(
+        n2_as_built, tmp_path):
+    """Quantifies what the refusal protects: the size of the error, against
+    the size of the real delta-to-delta difference it must not be confused
+    with.
+
+    Reusing delta-0.01 forces under delta 0.05 divides the Hessian by 5, so
+    every frequency comes out sqrt(5) = 2.236 times too low — 928.14 cm^-1
+    became 415.08. Two *honest* sweeps at those deltas differ by well under
+    1%, which is the whole point of the two-delta comparison
+    docs/OUTPUTS.md recommends: the noise-vs-disagreement signal being
+    looked for is small, and a 2.24x artefact would swamp it.
+    """
+    at_001 = run_frequencies(n2_as_built, output_dir=tmp_path / "a",
+                             delta=0.01, model_name="emt")
+    at_005 = run_frequencies(n2_as_built, output_dir=tmp_path / "b",
+                             delta=0.05, model_name="emt")
+    top_001 = max(at_001["frequencies_cm-1"])
+    top_005 = max(at_005["frequencies_cm-1"])
+
+    assert top_001 == pytest.approx(928.14, abs=0.05)
+    assert top_005 == pytest.approx(930.86, abs=0.05)
+    # The honest difference between the two deltas: under 1%.
+    assert abs(top_005 - top_001) / top_001 < 0.01
+    # The artefact the guard refuses: over 100%, two orders larger.
+    assert abs(top_001 / np.sqrt(5.0) - top_001) / top_001 > 0.5
+
+
+def test_a_second_run_at_a_different_nfree_is_refused(n2, tmp_path):
+    """Conservative rather than corrective, and deliberately so: measured,
+    an nfree 2 -> 4 restart at one delta is bit-identical to a clean nfree=4
+    sweep, because ASE's ndisp=1 entries sit at the same +-delta under both
+    and carry distinct cache names from the ndisp=2 ones. The cache's
+    identity is compared whole rather than field-by-field for
+    subset-compatibility: that compatibility rests on an ASE internal
+    (`step = ndisp * sign * delta`) that a future release could change
+    silently, and the cost of being wrong is a wrong number while the cost
+    of being strict is one re-sweep."""
+    from mliprun.core.vibrations import FrequencyCacheError
+
+    run_frequencies(n2, output_dir=tmp_path, nfree=2, model_name="emt")
+    with pytest.raises(FrequencyCacheError) as caught:
+        run_frequencies(n2, output_dir=tmp_path, nfree=4, model_name="emt")
+    message = str(caught.value)
+    assert "--nfree" in message
+    assert "cache 2" in message and "this run 4" in message
+
+
+def test_a_cache_with_no_identity_sidecar_is_refused(n2, tmp_path):
+    """A cache from before this guard existed, or one whose sidecar was
+    removed. Refused rather than accepted on trust: delta and nfree leave no
+    trace in the cached forces, so there is no measurement that could
+    recover them, and the equilibrium-forces check below is structurally
+    blind to both."""
+    from mliprun.core.vibrations import FrequencyCacheError
+
+    run_frequencies(n2, output_dir=tmp_path, delta=0.01, model_name="emt")
+    _sidecar(tmp_path).unlink()
+
+    with pytest.raises(FrequencyCacheError) as caught:
+        run_frequencies(n2, output_dir=tmp_path, delta=0.01,
+                        model_name="emt")
+    assert "freq_cache.json" in str(caught.value)
+    assert "--prefix" in str(caught.value)
+
+
+def test_an_unreadable_identity_sidecar_is_refused(n2, tmp_path):
+    from mliprun.core.vibrations import FrequencyCacheError
+
+    run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+    _sidecar(tmp_path).write_text("{not json", encoding="utf-8")
+    with pytest.raises(FrequencyCacheError):
+        run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+
+
+def test_a_refused_run_leaves_the_existing_cache_exactly_as_it_was(
+        n2, tmp_path):
+    """The reason the identity is checked BEFORE the sweep. A refusal issued
+    afterwards has already written its own displacements into the shared
+    directory, leaving a mixture of two identities that a later run of
+    either one would partly match and accept."""
+    from mliprun.core.vibrations import FrequencyCacheError
+
+    first = run_frequencies(n2, output_dir=tmp_path, delta=0.01,
+                            model_name="emt")
+    before = sorted(p.name for p in (tmp_path / "freq").glob("cache.*"))
+    assert len(before) == 13
+
+    with pytest.raises(FrequencyCacheError):
+        run_frequencies(n2, output_dir=tmp_path, delta=0.05,
+                        model_name="emt")
+
+    after = sorted(p.name for p in (tmp_path / "freq").glob("cache.*"))
+    assert after == before                # not one entry added or replaced
+
+    # And the cache is still usable by a run that legitimately matches it.
+    again = run_frequencies(n2, output_dir=tmp_path, delta=0.01,
+                            model_name="emt")
+    assert again["n_force_calls"] == 0
+    assert again["frequencies_cm-1"] == pytest.approx(
+        first["frequencies_cm-1"], abs=1e-12)
+
+
+def test_a_restart_with_the_same_settings_is_still_accepted(n2, tmp_path):
+    """The guard must not cost a legitimate restart anything."""
+    first = run_frequencies(n2, output_dir=tmp_path, delta=0.02, nfree=2,
+                            model_name="emt")
+    second = run_frequencies(n2, output_dir=tmp_path, delta=0.02, nfree=2,
+                             model_name="emt")
+    assert first["n_force_calls"] == 13
+    assert second["n_force_calls"] == 0
+    assert second["frequencies_cm-1"] == pytest.approx(
+        first["frequencies_cm-1"], abs=1e-12)
+
+
 # -- the displacement cache is checked against this run's calculator ----
 
 class _OffsetEMT(EMT):

@@ -343,6 +343,14 @@ number instead of the qualified one it is:
   scale. Running at two values of `--delta` distinguishes noise from
   disagreement. Do not present `frequency_member_std_cm-1` as pure model
   uncertainty without checking that.
+  **Give each `--delta` its own `--prefix` or its own `--output-dir`.** The
+  displacement cache is named after the prefix and carries no record of the
+  displacement size in its entry names, so a second delta in the same
+  directory would have reused the first one's forces — reported at 415.08
+  cm⁻¹ where the truth was 930.86, a factor of 2.24, with no warning. That
+  is now refused rather than silently reused (see [The displacement
+  cache](#the-displacement-cache-and-what-it-is-checked-against)), but the
+  refusal costs you the run: set the prefix up front.
 
 `<prefix>_committee_frequencies.csv`:
 
@@ -646,7 +654,8 @@ one displacement sweep additionally yields one Hessian per member: see
 | `<prefix>_frequencies.csv` | CSV | One row per mode: magnitude, energy, imaginary flag (see below) |
 | `<prefix>_summary.txt` | text | ASE's own `vib.summary()` table — the format users already recognise from other ASE-driven work |
 | `<prefix>_vibrations.json` | JSON | `VibrationsData.write()` output: the full Hessian and the atoms. Reloads through `VibrationsData.read` (see [PYTHON_API.md](PYTHON_API.md#vibrational-frequencies)) |
-| `<prefix>/` | folder | ASE's per-displacement JSON cache. An interrupted sweep resumes at the displacement it stopped on. The cache is keyed by displacement, not by model, so a reusing run first verifies it belongs to that run's calculator — see [The displacement cache](#the-displacement-cache-and-what-it-is-checked-against) |
+| `<prefix>/` | folder | ASE's per-displacement JSON cache. An interrupted sweep resumes at the displacement it stopped on. Entries are named by atom, axis and sign only — nothing about the displacement size or the model — so a reusing run verifies the cache is its own first; see [The displacement cache](#the-displacement-cache-and-what-it-is-checked-against) |
+| `<prefix>_cache.json` | JSON | What the cache beside it was swept under: `delta`, `nfree`, `model`, `per_member_forces`. Checked before a run reuses anything; a cache with no readable one is refused |
 | `<prefix>.<n>.traj` | ASE trajectory | One animated trajectory per written mode, `n` its mode index. Which modes get one follows `--write-modes` (`none`, `imaginary` — the default, or `all`); a clean minimum under the default writes nothing |
 | `mliprun_run.json` | JSON | Canonical run record; stage kind `freq` (see [The run record](#the-run-record)) |
 
@@ -781,29 +790,75 @@ described next.
 
 ### The displacement cache, and what it is checked against
 
-The `<prefix>/` folder is ASE's own per-displacement JSON cache. It is keyed
-by the displacement, **not** by the model: its name is
-`<output_dir>/<prefix>`, and `--prefix` defaults to `freq` whatever
-`--mlip` says. A second `freq run` in the same directory with a *different*
-potential would therefore reuse the first potential's forces and report them
-under its own provenance — a wrong number carrying a false attribution.
-Measured before this check existed: EMT then Lennard-Jones on N₂ in one
-directory gave run 2 zero force calls, EMT's 928.1448 cm⁻¹ top frequency,
-and `provenance.mlip_model: "lj"`.
+The `<prefix>/` folder is ASE's own per-displacement JSON cache. ASE names
+each entry after the **atom, axis and sign** of the displacement
+(`0x+`, `1z--`, …) and nothing else. The displacement *size*, the stencil,
+and the model that produced the forces all leave no trace in the name, and
+the folder's own name is `<output_dir>/<prefix>` with `--prefix` defaulting
+to `freq` whatever `--mlip` says. A second `freq run` in the same directory
+therefore used to reuse whatever was there, whether or not it belonged to
+that run. Two measured failures, both silent, both `status: completed`:
 
-So whenever a run reuses anything from the cache, it re-evaluates the
-undisplaced geometry once with its own calculator and compares that against
-the cached equilibrium forces. The comparison is `numpy.allclose(rtol=0,
-atol=1e-6)` in eV/Å, not exact equality: a real MLIP on a GPU is not
-bit-reproducible between runs, while a different model differs by orders of
-magnitude (~1 eV/Å for the EMT/Lennard-Jones pair above), so that tolerance
-separates the two cases cleanly. On a mismatch the run **stops** with an
-error naming the cache directory, the run record is completed as `failed`,
-and the message gives both remedies: delete the `<prefix>/` folder, or pass
-a different `--prefix` so this run gets its own cache. The check costs one
-force evaluation on a restart, against the `6 × n_displaced` a restart
-saves, and it is not counted in `n_force_calls` (which reports the sweep's
-own cost).
+| Second run | Reported | Truth |
+|---|---|---|
+| `--delta 0.05` over a `--delta 0.01` cache | 0 force calls, top mode **415.08 cm⁻¹** | 930.86 cm⁻¹ — **wrong by 2.24×** |
+| Lennard-Jones over an EMT cache | 0 force calls, top mode 928.1448 cm⁻¹, `provenance.mlip_model: "lj"` | EMT's numbers under LJ's name |
+
+The delta case is the more dangerous of the two, because the forces are
+reused and then divided by the *new* `--delta`: the Hessian comes out a
+factor `δ_old/δ_new` wrong and every frequency by its square root.
+
+Two checks now stand in front of this.
+
+**1. The recorded identity, checked before the sweep.** Every run writes
+`<prefix>_cache.json` beside the cache folder, recording what the cache was
+swept under:
+
+```json
+{ "delta": 0.01, "model": "emt", "nfree": 2, "per_member_forces": false }
+```
+
+A run that finds existing entries compares its own identity against that
+file **before it computes anything**, and refuses on any difference, naming
+the field and both values. Checking first is what keeps a refusal clean: a
+guard that fired after the sweep would already have written its own
+displacements into the shared folder, leaving a mixture of two identities
+that a later run of either one would partly match and accept.
+
+A cache with **no readable `<prefix>_cache.json`** beside it — one written
+before this file existed, or one whose sidecar was removed — is **refused**,
+not accepted on trust. `delta` and `nfree` leave no trace in the cached
+forces, so there is no measurement that could recover them; accepting such
+a cache would be reintroducing the 2.24× error for exactly the caches that
+cannot be verified.
+
+The comparison is whole-identity, not field-by-field compatibility. A
+`--nfree 2` cache is in fact reusable by an `--nfree 4` run (ASE's `ndisp=1`
+entries sit at ±`delta` under both, and the `ndisp=2` entries carry distinct
+names — verified bit-identical to a clean `--nfree 4` sweep), so that one
+refusal costs a re-sweep it did not strictly have to. It is deliberate: that
+compatibility rests on an ASE internal that a future release could change
+without saying so, and a re-sweep is a cheaper mistake than a wrong number.
+Pass a different `--prefix` when you want both stencils side by side.
+
+**2. The equilibrium forces, checked after the sweep.** The identity file
+records the model *name the caller declared*, which cannot see a changed
+checkpoint, head or task behind an unchanged name. So whenever a run reuses
+anything, it also re-evaluates the undisplaced geometry once with its own
+calculator and compares against the cached equilibrium forces, with
+`numpy.allclose(rtol=0, atol=1e-6)` in eV/Å. Not exact equality: a real MLIP
+on a GPU is not bit-reproducible between runs, while a different model
+differs by orders of magnitude (3.56 eV/Å for the EMT/Lennard-Jones pair
+above), so that tolerance separates the two cases cleanly. This check is
+structurally blind to `--delta` — undisplaced forces do not depend on the
+displacement size — which is why check 1 exists and runs first.
+
+On either mismatch the run **stops**, the run record is completed as
+`failed`, and the message gives both remedies: delete the `<prefix>/` folder
+(the sidecar is rewritten on the next run), or pass a different `--prefix`
+so this run gets its own cache. Check 2 costs one force evaluation on a
+restart, against the `6 × n_displaced` a restart saves, and it is not
+counted in `n_force_calls` (which reports the sweep's own cost).
 
 **A committee run can only restart a committee sweep.** A committee restart
 is otherwise as cheap as a single-model one — the per-member forces survive

@@ -295,10 +295,21 @@ energies, so an imaginary mode contributes exactly zero, and a structure
 with imaginary modes has no well-defined zero-point energy.
 
 **Outputs:** `freq_frequencies.csv`, `freq_summary.txt`,
-`freq_vibrations.json`, the `freq/` displacement cache, and any written
-`freq.<n>.traj` mode trajectories (plus `freq_committee_frequencies.csv`
-with `--committee`). Full field reference:
-[OUTPUTS.md](docs/OUTPUTS.md#freq-run).
+`freq_vibrations.json`, the `freq/` displacement cache with its
+`freq_cache.json` identity file, and any written `freq.<n>.traj` mode
+trajectories (plus `freq_committee_frequencies.csv` with `--committee`).
+Full field reference: [OUTPUTS.md](docs/OUTPUTS.md#freq-run).
+
+**Re-running in the same directory: change `--prefix` whenever anything
+about the sweep changes.** ASE's displacement cache names its entries by
+atom, axis and sign only, so a second run at a different `--delta` used to
+reuse the first one's forces and divide them by the new displacement —
+N₂'s top mode reported at 415.08 cm⁻¹ where the truth was 930.86, a factor
+of 2.24, with no warning. `freq` now records what the cache was swept under
+in `freq_cache.json` and refuses a cache that does not match, naming the
+field and both values. This matters most for the two-`--delta` comparison
+recommended for committee runs: give each delta its own `--prefix` or
+`--output-dir`.
 
 Thermochemistry (free energies) is deliberately out of scope here:
 `freq_vibrations.json` carries the full Hessian and reloads through

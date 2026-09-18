@@ -395,6 +395,151 @@ class CommitteeVibrations(CountingVibrations):
         return results
 
 
+#: Human labels for the cache-identity fields, used in the refusal message.
+#: Keys are the sidecar's own field names.
+_CACHE_FIELD_LABELS = {
+    "delta": "displacement --delta",
+    "nfree": "stencil --nfree",
+    "model": "model",
+    "per_member_forces": "per-member forces cached (--committee)",
+}
+
+#: Sentinel for "this field is absent from the recorded identity", so that a
+#: field whose real value is None is not confused with a missing one.
+_FIELD_ABSENT = object()
+
+
+def _cache_identity_path(cache_dir):
+    """Where the cache-identity sidecar lives: *beside* the cache directory.
+
+    Not inside it. ASE owns every ``cache.*`` file under
+    ``<output_dir>/<prefix>/`` and iterates them by that prefix, so keeping
+    our file out of that directory means nothing here depends on how ASE
+    globs its own.
+    """
+    return Path(str(cache_dir) + "_cache.json")
+
+
+def _cache_identity(delta, nfree, model_name, committee):
+    """What a displacement cache must have been built under to be reusable.
+
+    ``delta`` and ``nfree`` are the two that make a reused cache numerically
+    *wrong* rather than merely mislabelled. ASE names its cache entries by
+    atom, axis and sign only -- there is no displacement size in the name --
+    so a sweep at a different delta silently reuses the old forces and
+    divides them by the new one. Measured on N2 under EMT: ``--delta 0.01``
+    then ``--delta 0.05`` in one directory reported the top mode at 415.08
+    cm^-1 where a clean run at 0.05 gives 930.86 cm^-1. Wrong by a factor of
+    2.24, ``status: completed``, no warning.
+
+    ``model`` and ``per_member_forces`` are cheap to record alongside them,
+    and turn two failures that were previously caught only *after* the sweep
+    into a refusal before anything has been written.
+
+    ``model`` is the name the caller declared, not a measurement of it: a
+    library caller who leaves ``model_name`` at its default gets the same
+    string for two different potentials. :func:`_reject_a_foreign_cache`
+    stays behind this for exactly that case.
+    """
+    return {
+        "delta": float(delta),
+        "nfree": int(nfree),
+        "model": str(model_name),
+        "per_member_forces": committee is not None,
+    }
+
+
+def _cache_has_entries(cache_dir):
+    """Whether ASE has written any displacement into this cache directory.
+
+    ``MultiFileJSONCache._filename`` composes ``cache.<key><extension>``, so
+    one glob answers it without depending on the extension. A directory that
+    exists but holds nothing (``Vibrations.__init__`` creates it) is not a
+    cache to reuse.
+    """
+    return any(Path(cache_dir).glob("cache.*"))
+
+
+def _check_the_cache_identity(cache_dir, identity):
+    """Refuse, or claim, a displacement cache -- **before** the sweep runs.
+
+    Running before ``vib.run()`` is the point, not an implementation detail.
+    A refusal issued after the sweep has already written its own entries
+    into the shared directory leaves a mixture of two identities on disk,
+    and a later run of either identity finds a cache that partly matches it.
+    Refusing before anything is written makes that state unreachable.
+
+    A cache with no identity recorded beside it is refused rather than
+    accepted on trust: the fields that matter most (``delta``, ``nfree``)
+    leave no trace in the cached forces themselves, so there is no
+    measurement that could recover them. :func:`_reject_a_foreign_cache`
+    cannot help here -- the undisplaced geometry's forces do not depend on
+    the displacement size.
+
+    Raises
+    ------
+    FrequencyCacheError
+        When entries exist and the recorded identity is missing, unreadable,
+        or differs from this run's in any field.
+    """
+    sidecar = _cache_identity_path(cache_dir)
+    if not _cache_has_entries(cache_dir):
+        # Nothing to reuse, so this run owns the directory. Any sidecar
+        # still sitting here describes a cache that is gone.
+        sidecar.write_text(
+            json.dumps(identity, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8")
+        return
+
+    recorded = None
+    if sidecar.exists():
+        try:
+            loaded = json.loads(sidecar.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001 -- treated as "no identity"
+            logger.debug("unreadable cache identity %s: %s", sidecar, exc)
+        else:
+            if isinstance(loaded, dict):
+                recorded = loaded
+
+    if recorded is None:
+        raise FrequencyCacheError(
+            f"the displacement cache in {cache_dir} has no readable "
+            f"{sidecar.name} beside it recording what it was swept under, "
+            f"so this run cannot tell whether it used the same --delta and "
+            f"--nfree. Those leave no trace in the cached forces, so there "
+            f"is nothing to measure instead: reusing the cache on the "
+            f"chance that they match would report frequencies wrong by the "
+            f"ratio of the two displacements while the run reports success. "
+            f"Delete {cache_dir} to recompute the sweep, or pass a "
+            f"different --prefix to give this run its own cache.")
+
+    differences = [
+        (field, recorded.get(field, _FIELD_ABSENT), value)
+        for field, value in identity.items()
+        if recorded.get(field, _FIELD_ABSENT) != value
+    ]
+    if not differences:
+        return
+
+    detail = "; ".join(
+        f"{_CACHE_FIELD_LABELS[field]}: cache "
+        f"{'not recorded' if was is _FIELD_ABSENT else repr(was)}, "
+        f"this run {now!r}"
+        for field, was, now in differences)
+    delta_note = ""
+    if any(field == "delta" for field, _, _ in differences):
+        delta_note = (
+            " ASE names its cache entries by atom, axis and sign only, with "
+            "no displacement size in the name, so those forces would be "
+            "divided by this run's --delta and the frequencies would come "
+            "out wrong by the ratio of the two.")
+    raise FrequencyCacheError(
+        f"the displacement cache in {cache_dir} was swept under different "
+        f"settings -- {detail}.{delta_note} Delete {cache_dir} to recompute "
+        f"the sweep, or pass a different --prefix to give this run its own "
+        f"cache.")
+
+
 def _displacement_keys(vib, nfree):
     """``(cache name, forces-dict key)`` for every entry this sweep uses.
 
@@ -445,13 +590,17 @@ def _expected_force_calls(n_displaced, nfree):
 
 
 def _check_the_displacement_cache(vib, atoms, cache_dir, nfree, committee):
-    """Every cache guard, run only when a displacement was actually reused.
+    """The post-sweep cache guards, run only when something was reused.
 
     A sweep that computed every displacement itself wrote every cache entry
-    itself, so there is nothing to verify and nothing to pay for. Once
-    anything has been reused, the cache came from an earlier run that this
-    one cannot identify from the filename: ASE keys the cache by
-    displacement, never by model or by committee membership.
+    itself, so there is nothing to verify and nothing to pay for.
+
+    These sit *behind* :func:`_check_the_cache_identity`, which has already
+    refused a cache swept at a different ``--delta`` or ``--nfree`` before
+    this run wrote anything. What is left for these to catch is what a
+    recorded identity cannot see: a calculator whose declared model name is
+    unchanged but whose weights, head or task differ, and a cache whose
+    per-member forces are absent despite the sidecar saying otherwise.
     """
     if vib.n_force_calls >= _expected_force_calls(len(vib.indices), nfree):
         return
@@ -768,9 +917,6 @@ def run_frequencies(
     # `name` sets both the cache directory and the mode filenames: ASE's
     # write_mode composes f"{vib.name}.{n}.traj". One name, two artefacts.
     vibration_name = str(output_path / prefix)
-    vib = _vibrations_class(committee)(
-        atoms, indices=list(chosen), name=vibration_name,
-        delta=delta, nfree=nfree)
 
     # One guard over everything from the sweep to the last write, rather
     # than the two statements it used to cover. Every step below can raise --
@@ -780,8 +926,22 @@ def run_frequencies(
     # wrong number must stop the run loudly; it must not also leave a record
     # claiming the job is still going.
     try:
+        # BEFORE the sweep, deliberately: a refusal issued afterwards would
+        # already have written this run's own displacements into the shared
+        # cache directory, leaving a mixture of two identities that a later
+        # run of either one would partly match.
+        _check_the_cache_identity(
+            vibration_name,
+            _cache_identity(delta, nfree, model_name, committee))
+
+        vib = _vibrations_class(committee)(
+            atoms, indices=list(chosen), name=vibration_name,
+            delta=delta, nfree=nfree)
         vib.run()
         vib.read(method=method, direction=direction)
+        # The backstop to the identity check above: it catches a calculator
+        # whose declared `model` name is unchanged but whose weights, head or
+        # task differ, which a recorded name cannot see.
         _check_the_displacement_cache(vib, atoms, vibration_name, nfree,
                                       committee)
 

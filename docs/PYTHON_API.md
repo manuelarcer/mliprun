@@ -472,11 +472,29 @@ results["committee_uncertainty"]["sigma_max_free_final_eV_per_A"]
 results["committee_uncertainty"]["flagged"]        # None without a threshold
 ```
 
-The displacement cache in `<output_dir>/<prefix>` is keyed by displacement,
-not by model, so `run_frequencies` verifies a reused cache belongs to this
-run's calculator — and, for a committee, that it carries per-member forces —
-and raises `mliprun.core.vibrations.FrequencyCacheError` when it does not.
-See [OUTPUTS.md#the-displacement-cache-and-what-it-is-checked-against](OUTPUTS.md#the-displacement-cache-and-what-it-is-checked-against).
+ASE names each entry in the displacement cache (`<output_dir>/<prefix>`)
+after the atom, axis and sign of the displacement only — nothing about
+`delta`, `nfree` or the calculator. `run_frequencies` therefore writes
+`<prefix>_cache.json` beside the cache recording `delta`, `nfree`, `model`
+and `per_member_forces`, checks it **before** sweeping, and raises
+`mliprun.core.vibrations.FrequencyCacheError` on any difference or when no
+readable sidecar is there. Behind that it also re-evaluates the undisplaced
+geometry once and compares against the cached equilibrium forces, which
+catches a changed checkpoint or head behind an unchanged `model_name`.
+
+**Calling this in a loop over `delta` — as the two-delta noise check
+recommends — needs a distinct `prefix` or `output_dir` per value**, or the
+second call is refused:
+
+```python
+for delta in (0.01, 0.02):
+    run_frequencies(atoms, output_dir="freq/", prefix=f"freq_d{delta}",
+                    delta=delta, model_name="uma-s-1p2")
+```
+
+Before this check existed that loop silently reported the second delta's
+frequencies a factor `sqrt(delta_2 / delta_1)` too low. See
+[OUTPUTS.md#the-displacement-cache-and-what-it-is-checked-against](OUTPUTS.md#the-displacement-cache-and-what-it-is-checked-against).
 
 ---
 

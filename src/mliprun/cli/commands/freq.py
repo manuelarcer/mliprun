@@ -272,7 +272,8 @@ def run(
 
     typer.echo("\n✅ Frequencies complete. Output files:")
     written = [f"{prefix}_frequencies.csv", f"{prefix}_summary.txt",
-               f"{prefix}_vibrations.json", "mliprun_run.json"]
+               f"{prefix}_vibrations.json", f"{prefix}_cache.json",
+               "mliprun_run.json"]
     if committee_config is not None:
         written.insert(1, f"{prefix}_committee_frequencies.csv")
     for name in written:
@@ -282,8 +283,11 @@ def run(
     # worse than a short listing.
     for path in sorted(output_dir.glob(f"{prefix}.*.traj")):
         typer.echo(f"   📄 {path.resolve()}")
+    # Deleting the directory alone is enough: with no entries left,
+    # `{prefix}_cache.json` is rewritten with the next run's own identity.
     typer.echo(f"   📁 {(output_dir / prefix).resolve()}  "
-               f"(displacement cache — delete to force a full recompute)")
+               f"(displacement cache — delete to force a full recompute; "
+               f"{prefix}_cache.json records what it was swept under)")
 
     report_committee_uncertainty(committee_calc, "the input geometry")
 

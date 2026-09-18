@@ -39,17 +39,32 @@ All notable changes to this project are documented here. Format follows [Keep a 
   Cost is `1 + 6 × n_displaced` force calls at `--nfree 2`, `1 + 12 ×
   n_displaced` at `--nfree 4`; a restart replays only the displacements not
   already in the `<prefix>/` cache.
-  That cache is keyed by displacement, not by model — its name is
-  `<output_dir>/<prefix>` and `--prefix` defaults to `freq` whatever
-  `--mlip` says — so a run that reuses it first re-evaluates the undisplaced
-  geometry with its own calculator and compares against the cached
-  equilibrium forces (`allclose(rtol=0, atol=1e-6)` eV/Å: a real MLIP on a
-  GPU is not bit-reproducible between runs, while a different model differs
-  by orders of magnitude). A mismatch **stops the run**, names the cache
-  directory, and says to delete it or pass a different `--prefix`; the run
-  record is completed as `failed` rather than left saying `running`. Without
-  it, EMT then Lennard-Jones on N₂ in one directory gave run 2 zero force
-  calls, EMT's frequencies, and `provenance.mlip_model: "lj"`.
+  ASE names each cache entry after the atom, axis and sign of the
+  displacement and nothing else — no displacement size, no stencil, no
+  model — and the folder is `<output_dir>/<prefix>` with `--prefix`
+  defaulting to `freq` whatever `--mlip` says. Two silent failures followed,
+  both reporting `status: completed`: `--delta 0.05` over a `--delta 0.01`
+  cache reused the old forces and divided them by the new delta, reporting
+  N₂'s top mode at **415.08 cm⁻¹** where the truth is 930.86 — **wrong by a
+  factor of 2.24**; and Lennard-Jones over an EMT cache reported EMT's
+  frequencies under `provenance.mlip_model: "lj"`.
+  Every run now writes `<prefix>_cache.json` beside the cache recording
+  `delta`, `nfree`, `model` and `per_member_forces`, and a run that finds
+  existing entries checks it **before computing anything** — so a refusal
+  cannot leave a mixture of two identities behind. A cache with no readable
+  sidecar is refused rather than trusted: `delta` and `nfree` leave no trace
+  in the cached forces, so nothing can recover them. Behind that, a run that
+  reuses anything also re-evaluates the undisplaced geometry with its own
+  calculator and compares against the cached equilibrium forces
+  (`allclose(rtol=0, atol=1e-6)` eV/Å: a real MLIP on a GPU is not
+  bit-reproducible between runs, while a different model differs by orders
+  of magnitude) — that catches a changed checkpoint or head behind an
+  unchanged model name, which a recorded name cannot see. Either mismatch
+  **stops the run**, names the field and both values, and says to delete the
+  cache or pass a different `--prefix`; the run record is completed as
+  `failed` rather than left saying `running`.
+  Note for the two-delta comparison recommended under *Committee
+  frequencies*: give each `--delta` its own `--prefix` or `--output-dir`.
   The same check refuses a **single-model** cache to a `--committee` run: a
   single-model sweep stores the consensus forces only, with no per-member
   forces to build one Hessian per member from. A committee restarting a
