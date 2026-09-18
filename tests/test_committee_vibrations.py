@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from ase.build import molecule
+from ase.calculators.calculator import Calculator, all_changes
 from ase.io import write
 from typer.testing import CliRunner
 
@@ -201,3 +202,144 @@ def test_the_run_record_flags_suspect_mode_pairing(structure, tmp_path,
     block = record["stages"][0]["results"]["committee_frequencies"]
     assert block["mode_pairing_suspect"] is True
     assert block["worst_mode_overlap"] == pytest.approx(1.0, abs=1e-6)
+
+
+# -- committee_uncertainty on `freq run` --------------------------------
+
+def test_identical_members_uncertainty_sigma_is_exactly_zero(structure,
+                                                              tmp_path):
+    from mliprun.cli.commands.freq import app
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path))])
+    assert result.exit_code == 0, result.stdout
+    record = json.loads(
+        (structure.parent / "mliprun_run.json").read_text())
+    block = record["stages"][0]["results"]["committee_uncertainty"]
+    assert block["sigma_max_free_final_eV_per_A"] == pytest.approx(
+        0.0, abs=1e-12)
+
+
+def test_an_explicit_threshold_with_identical_members_is_not_flagged(
+        structure, tmp_path):
+    from mliprun.cli.commands.freq import app
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path)),
+        "--uncertainty-threshold", "0.05"])
+    assert result.exit_code == 0, result.stdout
+    record = json.loads(
+        (structure.parent / "mliprun_run.json").read_text())
+    block = record["stages"][0]["results"]["committee_uncertainty"]
+    assert block["threshold_source"] == "explicit"
+    assert block["threshold_eV_per_A"] == pytest.approx(0.05)
+    assert block["flagged"] is False       # identical members, sigma is 0
+
+
+def test_no_threshold_means_no_uncertainty_verdict(structure, tmp_path):
+    from mliprun.cli.commands.freq import app
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path))])
+    assert result.exit_code == 0, result.stdout
+    record = json.loads(
+        (structure.parent / "mliprun_run.json").read_text())
+    block = record["stages"][0]["results"]["committee_uncertainty"]
+    assert block["threshold_source"] == "none"
+    assert block["flagged"] is None
+
+
+class _DisplacementLeakingFakeCommittee(Calculator):
+    """A committee whose disagreement is proportional to displacement from
+    one fixed reference geometry -- not to which member is asked.
+
+    Purpose-built for one test: it makes the geometry at which
+    :func:`~mliprun.core.vibrations.run_frequencies` evaluates the committee
+    observable. Two real EMT members (as used everywhere else in this file)
+    agree everywhere, so they cannot distinguish "evaluated at the input
+    geometry" from "evaluated at whatever displacement ran last" -- both
+    give sigma == 0. Here, member_b's force is member_a's EMT force
+    plus ``coeff * (current_position - reference_position)``, so sigma is
+    EXACTLY 0 only at the reference geometry and of order
+    ``coeff * delta`` (a fraction of an eV/A, not numerical noise) at any
+    displaced one. ``reference_position`` is fixed at construction time, to
+    the atoms' geometry before any displacement runs.
+
+    Reuses the real ``committee_statistics``/``free_component_mask`` (Task
+    4/singlepoint) rather than reimplementing the sigma reduction, so this
+    only tests WHICH geometry gets evaluated, not the arithmetic.
+    """
+
+    implemented_properties = ["energy", "free_energy", "forces"]
+
+    def __init__(self, reference_positions, coeff=200.0):
+        super().__init__()
+        self.member_names = ["member_a", "member_b"]
+        self.members = [
+            type("Member", (), {"name": name})() for name in self.member_names]
+        self._reference = np.asarray(reference_positions, dtype=float).copy()
+        self._coeff = coeff
+        self.latest = None
+        self.latest_uncertainty_summary = None
+
+    def preflight(self, atoms):
+        return self._evaluate(atoms)
+
+    def calculate(self, atoms=None, properties=("energy",),
+                  system_changes=all_changes):
+        super().calculate(atoms, properties, system_changes)
+        stats = self._evaluate(self.atoms)
+        self.results["energy"] = stats["energy_mean"]
+        self.results["free_energy"] = stats["energy_mean"]
+        self.results["forces"] = stats["forces_mean"]
+
+    def _evaluate(self, atoms):
+        from ase.calculators.emt import EMT
+
+        from mliprun.core.committee.calculator import (
+            committee_statistics,
+            free_component_mask,
+        )
+
+        reference = atoms.copy()
+        reference.calc = EMT()
+        f_a = np.asarray(reference.get_forces(), dtype=float)
+        e_a = float(reference.get_potential_energy())
+        leak = atoms.get_positions() - self._reference
+        f_b = f_a + self._coeff * leak
+        stacked = np.stack([f_a, f_b])
+
+        free_mask, unhandled = free_component_mask(atoms)
+        stats = committee_statistics([e_a, e_a], stacked, free_mask=free_mask)
+        stats["free_mask"] = free_mask
+        stats["unhandled_constraints"] = unhandled
+        stats["energies"] = {"member_a": e_a, "member_b": e_a}
+        stats["forces_per_member"] = stacked
+        self.latest = stats
+        return stats
+
+
+def test_committee_uncertainty_describes_the_input_geometry_not_a_displaced_one(
+        tmp_path):
+    """The gap this whole round is about: reading whatever
+    ``committee.latest`` happened to hold after the sweep would describe the
+    LAST displaced geometry, not the input one. ``coeff=200`` on a
+    ``delta=0.01`` A displacement would leak roughly 2 eV/A of spurious
+    sigma if that bug were reintroduced -- five orders of magnitude above
+    the 1e-9 tolerance below, so this is not a coin flip."""
+    from mliprun.core.vibrations import run_frequencies
+
+    atoms = molecule("N2")
+    atoms.center(vacuum=5.0)
+    reference_positions = atoms.get_positions().copy()
+    committee = _DisplacementLeakingFakeCommittee(reference_positions)
+    atoms.calc = committee
+
+    results = run_frequencies(atoms, output_dir=tmp_path, committee=committee)
+
+    assert results["committee_uncertainty"][
+        "sigma_max_free_final_eV_per_A"] == pytest.approx(0.0, abs=1e-9)
+    # The atoms object itself is left at the input geometry too -- the fact
+    # that makes the fix possible in the first place.
+    assert atoms.get_positions() == pytest.approx(
+        reference_positions, abs=1e-12)

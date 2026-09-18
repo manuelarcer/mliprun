@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 from ase.vibrations import Vibrations
 
+from mliprun.core.committee.calculator import uncertainty_summary
 from mliprun.core.run_record import RunRecord, collect_provenance
 from mliprun.core.utils import calc_fmax
 
@@ -621,6 +622,38 @@ def run_frequencies(
         record.complete(status="failed", results={"error": str(exc)})
         raise
 
+    results_uncertainty = None
+    if committee is not None:
+        # ASE's Vibrations.run() restores atoms.positions after every
+        # displacement (ase.vibrations.vibrations.Vibrations.iterdisplace:
+        # `if inplace: atoms.positions[disp.a, disp.i] = pos0`, which fires
+        # for every displacement including the last, whether or not it was
+        # actually recomputed this call) -- confirmed here rather than
+        # assumed: `atoms.get_positions()` after `vib.run()` matches the
+        # pre-run geometry bit-for-bit, on both a fresh sweep and a fully
+        # cached restart. So `atoms` is back at the INPUT geometry now, not
+        # the last-displaced one -- reading `committee.latest` at this point
+        # (set by whichever displacement's `calculate()` ran last, or not
+        # set at all after a fully cached restart) would silently describe
+        # the wrong geometry, or none. One explicit evaluation here is the
+        # only way to be sure: `preflight` (== `_evaluate`) is cheap (one
+        # call against 1 + 6*n_displaced for the sweep) and, unlike the
+        # cache, gives the same answer on a restart as on a fresh run.
+        try:
+            committee.preflight(atoms)
+        except Exception as exc:
+            record.complete(status="failed", results={"error": str(exc)})
+            raise
+        threshold = (float(uncertainty_threshold)
+                    if uncertainty_threshold is not None else None)
+        threshold_source = ("explicit" if uncertainty_threshold is not None
+                            else "none")
+        results_uncertainty = uncertainty_summary(
+            [], committee.latest, threshold=threshold,
+            threshold_source=threshold_source,
+            symbols=atoms.get_chemical_symbols())
+        committee.latest_uncertainty_summary = results_uncertainty
+
     # The undisplaced geometry is already in the cache -- run() evaluates it
     # first -- so this costs nothing.
     eq_forces = np.asarray(vib._eq_disp().forces(), dtype=float)
@@ -715,6 +748,8 @@ def run_frequencies(
     }
     if results_committee is not None:
         results["committee_frequencies"] = results_committee
+    if results_uncertainty is not None:
+        results["committee_uncertainty"] = results_uncertainty
 
     record.complete(status="completed", results=results)
     return results
