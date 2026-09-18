@@ -91,6 +91,55 @@ def test_the_selected_task_is_echoed(structure, monkeypatch):
     assert "UMA task: oc20" in result.stdout
 
 
+def test_output_dir_redirects_every_output(structure, monkeypatch, tmp_path):
+    """The whole point: outputs land elsewhere, so a run does not clobber
+    the record of the optimization that produced the structure."""
+    _use_emt(monkeypatch)
+    out = tmp_path / "sp"
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure), "--output-dir", str(out)])
+    assert result.exit_code == 0, result.stdout
+    assert (out / "singlepoint_forces.csv").exists()
+    assert (out / "mliprun_run.json").exists()
+    # and nothing was written beside the structure
+    assert not (structure.parent / "singlepoint_forces.csv").exists()
+    assert not (structure.parent / "mliprun_run.json").exists()
+
+
+def test_output_dir_is_created_when_missing(structure, monkeypatch, tmp_path):
+    _use_emt(monkeypatch)
+    out = tmp_path / "does" / "not" / "exist"
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure), "--output-dir", str(out)])
+    assert result.exit_code == 0, result.stdout
+    assert (out / "singlepoint_forces.csv").exists()
+
+
+def test_the_default_still_writes_beside_the_structure(structure, monkeypatch):
+    """Unchanged behaviour without the flag -- this is a regression guard on
+    everyone's existing scripts."""
+    _use_emt(monkeypatch)
+    result = runner.invoke(app, ["run", "--structure", str(structure)])
+    assert result.exit_code == 0, result.stdout
+    assert (structure.parent / "singlepoint_forces.csv").exists()
+
+
+def test_a_prior_record_in_the_structure_directory_survives(
+        structure, monkeypatch, tmp_path):
+    """The reason this flag exists. A record already beside the structure is
+    untouched when output goes elsewhere."""
+    _use_emt(monkeypatch)
+    prior = structure.parent / "mliprun_run.json"
+    prior.write_text('{"schema_version": 5, "command": "optimize", '
+                     '"stages": [{"index": 0, "kind": "optimize", '
+                     '"status": "converged"}]}')
+    before = prior.read_text()
+    runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--output-dir", str(tmp_path / "sp")])
+    assert prior.read_text() == before
+
+
 def _use_emt(monkeypatch):
     """Attach ASE's EMT wherever the command would attach an MLIP.
 

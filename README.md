@@ -236,7 +236,7 @@ optimize run --structure POSCAR --committee committee.yaml --fmax 0.05
 
 ### Single-Point Evaluation
 ```bash
-singlepoint run --structure POSCAR --mlip uma-s-1p2 --uma-task oc20
+singlepoint run --structure POSCAR --mlip uma-s-1p2 --uma-task oc20 --output-dir sp/
 ```
 
 Evaluates a structure once and stops: energy, per-atom forces, and (when the
@@ -250,6 +250,7 @@ performed the same single evaluation but mislabelled it a failed relaxation
 - `--stress / --no-stress`: force or skip the stress attempt. Default: attempted only when the cell is periodic in all three directions — a slab's stress along the vacuum direction means nothing.
 - `--committee committee.yaml`: evaluate this one configuration with a committee instead of a single MLIP; reports the same disagreement statistics as `optimize run --committee`, at this one geometry, with no relaxation.
 - `--prefix`: stem for the output file names (default `singlepoint`).
+- `--output-dir`: directory for this run's outputs (default: next to `--structure`, created if missing, including intermediate parents). A run record (`mliprun_run.json`) is replaced wholesale by the next command that writes in the same directory — e.g. `optimize` then `singlepoint` in one directory silently loses the optimize stage from the record. Point `--output-dir` at a separate folder (e.g. `sp/`) to keep a single-point from destroying the record of the optimization that produced the structure.
 
 Reports two separately named maximum forces: `fmax_free` (constraints
 applied — what an optimizer would converge against) and `fmax_all` (the raw

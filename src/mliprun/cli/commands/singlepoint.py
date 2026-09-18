@@ -77,6 +77,13 @@ def run(
              "because a slab's stress along the vacuum means nothing."),
     prefix: str = typer.Option("singlepoint",
                                help="Stem for this command's output files"),
+    output_dir: Path = typer.Option(
+        None, "--output-dir",
+        help="Directory for this run's outputs. Default: next to the input "
+             "structure. Use it to keep a single-point out of the "
+             "optimization folder that produced the structure -- a run "
+             "record is replaced by the next command that writes in the "
+             "same directory."),
 ):
     """Evaluate a structure once and report energy, forces and stress."""
     atoms = read(structure)
@@ -110,7 +117,10 @@ def run(
             typer.echo(f"🧠 Using MLIP: {mlip}")
         validate_mlip(mlip, sevennet_task, uma_task, mace_head)
 
-    output_dir = structure.parent
+    # Separate from the structure's own directory on purpose: a prior run
+    # record stays where it is, and this run writes elsewhere.
+    output_dir = output_dir if output_dir is not None else structure.parent
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     run_context = RunContext(
         command="singlepoint",
