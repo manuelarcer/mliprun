@@ -4,10 +4,27 @@ The mask decides which cell axes an NPT run is allowed to change. Getting it
 wrong is invisible in the output energies and only shows up in the cell, so
 the CLI has to reject a malformed mask loudly and record the resolved one.
 """
+import re
+
 import pytest
 from typer.testing import CliRunner
 
 from mliprun.cli.commands.md import app as md_app
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """Strip ANSI styling from rendered CLI output before asserting on it.
+
+    Typer formats usage errors through rich, which colorizes the flag name
+    when it decides the output is a terminal -- GitHub Actions and a local
+    run disagree about that. Colorized, `--barostat-mask` arrives as
+    `ESC[1;36m-ESC[0mESC[1;36m-barostatESC[0mESC[1;36m-maskESC[0m`, so a
+    literal substring check passes locally and fails in CI. Assert on the
+    text the user reads, not on the styling.
+    """
+    return _ANSI.sub("", output)
 
 
 def _structure(tmp_path):
@@ -73,11 +90,12 @@ class TestBarostatMaskRejection:
     """A bad mask must produce a message, not a traceback."""
 
     def _assert_clean_rejection(self, result):
+        output = _plain(result.output)
         assert result.exit_code != 0
-        assert "--barostat-mask" in result.output, result.output
+        assert "--barostat-mask" in output, output
         # Guard against a false green: before the option existed, click
         # rejected the flag itself with a message that also names it.
-        assert "No such option" not in result.output, result.output
+        assert "No such option" not in output, output
         # A ValueError escaping to the top would be a traceback in real use.
         assert result.exception is None or isinstance(result.exception, SystemExit), (
             f"unhandled {type(result.exception).__name__}: {result.exception}"
@@ -102,7 +120,7 @@ class TestBarostatMaskRejection:
         ])
 
         assert result.exit_code != 0
-        assert "npt" in result.output.lower()
+        assert "npt" in _plain(result.output).lower()
         assert captured == {}, "run_md must not be reached"
 
     def test_default_mask_outside_npt_is_allowed(self, tmp_path, monkeypatch):
@@ -129,7 +147,7 @@ class TestBarostatMaskIsReported:
         params = (structure.parent / "md_params.txt").read_text()
         assert "Barostat mask" in params
         assert "0,0,1" in params
-        assert "0,0,1" in result.output
+        assert "0,0,1" in _plain(result.output)
 
     def test_params_file_records_the_default_mask(self, tmp_path, monkeypatch):
         result, _, structure = _stub_run(tmp_path, monkeypatch, [
