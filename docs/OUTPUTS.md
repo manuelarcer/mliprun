@@ -13,7 +13,7 @@ Canonical list of every file each CLI command writes. Search this page to find w
 | `autoneb run` | Current working directory at invocation |
 | `autoneb-results results` | The directory passed via `--directory` (default `.`) |
 | `benchmark run` | Nothing on disk by default; `--output bench.json` writes a JSON file there |
-| `singlepoint run` | Directory containing `--structure` (i.e. `Path(--structure).parent`) |
+| `singlepoint run` | Directory containing `--structure`, unless `--output-dir` is given |
 | `freq run` | Directory containing `--structure`, unless `--output-dir` is given |
 
 This is not always the same directory the user is sitting in. `optimize` and `md` write *next to the input structure*; `neb` and `autoneb` write *into the cwd*. Set up the working directory accordingly before running NEB / AutoNEB.
@@ -551,6 +551,10 @@ With `--committee committee.yaml`, one more file is always written:
 | `<prefix>_committee_peratom.csv` | CSV | Per-atom committee disagreement at this one configuration — same layout and columns as `optimize run`'s `<name>_committee_peratom.csv` (see [Committee outputs](#committee-outputs)) |
 
 `<prefix>` defaults to `singlepoint` and follows `--prefix`.
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--output-dir` | `Path(--structure).parent` | Directory all of the above files are written into. Created if missing, including intermediate parents. **Why it exists:** `mliprun_run.json` is replaced wholesale by the next command that writes in the same directory — running `optimize` then `singlepoint` in one directory silently drops the optimize stage from the record, with no error and no warning. Point `--output-dir` at a separate folder (e.g. `sp/`) to keep a single-point evaluation from destroying the record of the optimization that produced its input structure. |
 
 ### `<prefix>_forces.csv`
 
