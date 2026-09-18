@@ -13,6 +13,7 @@ Canonical list of every file each CLI command writes. Search this page to find w
 | `autoneb run` | Current working directory at invocation |
 | `autoneb-results results` | The directory passed via `--directory` (default `.`) |
 | `benchmark run` | Nothing on disk by default; `--output bench.json` writes a JSON file there |
+| `singlepoint run` | Directory containing `--structure` by default; `--output-dir` overrides this (see below) |
 
 This is not always the same directory the user is sitting in. `optimize` and `md` write *next to the input structure*; `neb` and `autoneb` write *into the cwd*. Set up the working directory accordingly before running NEB / AutoNEB.
 
@@ -53,8 +54,15 @@ committee.yaml`). The relaxation follows their **mean** force; the outputs
 below report how much they **disagree**, as a diagnostic. Force disagreement
 (every `sigma_*` column) is in eV/Å; energy disagreement
 (`energy_spread_aligned_eV`) is in eV. It is
-never a substitute for DFT validation. Not supported by `optimize batch`,
-`md`, or `neb`/`autoneb`: committees run through `optimize run` only.
+never a substitute for DFT validation. The per-step trace
+(`<name>_committee.csv`) and the convergence/uncertainty plots documented
+below exist only for a relaxation, so they are `optimize run`-only; not
+supported by `optimize batch`, `md`, or `neb`/`autoneb` at all.
+`singlepoint run --committee` (see [`singlepoint run`](#singlepoint-run))
+shares the two outputs that do not depend on there being a trajectory —
+`<name>_committee_peratom.csv` and `results.committee_uncertainty` —
+evaluated at the one structure it was given rather than a relaxation's final
+geometry.
 
 ### Constraint masking
 
@@ -342,7 +350,7 @@ the meaning on purpose: a consumer that reads a schema-4 record for
 
 Relaxes a series of structures in one process, **loading the MLIP model only once** and reusing it across every relaxation (avoids the per-run model-load cost). Discovers one input structure per immediate subdirectory of `--parent` (default `--input-name '*.vasp'`, which expects exactly one `.vasp` file per subdir; the platform's own `*_final.vasp` outputs are ignored). Each structure is optimized in place, producing the same per-directory files as `optimize run` (`opt_final.vasp`, `CONTCAR`, etc.).
 
-A structure that errors or fails to converge is logged and the batch continues. Pass `--skip-existing` to skip subdirectories that already contain a `CONTCAR` (resume a partial batch). `optimize batch` has no `--committee` option: committees are supported by `optimize run` only.
+A structure that errors or fails to converge is logged and the batch continues. Pass `--skip-existing` to skip subdirectories that already contain a `CONTCAR` (resume a partial batch). `optimize batch` has no `--committee` option.
 
 | File | Format | Contents |
 |------|--------|----------|
@@ -464,6 +472,98 @@ Optional file (only when `--output` is set):
 
 ---
 
+## `singlepoint run`
+
+Evaluates a structure once and stops: energy, per-atom forces, and (when the
+cell allows it) stress. No optimizer, no trajectory, no relaxed structure.
+Replaces the `optimize run --max-steps 0` workaround, which performed the
+same single evaluation but reported it as a failed relaxation — `status:
+not_converged`, the "increase max_steps" advice block, a trajectory and a
+`CONTCAR` for a geometry that never moved, and no per-atom forces anywhere.
+
+| File | Format | Contents |
+|------|--------|----------|
+| `<prefix>_forces.csv` | CSV | One row per atom: the raw forces the model predicts, plus the free-component mask |
+| `mliprun_run.json` | JSON | Canonical run record; stage kind `singlepoint` (see [The run record](#the-run-record)) |
+
+With `--committee committee.yaml`, one more file is always written:
+
+| File | Format | Contents |
+|------|--------|----------|
+| `<prefix>_committee_peratom.csv` | CSV | Per-atom committee disagreement at this one configuration — same layout and columns as `optimize run`'s `<name>_committee_peratom.csv` (see [Committee outputs](#committee-outputs)) |
+
+`<prefix>` defaults to `singlepoint` and follows `--prefix`.
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--output-dir` | `Path(--structure).parent` | Directory all of the above files are written into. Created if missing, including intermediate parents. **Why it exists:** `mliprun_run.json` is replaced wholesale by the next command that writes in the same directory — running `optimize` then `singlepoint` in one directory silently drops the optimize stage from the record, with no error and no warning. Point `--output-dir` at a separate folder (e.g. `sp/`) to keep a single-point evaluation from destroying the record of the optimization that produced its input structure. |
+
+### `<prefix>_forces.csv`
+
+| Column | Meaning |
+|--------|---------|
+| `index` | Index into the structure |
+| `symbol` | Chemical symbol |
+| `fx`, `fy`, `fz` | Raw force components (eV/Å) |
+| `f_norm` | Magnitude of the raw force vector |
+| `free_x`, `free_y`, `free_z` | Whether that component is free (`True`) or held by a masked constraint (`False`) |
+
+**These are the raw forces, not the constrained ones.** `atoms.get_forces()`
+zeroes whatever component a constraint holds, and a CSV of zeros on a fixed
+layer says nothing about what the model actually predicts there. This file
+bypasses the constraint machinery (`atoms.calc.get_forces(atoms)`) and writes
+what the calculator returns; `fmax_free_eV_per_A` below is computed from the
+constrained forces instead, because that is the number a relaxation would
+converge against. The mask columns say which rows `fmax_free` covers.
+
+### `results`
+
+| Key | Meaning |
+|-----|---------|
+| `energy_eV` | Potential energy |
+| `fmax_free_eV_per_A` | Max force magnitude from `atoms.get_forces()` — constraints applied, the population an optimizer would converge against |
+| `fmax_all_eV_per_A` | Max force magnitude from `atoms.calc.get_forces(atoms)` — no constraints applied, what the model predicts before anything is held fixed |
+| `n_free_atoms` | How many atoms retain at least one free force component |
+| `worst_force_atom_all` | Index of the atom with the largest raw (unconstrained) force |
+| `worst_force_atom_all_symbol` | Its chemical symbol |
+| `worst_force_atom_free` | Index of the atom with the largest constrained force |
+| `worst_force_atom_free_symbol` | Its chemical symbol |
+| `unhandled_constraints` | Constraint type names left unmasked (see [Constraint masking](#constraint-masking)); their atoms count as free, so `fmax_free` over-reports for them |
+| `stress_eV_per_A3`, `stress_GPa` | Voigt-order stress tensor, or both `null` when not attempted or not available |
+| `stress_unavailable_reason` | Why stress is `null`: `"not requested"` (`--no-stress`), a pbc message (see [Stress](#stress) below), or the calculator's own exception; `null` when stress was reported |
+| `committee_uncertainty` | Present only with `--committee`: the same block `optimize run` writes, evaluated at this one configuration rather than a relaxation's final geometry (see [Committee outputs](#committee-outputs)) |
+
+**Two fmax values, and they answer different questions — never average them
+or treat them as redundant.** `fmax_free_eV_per_A` comes from
+`atoms.get_forces()`, which applies the structure's constraints; it is the
+number an optimizer would actually converge against, and the one comparable
+to a relaxation's `final_fmax_eV_per_A`. `fmax_all_eV_per_A` comes from the
+calculator directly, bypassing constraints entirely; it is what the model
+predicts before anything is held fixed, and is normally the larger of the
+two on a constrained structure. They can (and often do) name different
+atoms as the worst offender — see the next point.
+
+**`worst_force_atom_free` and `committee_uncertainty.worst_atom_free` are
+two different atoms answering two different questions.**
+`worst_force_atom_free` is the atom carrying the **greatest force** among
+the free ones — a statement about the model's own prediction at this
+geometry. `committee_uncertainty.worst_atom_free` is the atom carrying the
+**greatest disagreement between committee members** — a statement about how
+much the members disagree, not about which force is largest. Nothing ties
+these together, and on a real structure they are usually not the same atom.
+
+### Stress
+
+Attempted only when the cell is periodic in all three directions
+(`pbc=(True, True, True)`): a slab's stress along the vacuum direction is
+not a physical quantity, and reporting a number there invites it to be
+used. `--stress` forces the attempt regardless of `pbc`; `--no-stress` skips
+it unconditionally. A calculator that does not implement stress at all
+(`PropertyNotImplementedError`) is recorded in `stress_unavailable_reason`
+and never aborts the run — a missing stress must not cost the energy.
+
+---
+
 ## Parameter file conventions
 
 `*_params.txt` and `*_parameters.txt` are written by `mliprun.core.params_io.write_parameters_file`. Same two-column layout (`{key:<23}{value}`) for every command. The keys include their trailing colon. These files are plain text and intended to be diffed across runs.
@@ -483,9 +583,9 @@ layer — so a script that calls `run_optimization` directly gets one too.
 
 | Key | Meaning |
 |-----|---------|
-| `schema_version` | Currently `5`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. |
-| `command` | `optimize`, `md`, `neb` or `autoneb`. |
-| `status` | Status of the **latest** stage: `running`, `converged`, `not_converged` or `failed`. A record left saying `running` means the job died without reporting back. |
+| `schema_version` | Currently `5`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. The `singlepoint` stage kind is additive and does not bump the schema: `provenance` is untouched, and no existing field changes meaning. |
+| `command` | `optimize`, `md`, `neb`, `autoneb` or `singlepoint`. |
+| `status` | Status of the **latest** stage: `running`, `converged`, `not_converged`, `completed` (a `singlepoint` stage: there is nothing to converge) or `failed`. A record left saying `running` means the job died without reporting back. |
 | `run.mode` | `one-off` or `batch`. |
 | `run.batch` | `null` for one-off runs; otherwise `batch_id`, `driver`, `argv`, `root`, `config_file`. Every run of one batch shares a `batch_id`. |
 | `inputs` | For `optimize` and `md`: structure filename and absolute path, atom count, formula. For `neb` and `autoneb`: `n_images` and `n_atoms` (there is no single input structure). |
@@ -534,8 +634,9 @@ produced under another.
 `stages` is an array because a workflow can be several invocations in one
 directory — most commonly a plain NEB followed by a CI-NEB restart, or an MD
 run extended with `--resume`. Each stage records its own `kind`
-(`optimize`, `md`, `md-resume`, `neb`, `neb-restart`, `autoneb`), `status`,
-`steps`, `walltime_s`, any `parameters` that stage changed, and its `results`.
+(`optimize`, `md`, `md-resume`, `neb`, `neb-restart`, `autoneb`,
+`singlepoint`), `status`, `steps`, `walltime_s`, any `parameters` that stage
+changed, and its `results`.
 A stage's terminal status is never rewritten, so a converged stage 0 followed
 by a failed stage 1 keeps both facts.
 
@@ -601,6 +702,15 @@ expose a comparable per-iteration fmax through this path — and also omit
 `steps`. `autoneb`'s stage status is always `converged` on success, since
 `AutoNEB.run()` either completes or raises; there is no `not_converged`
 outcome for this command, only `converged` or `failed`.
+
+**singlepoint** — `energy_eV`, `fmax_free_eV_per_A`, `fmax_all_eV_per_A`,
+`n_free_atoms`, `worst_force_atom_all`, `worst_force_atom_all_symbol`,
+`worst_force_atom_free`, `worst_force_atom_free_symbol`,
+`unhandled_constraints`, `stress_eV_per_A3`, `stress_GPa`,
+`stress_unavailable_reason`, and `committee_uncertainty` with `--committee`.
+Status is always `completed` on success — there is nothing to converge — or
+`failed`. See [`singlepoint run`](#singlepoint-run) above for what each key
+means.
 
 ### Failure behavior
 

@@ -56,23 +56,27 @@ MLIP is installed — script against its exit code.
 
 ## Running
 
-- Entry points: `mlip <subcmd>` or standalone `optimize`, `md`, `neb`,
-  `autoneb`, `autoneb-results`, `benchmark`. All support `--help`.
+- Entry points: `mlip <subcmd>` or standalone `optimize`, `singlepoint`,
+  `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark`. All support
+  `--help`.
 - Typical: `optimize run --structure POSCAR --fmax 0.05`. Model selection via
   `--mlip` (default `auto`), device via `--device` (note: `neb` defaults to
   CPU, the others to auto).
 - Plots are **opt-in** (`--plot`); CSV outputs are always written.
-- Output locations differ: `optimize`/`md` write next to the input structure;
-  `neb`/`autoneb` write into the current working directory. Full file
-  reference: `docs/OUTPUTS.md`.
+- Output locations differ: `optimize`/`singlepoint`/`md` write next to the
+  input structure; `neb`/`autoneb` write into the current working
+  directory. Full file reference: `docs/OUTPUTS.md`.
 - Python API (for scripts/notebooks): `docs/PYTHON_API.md`.
 - `optimize run --committee committee.yaml` relaxes with several MLIPs at
-  once, one per env, and reports their disagreement as an uncertainty.
-  `mliprun` must be installed (`pip install -e .`) in **every** member env:
-  each runs as a worker subprocess driven by its own interpreter, not the
-  driver's. The bridge is POSIX-only (it uses `select` on a pipe), so
-  committees are not supported on Windows. Supported by `optimize run` only.
-  Details: `docs/OUTPUTS.md#committee-outputs`, `docs/PYTHON_API.md`.
+  once, one per env, and reports their disagreement as an uncertainty;
+  `singlepoint run --committee` evaluates one configuration with a
+  committee the same way, with no relaxation. `mliprun` must be installed
+  (`pip install -e .`) in **every** member env: each runs as a worker
+  subprocess driven by its own interpreter, not the driver's. The bridge is
+  POSIX-only (it uses `select` on a pipe), so committees are not supported
+  on Windows. `optimize run` and `singlepoint run` are the only commands
+  that support committees. Details: `docs/OUTPUTS.md#committee-outputs`,
+  `docs/PYTHON_API.md`.
 
 ## Testing
 

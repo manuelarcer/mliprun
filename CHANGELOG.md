@@ -6,6 +6,33 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **`singlepoint run`, single-point evaluation.** Evaluates a structure once
+  and stops: energy, per-atom forces, and stress, with no optimizer and no
+  trajectory. Replaces the `optimize run --max-steps 0` workaround, which
+  performed the same one evaluation but reported it as a failed relaxation
+  (`status: not_converged`, an "increase max_steps" advice block, a
+  trajectory and a `CONTCAR` for a geometry that never moved) and wrote no
+  per-atom forces at all.
+  Reports two separately named maximum forces rather than one:
+  `fmax_free_eV_per_A`, from `atoms.get_forces()` with constraints applied —
+  what a relaxation would converge against — and `fmax_all_eV_per_A`, from
+  the calculator directly with constraints bypassed — what the model
+  actually predicts before anything is held fixed. The per-atom
+  `<prefix>_forces.csv` always carries the raw (unconstrained) forces, since
+  a CSV of zeros on a fixed layer says nothing about what the model thinks;
+  the free/fixed mask travels with each row instead.
+  Stress is attempted only when the cell is periodic in all three
+  directions — a slab's stress along the vacuum direction is not a physical
+  quantity — and `--stress` forces the attempt regardless; `--no-stress`
+  skips it unconditionally. A calculator without stress support records why
+  in `stress_unavailable_reason` rather than failing the run.
+  `--committee committee.yaml` is supported: the same consensus and
+  disagreement statistics `optimize run --committee` reports at a
+  relaxation's final geometry are reported here at the one configuration
+  given, with no per-step trace and no plots, since nothing moved.
+  Additive to the run record: new stage kind `singlepoint`, schema version
+  unchanged. See `docs/OUTPUTS.md#singlepoint-run` and `docs/PYTHON_API.md`.
+
 - **Committee evaluation with per-configuration uncertainty**
   (`optimize run --committee committee.yaml`). Several MLIPs, each in its own
   Python environment, evaluate the same structure as subprocess workers; the
