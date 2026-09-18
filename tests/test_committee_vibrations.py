@@ -453,6 +453,36 @@ def test_an_explicit_threshold_with_identical_members_is_not_flagged(
     assert block["flagged"] is False       # identical members, sigma is 0
 
 
+def test_the_echo_names_the_input_geometry_not_a_final_one(structure,
+                                                            tmp_path):
+    """`report_committee_uncertainty` is shared with `optimize` and
+    `singlepoint`. `freq` displaces the structure but reports its
+    disagreement at the INPUT geometry, so "at the final geometry" was false
+    here."""
+    from mliprun.cli.commands.freq import app
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path))])
+    assert result.exit_code == 0, result.stdout
+    assert "Committee disagreement at the input geometry" in result.stdout
+    assert "final geometry" not in result.stdout
+
+
+def test_a_tripped_threshold_does_not_claim_a_located_minimum(structure,
+                                                               tmp_path):
+    """`freq` locates nothing: it reports the geometry it was handed. Two
+    identical EMT members give sigma exactly 0, so -1 is the only threshold
+    this harness can exceed."""
+    from mliprun.cli.commands.freq import app
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path)),
+        "--uncertainty-threshold", "-1"])
+    assert result.exit_code == 0, result.stdout
+    assert "deserves a DFT check" in result.stdout
+    assert "The located minimum sits inside" not in result.stdout
+
+
 def test_no_threshold_means_no_uncertainty_verdict(structure, tmp_path):
     from mliprun.cli.commands.freq import app
     result = runner.invoke(app, [

@@ -157,8 +157,18 @@ def started_committee(config, output_dir: Path, member_timeout: float,
             calc.close()
 
 
-def report_committee_uncertainty(committee_calc) -> None:
-    """Echo the committee's disagreement at the final geometry.
+def report_committee_uncertainty(committee_calc,
+                                  geometry: str = "the evaluated geometry"
+                                  ) -> None:
+    """Echo the committee's disagreement at the geometry it was measured on.
+
+    ``geometry`` names that geometry for the command calling this, and is
+    the only part of the report that differs between them. Three commands
+    share this function and they do not report the same thing: ``optimize``
+    measures the disagreement at the final geometry of a relaxation,
+    ``singlepoint`` at the one configuration it was given, and ``freq`` at
+    the input geometry of the displacement sweep. A single fixed phrase here
+    was accurate for one command and false for the other two.
 
     Printed on every run that finishes, threshold or not: with no threshold
     there is no verdict to give, and the numbers are the deliverable. The
@@ -190,7 +200,7 @@ def report_committee_uncertainty(committee_calc) -> None:
     # only. See "The flagging rule" in docs/OUTPUTS.md.
     ratio_text = "" if ratio is None else f", {ratio:.1f}x the final fmax"
     typer.echo(
-        f"\n📊 Committee disagreement at the final geometry: "
+        f"\n📊 Committee disagreement at {geometry}: "
         f"sigma_max_free = "
         f"{summary['sigma_max_free_final_eV_per_A']:.4f} eV/Å"
         f"{ratio_text}, sigma_mean_free = "
@@ -204,8 +214,15 @@ def report_committee_uncertainty(committee_calc) -> None:
             f"{', '.join(summary['unhandled_constraints'])} are not masked, "
             f"so sigma is over-reported for their atoms.")
     if summary["flagged"]:
+        # Worded for all three commands. "The located minimum sits inside
+        # the committee's own noise" was true only for `optimize`: there is
+        # no minimum on a `singlepoint`, and `freq` reports the input
+        # geometry rather than one it located.
         typer.echo(
             f"\n⚠️  sigma_max_free exceeds the threshold you set "
-            f"({summary['threshold_eV_per_A']:.4f} eV/Å). The located "
-            f"minimum sits inside the committee's own noise; this "
-            f"configuration deserves a DFT check.")
+            f"({summary['threshold_eV_per_A']:.4f} eV/Å). The members "
+            f"disagree about the forces here by more than you declared "
+            f"acceptable, so anything computed from them at this geometry — "
+            f"a located minimum, an energy, a Hessian — sits inside the "
+            f"committee's own noise; this configuration deserves a DFT "
+            f"check.")

@@ -285,7 +285,7 @@ def run(
     typer.echo(f"   📁 {(output_dir / prefix).resolve()}  "
                f"(displacement cache — delete to force a full recompute)")
 
-    report_committee_uncertainty(committee_calc)
+    report_committee_uncertainty(committee_calc, "the input geometry")
 
 
 if __name__ == "__main__":

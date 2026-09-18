@@ -205,22 +205,30 @@ def run_singlepoint(
     free_mask, unhandled = free_component_mask(atoms)
     symbols = atoms.get_chemical_symbols()
 
+    # With every atom held, `constrained_forces` is all zeros and `argmax`
+    # over it returns 0 -- naming atom 0 as the worst offender when there is
+    # no free atom to be one. An explicit null says "there is no such atom";
+    # a plausible index does not, and it is the kind of number that ends up
+    # in a table.
+    n_free_atoms = int(free_mask.any(axis=1).sum())
+    worst_free = (None if n_free_atoms == 0
+                  else int(np.argmax((constrained_forces ** 2).sum(axis=1))))
+
     results = {
         "energy_eV": energy,
         "fmax_free_eV_per_A": calc_fmax(constrained_forces),
         "fmax_all_eV_per_A": calc_fmax(raw_forces),
-        "n_free_atoms": int(free_mask.any(axis=1).sum()),
+        "n_free_atoms": n_free_atoms,
         "worst_force_atom_all": int(
             np.argmax((raw_forces ** 2).sum(axis=1))),
-        "worst_force_atom_free": int(
-            np.argmax((constrained_forces ** 2).sum(axis=1))),
+        "worst_force_atom_free": worst_free,
         "unhandled_constraints": unhandled,
         **_stress_block(atoms, stress),
     }
     results["worst_force_atom_all_symbol"] = symbols[
         results["worst_force_atom_all"]]
-    results["worst_force_atom_free_symbol"] = symbols[
-        results["worst_force_atom_free"]]
+    results["worst_force_atom_free_symbol"] = (
+        None if worst_free is None else symbols[worst_free])
 
     if committee is not None and committee.latest is not None:
         summary = uncertainty_summary(

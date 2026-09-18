@@ -93,3 +93,29 @@ def test_the_record_names_both_members(structure, tmp_path):
         (structure.parent / "mliprun_run.json").read_text())
     members = record["provenance"]["committee"]["members"]
     assert [m["name"] for m in members] == ["member_a", "member_b"]
+
+
+def test_the_echo_does_not_claim_a_final_geometry(structure, tmp_path):
+    """`report_committee_uncertainty` is shared with `optimize` and `freq`.
+    A singlepoint has one configuration and no relaxation, so "at the final
+    geometry" was false here."""
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path))])
+    assert result.exit_code == 0, result.output
+    assert "Committee disagreement at the evaluated configuration" in (
+        result.output)
+    assert "final geometry" not in result.output
+
+
+def test_a_tripped_threshold_does_not_claim_a_located_minimum(structure,
+                                                               tmp_path):
+    """Two identical EMT members give sigma exactly 0, so -1 is the only
+    threshold this harness can exceed."""
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path)),
+        "--uncertainty-threshold", "-1"])
+    assert result.exit_code == 0, result.output
+    assert "deserves a DFT check" in result.output
+    assert "The located minimum sits inside" not in result.output

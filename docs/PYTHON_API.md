@@ -154,7 +154,10 @@ what the model predicts before anything is held fixed), `n_free_atoms`,
 `worst_force_atom_free` / `worst_force_atom_free_symbol`,
 `unhandled_constraints`, `stress_eV_per_A3` / `stress_GPa` /
 `stress_unavailable_reason`, and `committee_uncertainty` when a committee
-ran. `worst_force_atom_free` (largest force) and
+ran. `worst_force_atom_free` and `worst_force_atom_free_symbol` are both
+`None` when every atom is fixed: there is then no free atom to be the worst
+one, and an explicit null says so where an index would not.
+`worst_force_atom_free` (largest force) and
 `committee_uncertainty.worst_atom_free` (largest committee disagreement) are
 two different atoms answering two different questions — see
 [OUTPUTS.md](OUTPUTS.md#singlepoint-run) for the full field-by-field

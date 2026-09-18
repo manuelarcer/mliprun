@@ -595,8 +595,8 @@ converge against. The mask columns say which rows `fmax_free` covers.
 | `n_free_atoms` | How many atoms retain at least one free force component |
 | `worst_force_atom_all` | Index of the atom with the largest raw (unconstrained) force |
 | `worst_force_atom_all_symbol` | Its chemical symbol |
-| `worst_force_atom_free` | Index of the atom with the largest constrained force |
-| `worst_force_atom_free_symbol` | Its chemical symbol |
+| `worst_force_atom_free` | Index of the atom with the largest constrained force, or `null` when every atom is fixed — there is then no free atom to be the worst one |
+| `worst_force_atom_free_symbol` | Its chemical symbol, `null` alongside a `null` index |
 | `unhandled_constraints` | Constraint type names left unmasked (see [Constraint masking](#constraint-masking)); their atoms count as free, so `fmax_free` over-reports for them |
 | `stress_eV_per_A3`, `stress_GPa` | Voigt-order stress tensor, or both `null` when not attempted or not available |
 | `stress_unavailable_reason` | Why stress is `null`: `"not requested"` (`--no-stress`), a pbc message (see [Stress](#stress) below), or the calculator's own exception; `null` when stress was reported |

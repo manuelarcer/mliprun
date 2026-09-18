@@ -59,6 +59,29 @@ def test_the_worst_force_atom_is_named_for_each_population(slab, tmp_path):
         np.argmax((constrained ** 2).sum(axis=1)))
 
 
+def test_a_fully_fixed_structure_reports_no_worst_free_atom(tmp_path):
+    """`argmax` over an all-zero array returns 0, which named atom 0 as the
+    worst offender among the free atoms when there are no free atoms at all.
+    An explicit null says "there is no such atom"; a plausible index does
+    not, and it is the kind of number that reaches a table."""
+    from ase.build import fcc111
+    from ase.calculators.emt import EMT
+    from ase.constraints import FixAtoms
+
+    atoms = fcc111("Pt", size=(2, 2, 3), vacuum=6.0)
+    atoms.set_constraint(FixAtoms(indices=list(range(len(atoms)))))
+    atoms.calc = EMT()
+    results = run_singlepoint(atoms, output_dir=tmp_path)
+
+    assert results["n_free_atoms"] == 0
+    assert results["worst_force_atom_free"] is None
+    assert results["worst_force_atom_free_symbol"] is None
+    assert results["fmax_free_eV_per_A"] == pytest.approx(0.0, abs=1e-12)
+    # The all-atom population still has a worst atom -- it is a real one.
+    assert results["worst_force_atom_all"] is not None
+    assert results["worst_force_atom_all_symbol"] == "Pt"
+
+
 def test_the_forces_csv_has_one_row_per_atom_with_the_free_mask(slab, tmp_path):
     run_singlepoint(slab, output_dir=tmp_path)
     rows = list(csv.DictReader(
