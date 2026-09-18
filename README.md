@@ -277,6 +277,7 @@ md run --structure path/to/structure.vasp
 - `--timestep`: Timestep in fs
 - `--thermostat`: For NVT (`langevin`, `nose-hoover`, `berendsen`)
 - `--barostat`: For NPT (`npt`, `berendsen`)
+- `--barostat-mask`: Which cell axes the barostat may change, as three 0/1 values (default `"1,1,1"`, isotropic). `"0,0,1"` relaxes only z — a slab–liquid cell then reaches the correct liquid density at the set pressure while the in-plane lattice stays at its relaxed bulk value. NPT only
 - `--log-interval`: Append a row to `md_energy.csv` every N steps (default: 10)
 - `--traj-interval`: Write a frame to `md.traj` every N steps (default: 100)
 - `--resume`: Continue an existing run — loads the last frame of `md.traj`, preserves momenta, and treats `--steps` as *additional* steps
@@ -294,6 +295,16 @@ md run --structure POSCAR --ensemble nvt --temperature 300 --steps 5000 --thermo
 ```bash
 md run --structure POSCAR --ensemble npt --temperature 300 --pressure 0.0 --steps 10000 --barostat berendsen
 ```
+
+**Example (slab–liquid interface: relax z only, hold the in-plane lattice):**
+```bash
+md run --structure POSCAR --ensemble npt --temperature 300 --pressure 0.0001 \
+       --steps 50000 --barostat berendsen --barostat-mask "0,0,1"
+```
+The water between the two slab faces reaches its own density at the set
+pressure while the oxide keeps the in-plane lattice constant it was cleaved
+with. The resolved mask is written to `md_params.txt`, so a masked run is
+distinguishable from an isotropic one without opening the trajectory.
 
 **Example (extend a finished run by 5000 more steps):**
 ```bash
