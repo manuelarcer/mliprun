@@ -232,8 +232,15 @@ def run(
                f"{results['n_displaced_atoms']} displaced atoms "
                f"({results['n_force_calls']} force calls)")
     typer.echo(f"   ZPE: {results['zpe_eV']:.6f} eV")
+    # Both populations, never one: the free value is what the expectation
+    # below is compared against (it is the constrained criterion an
+    # `optimize` stage converged against), while the all-atom value is what
+    # the model predicts before anything is held fixed. On a slab with
+    # frozen layers they differ by an order of magnitude.
     typer.echo(f"   fmax at the input geometry: "
-               f"{results['fmax_at_input_free_eV_per_A']:.6f} eV/Å")
+               f"{results['fmax_at_input_free_eV_per_A']:.6f} eV/Å over the "
+               f"free components, "
+               f"{results['fmax_at_input_all_eV_per_A']:.6f} eV/Å over all")
     if results["fmax_expectation_source"] == "none":
         typer.echo("   (no relaxation provenance next to this structure, so "
                    "nothing to compare it against)")

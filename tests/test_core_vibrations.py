@@ -133,6 +133,65 @@ def test_the_fmax_at_the_input_geometry_is_recorded(n2, tmp_path):
     assert results["fmax_warning"] is None
 
 
+@pytest.fixture
+def relaxed_slab():
+    """Pt(111) 2x2x4 + H, bottom two layers held, relaxed to fmax 0.02.
+
+    The dominant real use case, and the one that makes the two fmax
+    populations differ: a frozen layer carries a large force the optimizer
+    never had to remove.
+    """
+    from ase.build import add_adsorbate
+    from ase.optimize import BFGS
+
+    atoms = fcc111("Pt", size=(2, 2, 4), vacuum=7.0)
+    add_adsorbate(atoms, "H", 1.5, "ontop")
+    atoms.set_constraint(
+        FixAtoms(indices=[a.index for a in atoms if a.tag in (3, 4)]))
+    atoms.calc = EMT()
+    BFGS(atoms, logfile=None).run(fmax=0.02)
+    return atoms
+
+
+def test_the_two_input_fmax_populations_differ_on_a_constrained_slab(
+        relaxed_slab, tmp_path):
+    """The free value is the constrained one, and it is NOT the all-atom one.
+
+    ASE fills its displacement cache from ``calc.get_forces(atoms)``, which
+    bypasses constraints. Reporting that raw number under a ``_free`` name
+    made the stationary-point warning fire on every correctly relaxed slab:
+    0.38 eV/A reported against the 0.02 eV/A the optimizer converged to.
+    """
+    from mliprun.core.utils import calc_fmax
+
+    results = run_frequencies(relaxed_slab, output_dir=tmp_path)
+    free = results["fmax_at_input_free_eV_per_A"]
+    everything = results["fmax_at_input_all_eV_per_A"]
+
+    # The constrained criterion the optimizer actually met.
+    assert free == pytest.approx(calc_fmax(relaxed_slab.get_forces()),
+                                 abs=1e-9)
+    assert free < 0.02 + 1e-9
+    # The two are genuinely different numbers here, by more than an order of
+    # magnitude -- which is why the same value cannot serve both names.
+    assert everything > 10 * free
+    assert everything == pytest.approx(
+        calc_fmax(relaxed_slab.calc.get_forces(relaxed_slab)), abs=1e-9)
+
+
+def test_a_relaxed_constrained_slab_does_not_trip_the_fmax_warning(
+        relaxed_slab, tmp_path):
+    """The regression in one line: the warning must stay silent here.
+
+    Measured against the raw all-atom forces it fired every time, on a slab
+    that had converged to exactly the expectation it is handed.
+    """
+    results = run_frequencies(relaxed_slab, output_dir=tmp_path,
+                              expect_fmax=0.02)
+    assert results["fmax_warning"] is False
+    assert results["fmax_expectation"] == pytest.approx(0.02)
+
+
 def test_an_exceeded_expectation_warns_but_still_runs(tmp_path):
     atoms = molecule("N2")
     atoms.positions[1][2] += 0.3

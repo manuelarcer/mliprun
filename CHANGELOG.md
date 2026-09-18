@@ -25,11 +25,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   in full rather than refusing.
   A structure that is not at a stationary point produces spurious imaginary
   modes indistinguishable by eye from a real transition state, so fmax at
-  the input geometry (free to measure — `Vibrations.run()` evaluates it
-  first) is compared against `--expect-fmax`, else the fmax a *converged*
-  `optimize` stage in the structure's own directory actually met, else
-  nothing. **This warning never refuses**, only prints and sets
-  `fmax_warning: true`.
+  the input geometry (measured at no extra cost — `Vibrations.run()`
+  evaluates the undisplaced geometry first) is compared against
+  `--expect-fmax`, else the fmax a *converged* `optimize` stage in the
+  structure's own directory actually met, else nothing. **This warning never
+  refuses**, only prints and sets `fmax_warning: true`. Both populations are
+  reported, each named for what it covers:
+  `fmax_at_input_free_eV_per_A` over the unconstrained force components —
+  the one the expectation is compared against, since that expectation is the
+  constrained criterion an optimizer converged to — and
+  `fmax_at_input_all_eV_per_A` over every component. On a relaxed Pt(111)
+  2×2×4 + H slab with two frozen layers they measure 0.0198 and 0.3809 eV/Å.
   Cost is `1 + 6 × n_displaced` force calls at `--nfree 2`, `1 + 12 ×
   n_displaced` at `--nfree 4`; a restart replays only the displacements not
   already in the `<prefix>/` cache.

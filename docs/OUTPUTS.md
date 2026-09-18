@@ -699,9 +699,9 @@ modes only.
 ### The stationary-point warning
 
 A frequency analysis assumes the input geometry sits at a stationary point.
-`freq` measures fmax at the input geometry — free, since `Vibrations.run()`
-evaluates the undisplaced geometry first, before any displacement — and
-compares it against an expectation, in order:
+`freq` measures fmax at the input geometry — at no extra cost, since
+`Vibrations.run()` evaluates the undisplaced geometry first, before any
+displacement — and compares it against an expectation, in order:
 
 1. `--expect-fmax X`, when given (`fmax_expectation_source: "explicit"`).
 2. Otherwise, the fmax a **converged** `optimize` stage in the *structure's
@@ -714,6 +714,22 @@ compares it against an expectation, in order:
 3. Otherwise, no comparison (`fmax_expectation_source: "none"`,
    `fmax_warning: null`). The measured fmax is still reported, with a line
    saying no relaxation provenance was found next to the structure.
+
+**Two fmax values are reported, and the comparison uses the free one.**
+`fmax_at_input_free_eV_per_A` covers only the force components no constraint
+holds, exactly as `singlepoint`'s `fmax_free_eV_per_A` does; it is what the
+expectation above is measured against, because that expectation is the
+*constrained* criterion an `optimize` stage converged to.
+`fmax_at_input_all_eV_per_A` is the same forces with no mask applied — what
+the model predicts before anything is held fixed. On a slab with frozen
+layers they differ by an order of magnitude (measured on a relaxed Pt(111)
+2×2×4 + H slab: 0.0198 eV/Å free against 0.3809 eV/Å over all atoms), so
+comparing the all-atom number against an `optimize` record's fmax would
+raise the warning on every correctly relaxed slab. The masking follows
+[Constraint masking](#constraint-masking): a projecting constraint
+(`FixedPlane`, `FixedLine`, …) is left unmasked, so the free value
+over-reports for those atoms and their type names appear in
+`unhandled_constraints`.
 
 **This warning never refuses.** Exceeding the expectation prints a warning
 and sets `fmax_warning: true`; the run completes regardless. A geometry that
@@ -900,7 +916,8 @@ means.
 
 **freq** — `n_modes`, `n_imaginary`, `frequencies_cm-1` (list, magnitudes),
 `imaginary_mask` (list, bool), `zpe_eV` (real modes only, see [`freq
-run`](#freq-run) above), `fmax_at_input_free_eV_per_A`, `fmax_expectation`,
+run`](#freq-run) above), `fmax_at_input_free_eV_per_A`,
+`fmax_at_input_all_eV_per_A`, `fmax_expectation`,
 `fmax_expectation_source`, `fmax_warning`, `n_displaced_atoms`,
 `n_force_calls`, `unhandled_constraints`, and — with `--committee` —
 `committee_frequencies` (see [Committee frequencies](#committee-frequencies)

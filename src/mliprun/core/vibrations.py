@@ -17,7 +17,10 @@ from pathlib import Path
 import numpy as np
 from ase.vibrations import Vibrations
 
-from mliprun.core.committee.calculator import uncertainty_summary
+from mliprun.core.committee.calculator import (
+    free_component_mask,
+    uncertainty_summary,
+)
 from mliprun.core.run_record import RunRecord, collect_provenance
 from mliprun.core.utils import calc_fmax
 
@@ -538,7 +541,8 @@ def run_frequencies(
     write_modes : str
         ``'none'``, ``'imaginary'`` or ``'all'``.
     expect_fmax : float, optional
-        Warn when fmax at the input geometry exceeds this. Never refuses.
+        Warn when fmax at the input geometry, over the free force components,
+        exceeds this. Never refuses.
     structure_dir : str or Path, optional
         Where to look for a run record supplying the expectation when
         ``expect_fmax`` is None. Defaults to ``output_dir``.
@@ -657,9 +661,30 @@ def run_frequencies(
     # The undisplaced geometry is already in the cache -- run() evaluates it
     # first -- so this costs nothing.
     eq_forces = np.asarray(vib._eq_disp().forces(), dtype=float)
-    fmax_at_input = calc_fmax(eq_forces)
+    # What ASE put in that cache came from `calc.get_forces(atoms)`, which
+    # BYPASSES the constraint machinery: it is an all-atom number. The
+    # expectation it is compared against comes from an `optimize` record --
+    # the CONSTRAINED criterion the optimizer actually converged against --
+    # so measuring the comparison against the raw number would fire on every
+    # correctly relaxed slab with frozen layers (measured on a Pt(111) 2x2x4
+    # + H slab relaxed to fmax 0.02 with the bottom two layers held: raw
+    # 0.3809 eV/A against constrained 0.0198 eV/A). Both are reported, each
+    # named for its population, exactly as `run_singlepoint` does.
+    #
+    # Masking the cached forces reproduces `atoms.get_forces()` exactly for
+    # the constraints `free_component_mask` handles (FixAtoms,
+    # FixCartesian): on that same slab both routes give 0.019832 eV/A. This
+    # deliberately uses `free_component_mask`'s notion of "free", not
+    # `select_indices`' -- the two answer different questions about the same
+    # constraints, as `select_indices`' own docstring sets out. A projecting
+    # constraint (FixedPlane, FixedLine, ...) is left unmasked there, so the
+    # free value over-reports rather than under-reports for those atoms;
+    # `unhandled_constraints` in the results says when that applies.
+    free_mask, _ = free_component_mask(atoms)
+    fmax_at_input_free = calc_fmax(eq_forces * free_mask)
+    fmax_at_input_all = calc_fmax(eq_forces)
     fmax_warning = (None if expectation is None
-                    else bool(fmax_at_input > expectation))
+                    else bool(fmax_at_input_free > expectation))
 
     data = vib.get_vibrations(method=method, direction=direction)
     energies = np.asarray(data.get_energies())
@@ -738,7 +763,8 @@ def run_frequencies(
         "frequencies_cm-1": [float(v) for v in magnitudes],
         "imaginary_mask": [bool(v) for v in imaginary],
         "zpe_eV": float(data.get_zero_point_energy()),
-        "fmax_at_input_free_eV_per_A": float(fmax_at_input),
+        "fmax_at_input_free_eV_per_A": float(fmax_at_input_free),
+        "fmax_at_input_all_eV_per_A": float(fmax_at_input_all),
         "fmax_expectation": expectation,
         "fmax_expectation_source": expectation_source,
         "fmax_warning": fmax_warning,

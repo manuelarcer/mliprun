@@ -282,7 +282,7 @@ imaginary-mode count, and the zero-point energy (ZPE).
 - `--nfree`: `2` (three-point stencil, default) or `4` (five-point stencil, doubling the cost).
 - `--direction` / `--method`: `central` (default), `forward` or `backward`; `standard` (default) or `frederiksen` (acoustic sum-rule correction, useful on slabs).
 - `--write-modes`: `none`, `imaginary` (default) or `all` — which modes get an animated trajectory.
-- `--expect-fmax`: warn when fmax at the input geometry exceeds this (eV/Å). Default: the fmax a **converged** `optimize` stage in the structure's own directory actually met, if there is one. **This never stops the run** — it only warns.
+- `--expect-fmax`: warn when fmax at the input geometry, **over the free force components**, exceeds this (eV/Å). Default: the fmax a **converged** `optimize` stage in the structure's own directory actually met, if there is one. **This never stops the run** — it only warns. Both `fmax_at_input_free_eV_per_A` and `fmax_at_input_all_eV_per_A` are reported; the comparison uses the free one, since that is the criterion an optimizer converges against (see [OUTPUTS.md](docs/OUTPUTS.md#the-stationary-point-warning)).
 - `--output-dir`: directory for this run's outputs (default: next to `--structure`, as `optimize`/`singlepoint`/`md` do). Give a frequency run its own folder: a run record is *replaced*, not appended to, by the next command that writes into the same directory. The fmax-expectation lookup above still reads the structure's own directory regardless of `--output-dir`.
 - `--prefix`: stem for the output file names (default `freq`).
 
