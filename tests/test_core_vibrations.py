@@ -148,10 +148,15 @@ def test_the_run_record_carries_the_freq_stage(n2, tmp_path):
     stage = record["stages"][0]
     assert stage["kind"] == "freq"
     assert stage["status"] == "completed"
+    # RunRecord.begin() only writes a per-stage `parameters` block when the
+    # caller passes `stage_parameters=`, which run_frequencies does not (it
+    # matches optimize/singlepoint/md's convention: one parameters block, at
+    # the top level, never duplicated per stage). So this reads the record's
+    # top-level `parameters`, not the stage's.
     # Without a RunContext, `_tag` stores bare values rather than
     # {"value":, "source":} dicts. Unwrap either shape rather than asserting
     # one and discovering the other in CI.
-    delta = stage["parameters"]["delta"]
+    delta = record["parameters"]["delta"]
     assert (delta["value"] if isinstance(delta, dict) else delta) == (
         pytest.approx(0.01))
 
@@ -163,7 +168,9 @@ def test_the_recorded_indices_match_what_was_displaced(tmp_path):
     atoms.calc = EMT()
     results = run_frequencies(atoms, output_dir=tmp_path)
     record = json.loads((tmp_path / "mliprun_run.json").read_text())
-    recorded = record["stages"][0]["parameters"]["indices"]
+    # Top-level `parameters`, not the stage's -- see the comment in
+    # test_the_run_record_carries_the_freq_stage.
+    recorded = record["parameters"]["indices"]
     recorded = recorded["value"] if isinstance(recorded, dict) else recorded
     assert len(recorded) == results["n_displaced_atoms"]
     assert set(recorded).isdisjoint(bottom)

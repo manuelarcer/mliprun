@@ -429,7 +429,7 @@ def run_frequencies(
         device_requested = "committee"
         device_resolved = "committee"
 
-    stage_parameters = {
+    parameters = {
         "prefix": prefix,
         "delta": delta,
         "nfree": nfree,
@@ -447,7 +447,7 @@ def run_frequencies(
         output_path,
         command="freq",
         stage_kind="freq",
-        parameters=stage_parameters,
+        parameters=parameters,
         inputs={
             "n_atoms": len(atoms),
             "formula": atoms.get_chemical_formula(),
@@ -465,7 +465,6 @@ def run_frequencies(
                                committee, "member_versions", None))),
         ),
         run_context=run_context,
-        stage_parameters=stage_parameters,
     )
 
     # `name` sets both the cache directory and the mode filenames: ASE's
