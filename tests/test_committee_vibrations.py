@@ -269,20 +269,136 @@ def test_a_disagreeing_committee_gives_a_non_zero_spread(tmp_path):
     assert spread.max() > 1.0        # cm-1, well above numerical noise
 
 
-def test_swapped_modes_are_caught_by_the_overlap_not_by_the_spread(tmp_path):
-    """The failure the overlap column exists to make visible.
+class _AxisSplittingFakeCommittee(Calculator):
+    """Two members that stiffen a near-degenerate pair along different axes.
 
-    Two members whose mode 0 and mode 1 are the same two physical modes in
-    the opposite order. Paired by index they look like a large
-    disagreement; the overlap says the pairing is what is wrong.
+    Purpose-built to produce a genuinely low mode overlap through the real
+    committee machinery, rather than asserting arithmetic inline.
+
+    ``member_a`` adds a harmonic restoring force along **x** and
+    ``member_b`` the same along **y**, both measured from one fixed
+    reference geometry. Two consequences follow, and they are the whole
+    point:
+
+    1. The consensus (their mean) is stiffened equally along x and y, so its
+       transverse modes stay **degenerate** -- and an eigenvector basis
+       inside a degenerate subspace is arbitrary, exactly the situation the
+       overlap column exists for.
+    2. Each member's own basis is pinned to its own axis, and the two
+       members are mirror images of each other, so their sorted spectra are
+       **identical**. The per-mode spread across members is therefore
+       exactly zero even though every member's basis is rotated away from
+       the committee's.
+
+    Whatever basis LAPACK returns for the committee's degenerate subspace,
+    it cannot agree with both members at once, so the worst overlap is low
+    by construction rather than by luck.
+
+    Reuses the real ``committee_statistics`` / ``free_component_mask``, like
+    ``_DisplacementLeakingFakeCommittee`` below, so only the mode pairing is
+    under test here and not the statistics.
     """
-    from mliprun.core.vibrations import MODE_OVERLAP_WARN
 
-    committee_modes = np.array([[1.0, 0.0], [0.0, 1.0]])
-    member_modes = np.array([[0.0, 1.0], [1.0, 0.0]])     # order swapped
-    overlaps = np.abs(np.einsum("ij,ij->i", member_modes, committee_modes))
-    assert overlaps.max() == pytest.approx(0.0, abs=1e-12)
-    assert overlaps.min() < MODE_OVERLAP_WARN
+    implemented_properties = ["energy", "free_energy", "forces"]
+
+    def __init__(self, reference_positions, stiffness=5.0):
+        super().__init__()
+        self.member_names = ["member_a", "member_b"]
+        self.members = [
+            type("Member", (), {"name": name})() for name in self.member_names]
+        self._reference = np.asarray(reference_positions, dtype=float).copy()
+        self._stiffness = float(stiffness)
+        self.latest = None
+        self.latest_uncertainty_summary = None
+
+    def preflight(self, atoms):
+        return self._evaluate(atoms)
+
+    def calculate(self, atoms=None, properties=("energy",),
+                  system_changes=all_changes):
+        super().calculate(atoms, properties, system_changes)
+        stats = self._evaluate(self.atoms)
+        self.results["energy"] = stats["energy_mean"]
+        self.results["free_energy"] = stats["energy_mean"]
+        self.results["forces"] = stats["forces_mean"]
+
+    def _evaluate(self, atoms):
+        from ase.calculators.emt import EMT
+
+        from mliprun.core.committee.calculator import (
+            committee_statistics,
+            free_component_mask,
+        )
+
+        reference = atoms.copy()
+        reference.calc = EMT()
+        base = np.asarray(reference.get_forces(), dtype=float)
+        energy = float(reference.get_potential_energy())
+        offset = atoms.get_positions() - self._reference
+
+        f_a = base.copy()
+        f_a[:, 0] -= self._stiffness * offset[:, 0]      # stiff along x
+        f_b = base.copy()
+        f_b[:, 1] -= self._stiffness * offset[:, 1]      # stiff along y
+        stacked = np.stack([f_a, f_b])
+
+        free_mask, unhandled = free_component_mask(atoms)
+        stats = committee_statistics([energy, energy], stacked,
+                                     free_mask=free_mask)
+        stats["free_mask"] = free_mask
+        stats["unhandled_constraints"] = unhandled
+        stats["energies"] = {"member_a": energy, "member_b": energy}
+        stats["forces_per_member"] = stacked
+        self.latest = stats
+        return stats
+
+
+def test_a_rotated_mode_basis_is_caught_by_the_overlap_not_by_the_spread(
+        tmp_path, caplog):
+    """The failure the overlap column exists to make visible, through the
+    real code: ``member_frequencies``, the real Hessian per member, the real
+    unit-row renormalization and the real index pairing.
+
+    The two members' sorted spectra are identical, so the per-mode spread is
+    exactly zero and says "the members agree". The overlap says the pairing
+    is what is wrong. If the spread were the only diagnostic, this run would
+    look clean.
+    """
+    import logging
+
+    from mliprun.core.vibrations import MODE_OVERLAP_WARN, run_frequencies
+
+    atoms = molecule("N2")
+    atoms.center(vacuum=5.0)
+    committee = _AxisSplittingFakeCommittee(atoms.get_positions().copy())
+    atoms.calc = committee
+
+    with caplog.at_level(logging.WARNING, logger="mliprun.core.vibrations"):
+        results = run_frequencies(atoms, output_dir=tmp_path,
+                                  committee=committee)
+
+    block = results["committee_frequencies"]
+    # The spread sees nothing: mirror-image members, identical spectra. The
+    # residue is eigenvalue noise on the near-zero modes (measured 4.2e-6
+    # cm^-1), seven orders below the >50 cm^-1 mispairing asserted at the
+    # end of this test.
+    assert max(block["frequency_member_std_cm-1"]) < 1e-4
+    # The overlap does. Low by construction: the committee's transverse
+    # modes are degenerate, so its basis there is arbitrary and cannot match
+    # both members' axis-aligned bases at once.
+    assert block["worst_mode_overlap"] < MODE_OVERLAP_WARN
+    assert block["mode_pairing_suspect"] is True
+    assert any("lowest mode overlap" in record.message
+               for record in caplog.records)
+
+    # At least one member's frequency genuinely disagrees with the
+    # committee's for the mode it is paired against -- the consequence of
+    # the mispairing, and what makes the diagnostic worth having.
+    rows = list(csv.DictReader(
+        (tmp_path / "freq_committee_frequencies.csv").open()))
+    assert any(abs(float(row["member_a_cm-1"])
+                   - float(row["frequency_committee_cm-1"])) > 50.0
+               for row in rows)
 
 
 def test_the_run_record_flags_suspect_mode_pairing(structure, tmp_path,
@@ -294,9 +410,10 @@ def test_the_run_record_flags_suspect_mode_pairing(structure, tmp_path,
     from mliprun.cli.commands.freq import app
 
     monkeypatch.setattr(vibrations_module, "MODE_OVERLAP_WARN", 1.5)
-    runner.invoke(app, [
+    result = runner.invoke(app, [
         "run", "--structure", str(structure),
         "--committee", str(_committee_file(tmp_path))])
+    assert result.exit_code == 0, result.stdout
     record = json.loads(
         (structure.parent / "mliprun_run.json").read_text())
     block = record["stages"][0]["results"]["committee_frequencies"]

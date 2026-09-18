@@ -325,6 +325,17 @@ number instead of the qualified one it is:
   `mode_pairing_suspect` is set `true` in the run record. 0.9 is a
   diagnostic trigger for a warning, not a scientific verdict — the overlaps
   themselves are in the CSV for anyone who disagrees with it.
+  **Expect this flag to be noisy, and treat it as untested against real
+  potentials.** It takes its minimum over *every* mode, near-zero ones
+  included, and the eigenvectors of a near-zero frustrated translation or
+  rotation are an arbitrary basis that differs freely between members — so
+  the flag may well fire on runs where nothing is wrong. It has been
+  exercised against EMT only. Read `worst_mode_overlap` and the per-mode
+  `<member>_overlap` columns next to the frequencies before acting on the
+  flag: an overlap that is low only for modes at a few cm⁻¹ says nothing
+  about the modes you are reporting. Whether to apply a frequency floor
+  below which the diagnostic is skipped is an open question for the project
+  owner, not something this command decides.
 - **At `delta = 0.01 Å` (the default), a merely noisy member contributes to
   the spread alongside genuine model disagreement, and one sweep cannot
   separate the two.** The force differences being divided are small at that
