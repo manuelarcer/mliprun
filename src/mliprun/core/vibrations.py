@@ -41,6 +41,29 @@ IMAGINARY_ENERGY_TOL_EV = 1e-8
 #: themselves are in the CSV for anyone who disagrees with the number.
 MODE_OVERLAP_WARN = 0.9
 
+#: Tolerance, in eV/A, for deciding that a reused displacement cache was
+#: written by THIS run's calculator.
+#:
+#: Not exact equality, deliberately. A real MLIP on a GPU is not
+#: bit-reproducible between runs -- the reduction order inside the kernels is
+#: not fixed -- so an exact comparison would reject the legitimate restart
+#: this cache exists to make cheap. A DIFFERENT model, on the other hand,
+#: disagrees by orders of magnitude: the EMT/Lennard-Jones pair that exposed
+#: the bug differs by ~1 eV/A on N2, six orders above this. 1e-6 eV/A
+#: therefore separates "same calculator, re-evaluated" from "someone else's
+#: cache" cleanly, and is itself far below any force anyone reports.
+CACHE_IDENTITY_ATOL = 1e-6
+
+
+class FrequencyCacheError(RuntimeError):
+    """A displacement cache in this output directory cannot be trusted.
+
+    Raised rather than worked around: the alternative is reporting another
+    calculator's forces under this run's provenance, which is a wrong number
+    carrying a false attribution. Both remedies -- delete the cache, or give
+    this run its own ``--prefix`` -- are in the message.
+    """
+
 
 def assemble_hessian(forces, indices, delta, nfree=2,
                      direction="central", method="standard"):
@@ -392,6 +415,69 @@ def _member_forces(vib, nfree):
     return out
 
 
+def _expected_force_calls(n_displaced, nfree):
+    """What a sweep from an empty cache would cost, in force calls.
+
+    ``1`` for the undisplaced geometry, plus ``6`` per displaced atom at
+    ``nfree=2`` (three-point: two signs x three Cartesian directions) or
+    ``12`` at ``nfree=4``. Pinned by
+    tests/test_core_vibrations.py::test_the_force_call_count_is_one_plus_six_
+    per_displaced_atom and its ``nfree=4`` sibling.
+    """
+    return 1 + (6 if nfree == 2 else 12) * int(n_displaced)
+
+
+def _reject_a_foreign_cache(vib, atoms, cache_dir, nfree):
+    """Refuse a displacement cache that a different calculator wrote.
+
+    ASE names its cache ``<output_dir>/<prefix>``, and ``prefix`` defaults to
+    ``freq`` whatever the model is. So a second run with a DIFFERENT MLIP in
+    the same directory silently reuses the first model's forces and reports
+    them under its own provenance. Measured before this guard existed, EMT
+    then Lennard-Jones on N2 in one directory: run 2 made 0 force calls,
+    reported EMT's 928.1448 cm^-1 top frequency, and wrote
+    ``provenance.mlip_model: "lj"``. Comparing two potentials on one
+    structure is an obvious workflow and both runs default to the same
+    directory and the same prefix.
+
+    The check runs only when something was actually reused -- a fresh sweep
+    has nothing to verify -- and costs exactly one force evaluation against
+    the ``6n`` a restart saves. It is not counted in ``n_force_calls``, which
+    reports the sweep's own cost.
+
+    Raises
+    ------
+    FrequencyCacheError
+        When the current calculator's forces at the undisplaced geometry
+        differ from the cached ones by more than
+        :data:`CACHE_IDENTITY_ATOL`.
+    """
+    if vib.n_force_calls >= _expected_force_calls(len(vib.indices), nfree):
+        return                      # nothing reused: nothing to verify
+    cached = np.asarray(vib._eq_disp().forces(), dtype=float)
+    # `vib.calc.get_forces(atoms)` is exactly the call ASE's own
+    # `Vibrations.calculate` makes (`results['forces'] =
+    # self.calc.get_forces(atoms)`), so this is like-for-like rather than a
+    # near-equivalent. `atoms` is back at the undisplaced geometry here --
+    # `run()` restores it after every displacement.
+    current = np.asarray(vib.calc.get_forces(atoms), dtype=float)
+    if (current.shape == cached.shape
+            and np.allclose(current, cached, rtol=0,
+                            atol=CACHE_IDENTITY_ATOL)):
+        return
+    deviation = (float(np.abs(current - cached).max())
+                 if current.shape == cached.shape else float("nan"))
+    raise FrequencyCacheError(
+        f"the displacement cache in {cache_dir} was not written by this "
+        f"run's calculator: re-evaluating the undisplaced geometry gives "
+        f"forces differing from the cached ones by {deviation:.3g} eV/A, "
+        f"above the {CACHE_IDENTITY_ATOL:g} eV/A tolerance that separates a "
+        f"re-evaluation of the same model from a different one. Reusing it "
+        f"would report that calculator's frequencies under this run's "
+        f"provenance. Delete {cache_dir} to recompute the sweep, or pass a "
+        f"different --prefix to give this run its own cache.")
+
+
 def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
                        member_names, committee_modes):
     """Per-member frequencies, ZPE, per-mode spread and mode overlaps.
@@ -624,169 +710,181 @@ def run_frequencies(
         atoms, indices=list(chosen), name=vibration_name,
         delta=delta, nfree=nfree)
 
+    # One guard over everything from the sweep to the last write, rather
+    # than the two statements it used to cover. Every step below can raise --
+    # the cache guards raise deliberately -- and an exception escaping before
+    # the record is completed leaves it saying `status: "running"`, which
+    # docs/OUTPUTS.md defines as "the job died without reporting back". A
+    # wrong number must stop the run loudly; it must not also leave a record
+    # claiming the job is still going.
     try:
         vib.run()
         vib.read(method=method, direction=direction)
+        _reject_a_foreign_cache(vib, atoms, vibration_name, nfree)
+
+        results_uncertainty = None
+        if committee is not None:
+            # ASE's Vibrations.run() restores atoms.positions after every
+            # displacement (ase.vibrations.vibrations.Vibrations.iterdisplace:
+            # `if inplace: atoms.positions[disp.a, disp.i] = pos0`, which
+            # fires for every displacement including the last, whether or not
+            # it was actually recomputed this call) -- confirmed here rather
+            # than assumed: `atoms.get_positions()` after `vib.run()` matches
+            # the pre-run geometry bit-for-bit, on both a fresh sweep and a
+            # fully cached restart. So `atoms` is back at the INPUT geometry
+            # now, not the last-displaced one -- reading `committee.latest`
+            # at this point (set by whichever displacement's `calculate()`
+            # ran last, or not set at all after a fully cached restart) would
+            # silently describe the wrong geometry, or none. One explicit
+            # evaluation here is the only way to be sure: `preflight` (==
+            # `_evaluate`) is cheap (one call against 1 + 6*n_displaced for
+            # the sweep) and, unlike the cache, gives the same answer on a
+            # restart as on a fresh run.
+            committee.preflight(atoms)
+            threshold = (float(uncertainty_threshold)
+                         if uncertainty_threshold is not None else None)
+            threshold_source = ("explicit"
+                                if uncertainty_threshold is not None
+                                else "none")
+            results_uncertainty = uncertainty_summary(
+                [], committee.latest, threshold=threshold,
+                threshold_source=threshold_source,
+                symbols=atoms.get_chemical_symbols())
+            committee.latest_uncertainty_summary = results_uncertainty
+
+        # The undisplaced geometry is already in the cache -- run() evaluates
+        # it first -- so this costs nothing.
+        eq_forces = np.asarray(vib._eq_disp().forces(), dtype=float)
+        # What ASE put in that cache came from `calc.get_forces(atoms)`,
+        # which BYPASSES the constraint machinery: it is an all-atom number.
+        # The expectation it is compared against comes from an `optimize`
+        # record -- the CONSTRAINED criterion the optimizer actually
+        # converged against -- so measuring the comparison against the raw
+        # number would fire on every correctly relaxed slab with frozen
+        # layers (measured on a Pt(111) 2x2x4 + H slab relaxed to fmax 0.02
+        # with the bottom two layers held: raw 0.3809 eV/A against
+        # constrained 0.0198 eV/A). Both are reported, each named for its
+        # population, exactly as `run_singlepoint` does.
+        #
+        # Masking the cached forces reproduces `atoms.get_forces()` exactly
+        # for the constraints `free_component_mask` handles (FixAtoms,
+        # FixCartesian): on that same slab both routes give 0.019832 eV/A.
+        # This deliberately uses `free_component_mask`'s notion of "free",
+        # not `select_indices`' -- the two answer different questions about
+        # the same constraints, as `select_indices`' own docstring sets out.
+        # A projecting constraint (FixedPlane, FixedLine, ...) is left
+        # unmasked there, so the free value over-reports rather than
+        # under-reports for those atoms; `unhandled_constraints` in the
+        # results says when that applies.
+        free_mask, _ = free_component_mask(atoms)
+        fmax_at_input_free = calc_fmax(eq_forces * free_mask)
+        fmax_at_input_all = calc_fmax(eq_forces)
+        fmax_warning = (None if expectation is None
+                        else bool(fmax_at_input_free > expectation))
+
+        data = vib.get_vibrations(method=method, direction=direction)
+        energies = np.asarray(data.get_energies())
+        frequencies = np.asarray(data.get_frequencies())
+        # Classify exactly as ASE's own summary table does (data.py's
+        # _tabulate_from_energies): on the mode ENERGY in eV against im_tol,
+        # never on the frequency in cm^-1. A near-zero frustrated
+        # translation/rotation on a slab can pick up an arbitrary tiny sign
+        # from finite differences; a `> 0` threshold on the frequency would
+        # call that noise imaginary here while the summary table -- and any
+        # transition-state "exactly one imaginary mode" check -- called it
+        # real.
+        imaginary = np.abs(energies.imag) > IMAGINARY_ENERGY_TOL_EV
+        # ASE's frequency for each mode is the complex square root of a real
+        # eigenvalue: non-negative gives a purely real, non-negative result;
+        # negative gives a purely imaginary result with a non-negative
+        # imaginary part. Exactly one of .real/.imag is nonzero, so np.abs()
+        # (the complex modulus) always recovers that value -- unlike
+        # selecting .imag or .real by the `imaginary` flag above, which now
+        # uses a threshold on a DIFFERENT quantity (the energy) and can
+        # therefore pick the wrong, exactly-zero component for a mode sitting
+        # right at that threshold (see test_the_frequency_csv_and_summary_
+        # agree_on_which_modes_are_imaginary and the regression it caught in
+        # test_frequencies_match_ases_own_for_the_same_settings).
+        magnitudes = np.abs(frequencies)
+        # The same modulus, for the same reason, applied to the mode
+        # energies: an imaginary mode's energy is purely imaginary, so
+        # `.real` of it is exactly 0.0 and the CSV row reported a nonzero
+        # frequency beside a zero energy (654.41 cm-1 written as 0.0 meV,
+        # where the honest value is 81.1 meV).
+        energy_magnitudes = np.abs(energies)
+
+        with vibrations_json.open("w") as handle:
+            data.write(handle)
+        # A handle in write mode, not a path: summary()'s log argument opens
+        # a path with mode 'a', so a restart would write a second table into
+        # the same file and the result would read as twice as many modes.
+        with summary_txt.open("w") as handle:
+            vib.summary(method=method, direction=direction, log=handle)
+        _write_frequency_csv(frequencies_csv, magnitudes, energy_magnitudes,
+                             imaginary)
+
+        results_committee = None
+        if committee is not None:
+            committee_modes = np.asarray(data.get_modes()).reshape(
+                len(frequencies), -1)
+            block = member_frequencies(
+                vib, atoms, chosen, delta, nfree, direction, method,
+                committee.member_names, committee_modes)
+            _write_committee_frequency_csv(
+                output_path / f"{prefix}_committee_frequencies.csv",
+                magnitudes, imaginary, committee.member_names, block)
+            zpe_values = [block["zpe"][name]
+                          for name in committee.member_names]
+            worst_overlap = min(
+                float(block["overlaps"][name].min())
+                for name in committee.member_names)
+            results_committee = {
+                "zpe_eV_per_member": block["zpe"],
+                "zpe_mean_eV": float(np.mean(zpe_values)),
+                "zpe_std_eV": float(np.std(zpe_values, ddof=1)),
+                "frequency_member_std_cm-1": [float(v) for v in block["std"]],
+                "worst_mode_overlap": worst_overlap,
+                "mode_pairing_suspect": bool(
+                    worst_overlap < MODE_OVERLAP_WARN),
+            }
+            if worst_overlap < MODE_OVERLAP_WARN:
+                logger.warning(
+                    "committee frequencies: lowest mode overlap is %.3f, "
+                    "below %.2f. Modes are paired by index, so a "
+                    "near-degenerate pair whose order differs between members "
+                    "is compared like-for-unlike and its spread is not "
+                    "disagreement.",
+                    worst_overlap, MODE_OVERLAP_WARN)
+
+        if write_modes == "all":
+            for index in range(len(frequencies)):
+                vib.write_mode(index)
+        elif write_modes == "imaginary":
+            for index in np.flatnonzero(imaginary):
+                vib.write_mode(int(index))
+
+        results = {
+            "n_modes": int(len(frequencies)),
+            "n_imaginary": int(imaginary.sum()),
+            "frequencies_cm-1": [float(v) for v in magnitudes],
+            "imaginary_mask": [bool(v) for v in imaginary],
+            "zpe_eV": float(data.get_zero_point_energy()),
+            "fmax_at_input_free_eV_per_A": float(fmax_at_input_free),
+            "fmax_at_input_all_eV_per_A": float(fmax_at_input_all),
+            "fmax_expectation": expectation,
+            "fmax_expectation_source": expectation_source,
+            "fmax_warning": fmax_warning,
+            "n_displaced_atoms": int(len(chosen)),
+            "n_force_calls": int(vib.n_force_calls),
+            "unhandled_constraints": unhandled,
+        }
+        if results_committee is not None:
+            results["committee_frequencies"] = results_committee
+        if results_uncertainty is not None:
+            results["committee_uncertainty"] = results_uncertainty
     except Exception as exc:
         record.complete(status="failed", results={"error": str(exc)})
         raise
-
-    results_uncertainty = None
-    if committee is not None:
-        # ASE's Vibrations.run() restores atoms.positions after every
-        # displacement (ase.vibrations.vibrations.Vibrations.iterdisplace:
-        # `if inplace: atoms.positions[disp.a, disp.i] = pos0`, which fires
-        # for every displacement including the last, whether or not it was
-        # actually recomputed this call) -- confirmed here rather than
-        # assumed: `atoms.get_positions()` after `vib.run()` matches the
-        # pre-run geometry bit-for-bit, on both a fresh sweep and a fully
-        # cached restart. So `atoms` is back at the INPUT geometry now, not
-        # the last-displaced one -- reading `committee.latest` at this point
-        # (set by whichever displacement's `calculate()` ran last, or not
-        # set at all after a fully cached restart) would silently describe
-        # the wrong geometry, or none. One explicit evaluation here is the
-        # only way to be sure: `preflight` (== `_evaluate`) is cheap (one
-        # call against 1 + 6*n_displaced for the sweep) and, unlike the
-        # cache, gives the same answer on a restart as on a fresh run.
-        try:
-            committee.preflight(atoms)
-        except Exception as exc:
-            record.complete(status="failed", results={"error": str(exc)})
-            raise
-        threshold = (float(uncertainty_threshold)
-                    if uncertainty_threshold is not None else None)
-        threshold_source = ("explicit" if uncertainty_threshold is not None
-                            else "none")
-        results_uncertainty = uncertainty_summary(
-            [], committee.latest, threshold=threshold,
-            threshold_source=threshold_source,
-            symbols=atoms.get_chemical_symbols())
-        committee.latest_uncertainty_summary = results_uncertainty
-
-    # The undisplaced geometry is already in the cache -- run() evaluates it
-    # first -- so this costs nothing.
-    eq_forces = np.asarray(vib._eq_disp().forces(), dtype=float)
-    # What ASE put in that cache came from `calc.get_forces(atoms)`, which
-    # BYPASSES the constraint machinery: it is an all-atom number. The
-    # expectation it is compared against comes from an `optimize` record --
-    # the CONSTRAINED criterion the optimizer actually converged against --
-    # so measuring the comparison against the raw number would fire on every
-    # correctly relaxed slab with frozen layers (measured on a Pt(111) 2x2x4
-    # + H slab relaxed to fmax 0.02 with the bottom two layers held: raw
-    # 0.3809 eV/A against constrained 0.0198 eV/A). Both are reported, each
-    # named for its population, exactly as `run_singlepoint` does.
-    #
-    # Masking the cached forces reproduces `atoms.get_forces()` exactly for
-    # the constraints `free_component_mask` handles (FixAtoms,
-    # FixCartesian): on that same slab both routes give 0.019832 eV/A. This
-    # deliberately uses `free_component_mask`'s notion of "free", not
-    # `select_indices`' -- the two answer different questions about the same
-    # constraints, as `select_indices`' own docstring sets out. A projecting
-    # constraint (FixedPlane, FixedLine, ...) is left unmasked there, so the
-    # free value over-reports rather than under-reports for those atoms;
-    # `unhandled_constraints` in the results says when that applies.
-    free_mask, _ = free_component_mask(atoms)
-    fmax_at_input_free = calc_fmax(eq_forces * free_mask)
-    fmax_at_input_all = calc_fmax(eq_forces)
-    fmax_warning = (None if expectation is None
-                    else bool(fmax_at_input_free > expectation))
-
-    data = vib.get_vibrations(method=method, direction=direction)
-    energies = np.asarray(data.get_energies())
-    frequencies = np.asarray(data.get_frequencies())
-    # Classify exactly as ASE's own summary table does (data.py's
-    # _tabulate_from_energies): on the mode ENERGY in eV against im_tol,
-    # never on the frequency in cm^-1. A near-zero frustrated
-    # translation/rotation on a slab can pick up an arbitrary tiny sign from
-    # finite differences; a `> 0` threshold on the frequency would call that
-    # noise imaginary here while the summary table -- and any transition-
-    # state "exactly one imaginary mode" check -- called it real.
-    imaginary = np.abs(energies.imag) > IMAGINARY_ENERGY_TOL_EV
-    # ASE's frequency for each mode is the complex square root of a real
-    # eigenvalue: non-negative gives a purely real, non-negative result;
-    # negative gives a purely imaginary result with a non-negative
-    # imaginary part. Exactly one of .real/.imag is nonzero, so np.abs()
-    # (the complex modulus) always recovers that value -- unlike selecting
-    # .imag or .real by the `imaginary` flag above, which now uses a
-    # threshold on a DIFFERENT quantity (the energy) and can therefore pick
-    # the wrong, exactly-zero component for a mode sitting right at that
-    # threshold (see test_the_frequency_csv_and_summary_agree_on_which_
-    # modes_are_imaginary and the regression it caught in
-    # test_frequencies_match_ases_own_for_the_same_settings).
-    magnitudes = np.abs(frequencies)
-    # The same modulus, for the same reason, applied to the mode energies:
-    # an imaginary mode's energy is purely imaginary, so `.real` of it is
-    # exactly 0.0 and the CSV row reported a nonzero frequency beside a zero
-    # energy (654.41 cm-1 written as 0.0 meV, where the honest value is 81.1
-    # meV).
-    energy_magnitudes = np.abs(energies)
-
-    with vibrations_json.open("w") as handle:
-        data.write(handle)
-    # A handle in write mode, not a path: summary()'s log argument opens a
-    # path with mode 'a', so a restart would write a second table into the
-    # same file and the result would read as twice as many modes.
-    with summary_txt.open("w") as handle:
-        vib.summary(method=method, direction=direction, log=handle)
-    _write_frequency_csv(frequencies_csv, magnitudes, energy_magnitudes,
-                         imaginary)
-
-    results_committee = None
-    if committee is not None:
-        committee_modes = np.asarray(data.get_modes()).reshape(
-            len(frequencies), -1)
-        block = member_frequencies(
-            vib, atoms, chosen, delta, nfree, direction, method,
-            committee.member_names, committee_modes)
-        _write_committee_frequency_csv(
-            output_path / f"{prefix}_committee_frequencies.csv",
-            magnitudes, imaginary, committee.member_names, block)
-        zpe_values = [block["zpe"][name] for name in committee.member_names]
-        worst_overlap = min(
-            float(block["overlaps"][name].min())
-            for name in committee.member_names)
-        results_committee = {
-            "zpe_eV_per_member": block["zpe"],
-            "zpe_mean_eV": float(np.mean(zpe_values)),
-            "zpe_std_eV": float(np.std(zpe_values, ddof=1)),
-            "frequency_member_std_cm-1": [float(v) for v in block["std"]],
-            "worst_mode_overlap": worst_overlap,
-            "mode_pairing_suspect": bool(worst_overlap < MODE_OVERLAP_WARN),
-        }
-        if worst_overlap < MODE_OVERLAP_WARN:
-            logger.warning(
-                "committee frequencies: lowest mode overlap is %.3f, below "
-                "%.2f. Modes are paired by index, so a near-degenerate pair "
-                "whose order differs between members is compared "
-                "like-for-unlike and its spread is not disagreement.",
-                worst_overlap, MODE_OVERLAP_WARN)
-
-    if write_modes == "all":
-        for index in range(len(frequencies)):
-            vib.write_mode(index)
-    elif write_modes == "imaginary":
-        for index in np.flatnonzero(imaginary):
-            vib.write_mode(int(index))
-
-    results = {
-        "n_modes": int(len(frequencies)),
-        "n_imaginary": int(imaginary.sum()),
-        "frequencies_cm-1": [float(v) for v in magnitudes],
-        "imaginary_mask": [bool(v) for v in imaginary],
-        "zpe_eV": float(data.get_zero_point_energy()),
-        "fmax_at_input_free_eV_per_A": float(fmax_at_input_free),
-        "fmax_at_input_all_eV_per_A": float(fmax_at_input_all),
-        "fmax_expectation": expectation,
-        "fmax_expectation_source": expectation_source,
-        "fmax_warning": fmax_warning,
-        "n_displaced_atoms": int(len(chosen)),
-        "n_force_calls": int(vib.n_force_calls),
-        "unhandled_constraints": unhandled,
-    }
-    if results_committee is not None:
-        results["committee_frequencies"] = results_committee
-    if results_uncertainty is not None:
-        results["committee_uncertainty"] = results_uncertainty
 
     record.complete(status="completed", results=results)
     return results

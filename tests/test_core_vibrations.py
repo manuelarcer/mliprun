@@ -153,6 +153,117 @@ def test_a_restart_makes_only_the_remaining_calls(n2, tmp_path):
         results_one["frequencies_cm-1"], abs=1e-12)
 
 
+# -- the displacement cache is checked against this run's calculator ----
+
+class _OffsetEMT(EMT):
+    """EMT with a fixed offset added to every force component.
+
+    Stands in for a real MLIP on a GPU, which is not bit-reproducible
+    between runs: the cache guard must accept a re-evaluation that differs
+    from the cached forces by less than its tolerance, and refuse one that
+    differs by more. A constant offset cancels in the central differences,
+    so it changes the guard's input without changing the physics under test.
+    """
+
+    def __init__(self, offset):
+        super().__init__()
+        self._offset = float(offset)
+
+    def calculate(self, *args, **kwargs):
+        super().calculate(*args, **kwargs)
+        self.results["forces"] = self.results["forces"] + self._offset
+
+
+def test_a_second_run_with_a_different_calculator_is_refused(n2, tmp_path):
+    """The cache is named `<output_dir>/<prefix>` and `prefix` defaults to
+    `freq` whatever the model is, so run 2 used to reuse run 1's forces and
+    report them under its own provenance: 0 force calls, EMT's frequencies,
+    `provenance.mlip_model: "lj"`."""
+    from ase.calculators.lj import LennardJones
+
+    from mliprun.core.vibrations import FrequencyCacheError
+
+    first = run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+    assert first["n_force_calls"] == 13          # a real sweep happened
+
+    other = n2.copy()
+    other.calc = LennardJones()
+    with pytest.raises(FrequencyCacheError) as caught:
+        run_frequencies(other, output_dir=tmp_path, model_name="lj")
+
+    message = str(caught.value)
+    assert str(tmp_path / "freq") in message     # names the cache directory
+    assert "--prefix" in message                 # names the second remedy
+
+
+def test_the_refused_run_leaves_a_failed_record_not_a_running_one(
+        n2, tmp_path):
+    """`status: "running"` means "the job died without reporting back"
+    (docs/OUTPUTS.md). A guard that stops the run must still complete the
+    record."""
+    from ase.calculators.lj import LennardJones
+
+    from mliprun.core.vibrations import FrequencyCacheError
+
+    run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+    other = n2.copy()
+    other.calc = LennardJones()
+    with pytest.raises(FrequencyCacheError):
+        run_frequencies(other, output_dir=tmp_path, model_name="lj")
+
+    record = json.loads((tmp_path / "mliprun_run.json").read_text())
+    assert record["status"] == "failed"
+    assert record["stages"][-1]["status"] == "failed"
+    assert "displacement cache" in record["stages"][-1]["results"]["error"]
+
+
+def test_a_restart_whose_forces_moved_less_than_the_tolerance_is_accepted(
+        n2, tmp_path):
+    """Exact equality would be the wrong test: a real MLIP on a GPU is not
+    bit-reproducible between runs. 1e-9 eV/A is such a re-evaluation."""
+    from mliprun.core.vibrations import CACHE_IDENTITY_ATOL
+
+    first = run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+    jittered = n2.copy()
+    jittered.calc = _OffsetEMT(1e-9)
+    assert 1e-9 < CACHE_IDENTITY_ATOL
+    second = run_frequencies(jittered, output_dir=tmp_path, model_name="emt")
+
+    assert second["n_force_calls"] == 0          # the cache was reused
+    assert second["frequencies_cm-1"] == pytest.approx(
+        first["frequencies_cm-1"], abs=1e-12)
+
+
+def test_a_restart_whose_forces_moved_more_than_the_tolerance_is_refused(
+        n2, tmp_path):
+    from mliprun.core.vibrations import (
+        CACHE_IDENTITY_ATOL,
+        FrequencyCacheError,
+    )
+
+    run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+    shifted = n2.copy()
+    shifted.calc = _OffsetEMT(1e-3)
+    assert 1e-3 > CACHE_IDENTITY_ATOL
+    with pytest.raises(FrequencyCacheError):
+        run_frequencies(shifted, output_dir=tmp_path, model_name="emt")
+
+
+def test_a_different_prefix_keeps_the_two_runs_apart(n2, tmp_path):
+    """The remedy the error message names has to actually work."""
+    from ase.calculators.lj import LennardJones
+
+    emt_results = run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+    other = n2.copy()
+    other.calc = LennardJones()
+    lj_results = run_frequencies(other, output_dir=tmp_path,
+                                 prefix="freq_lj", model_name="lj")
+
+    assert lj_results["n_force_calls"] == 13     # its own sweep, not a reuse
+    assert max(lj_results["frequencies_cm-1"]) != pytest.approx(
+        max(emt_results["frequencies_cm-1"]), abs=1e-6)
+
+
 def test_the_fmax_at_the_input_geometry_is_recorded(n2, tmp_path):
     results = run_frequencies(n2, output_dir=tmp_path)
     assert results["fmax_at_input_free_eV_per_A"] == pytest.approx(

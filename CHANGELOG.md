@@ -39,6 +39,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   Cost is `1 + 6 × n_displaced` force calls at `--nfree 2`, `1 + 12 ×
   n_displaced` at `--nfree 4`; a restart replays only the displacements not
   already in the `<prefix>/` cache.
+  That cache is keyed by displacement, not by model — its name is
+  `<output_dir>/<prefix>` and `--prefix` defaults to `freq` whatever
+  `--mlip` says — so a run that reuses it first re-evaluates the undisplaced
+  geometry with its own calculator and compares against the cached
+  equilibrium forces (`allclose(rtol=0, atol=1e-6)` eV/Å: a real MLIP on a
+  GPU is not bit-reproducible between runs, while a different model differs
+  by orders of magnitude). A mismatch **stops the run**, names the cache
+  directory, and says to delete it or pass a different `--prefix`; the run
+  record is completed as `failed` rather than left saying `running`. Without
+  it, EMT then Lennard-Jones on N₂ in one directory gave run 2 zero force
+  calls, EMT's frequencies, and `provenance.mlip_model: "lj"`.
   `--committee committee.yaml` yields one Hessian **per member** from a
   **single** displacement sweep — not one sweep per member — since members
   are queried concurrently, so wall time is the slowest member's, not the

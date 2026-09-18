@@ -635,7 +635,7 @@ one displacement sweep additionally yields one Hessian per member: see
 | `<prefix>_frequencies.csv` | CSV | One row per mode: magnitude, energy, imaginary flag (see below) |
 | `<prefix>_summary.txt` | text | ASE's own `vib.summary()` table — the format users already recognise from other ASE-driven work |
 | `<prefix>_vibrations.json` | JSON | `VibrationsData.write()` output: the full Hessian and the atoms. Reloads through `VibrationsData.read` (see [PYTHON_API.md](PYTHON_API.md#vibrational-frequencies)) |
-| `<prefix>/` | folder | ASE's per-displacement JSON cache. Restart is free: an interrupted sweep resumes at the displacement it stopped on, for committee runs too |
+| `<prefix>/` | folder | ASE's per-displacement JSON cache. An interrupted sweep resumes at the displacement it stopped on. The cache is keyed by displacement, not by model, so a reusing run first verifies it belongs to that run's calculator — see [The displacement cache](#the-displacement-cache-and-what-it-is-checked-against) |
 | `<prefix>.<n>.traj` | ASE trajectory | One animated trajectory per written mode, `n` its mode index. Which modes get one follows `--write-modes` (`none`, `imaginary` — the default, or `all`); a clean minimum under the default writes nothing |
 | `mliprun_run.json` | JSON | Canonical run record; stage kind `freq` (see [The run record](#the-run-record)) |
 
@@ -763,9 +763,36 @@ if that is not acceptable.
 
 Force calls: `1 + 6 × n_displaced` at `--nfree 2` (the default), `1 + 12 ×
 n_displaced` at `--nfree 4` (five-point stencil, doubling the cost). The
-leading `1` is the equilibrium evaluation. Restart is free — an interrupted
-sweep resumes only the displacements not already in the `<prefix>/` cache —
-for committee runs too.
+leading `1` is the equilibrium evaluation. Restart is nearly free — an
+interrupted sweep resumes only the displacements not already in the
+`<prefix>/` cache, and pays one extra force evaluation for the cache check
+described next.
+
+### The displacement cache, and what it is checked against
+
+The `<prefix>/` folder is ASE's own per-displacement JSON cache. It is keyed
+by the displacement, **not** by the model: its name is
+`<output_dir>/<prefix>`, and `--prefix` defaults to `freq` whatever
+`--mlip` says. A second `freq run` in the same directory with a *different*
+potential would therefore reuse the first potential's forces and report them
+under its own provenance — a wrong number carrying a false attribution.
+Measured before this check existed: EMT then Lennard-Jones on N₂ in one
+directory gave run 2 zero force calls, EMT's 928.1448 cm⁻¹ top frequency,
+and `provenance.mlip_model: "lj"`.
+
+So whenever a run reuses anything from the cache, it re-evaluates the
+undisplaced geometry once with its own calculator and compares that against
+the cached equilibrium forces. The comparison is `numpy.allclose(rtol=0,
+atol=1e-6)` in eV/Å, not exact equality: a real MLIP on a GPU is not
+bit-reproducible between runs, while a different model differs by orders of
+magnitude (~1 eV/Å for the EMT/Lennard-Jones pair above), so that tolerance
+separates the two cases cleanly. On a mismatch the run **stops** with an
+error naming the cache directory, the run record is completed as `failed`,
+and the message gives both remedies: delete the `<prefix>/` folder, or pass
+a different `--prefix` so this run gets its own cache. The check costs one
+force evaluation on a restart, against the `6 × n_displaced` a restart
+saves, and it is not counted in `n_force_calls` (which reports the sweep's
+own cost).
 
 ---
 
