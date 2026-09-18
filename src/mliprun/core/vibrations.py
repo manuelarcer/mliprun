@@ -32,6 +32,11 @@ VALID_METHODS = ("standard", "frederiksen")
 #: <prefix>_summary.txt can never classify the same mode differently.
 IMAGINARY_ENERGY_TOL_EV = 1e-8
 
+#: Mode-overlap below which index pairing is reported as suspect. A
+#: diagnostic trigger for a warning, not a scientific verdict -- the overlaps
+#: themselves are in the CSV for anyone who disagrees with the number.
+MODE_OVERLAP_WARN = 0.9
+
 
 def assemble_hessian(forces, indices, delta, nfree=2,
                      direction="central", method="standard"):
@@ -346,6 +351,135 @@ class CountingVibrations(Vibrations):
         return results
 
 
+class CommitteeVibrations(CountingVibrations):
+    """``Vibrations`` that also caches every member's own forces.
+
+    ASE stores whatever ``calculate`` returns in its JSON cache, so the
+    ``(M, N, 3)`` array survives the round trip and a restarted sweep keeps
+    its spread. A calculator-side hook would not: a resumed run skips the
+    displacements already on disk, and ``calculate`` is never called for
+    them.
+    """
+
+    def calculate(self, atoms, disp):
+        results = super().calculate(atoms, disp)
+        results["forces_per_member"] = np.asarray(
+            self.calc.latest["forces_per_member"], dtype=float)
+        return results
+
+
+def _member_forces(vib, nfree):
+    """Every displacement's per-member forces, back out of ASE's cache.
+
+    ``_disp`` and ``_eq_disp`` are ASE-private, used deliberately: the cache
+    is the only complete record once a restart has skipped displacements.
+    Pinned against ase>=3.23 by tests/test_vibrations_hessian.py.
+    """
+    def cached(disp):
+        return np.asarray(vib.cache[disp.name]["forces_per_member"],
+                          dtype=float)
+
+    out = {"eq": cached(vib._eq_disp())}
+    steps = [-1, 1] if nfree == 2 else [-2, -1, 1, 2]
+    for a in vib.indices:
+        for i in range(3):
+            for n in steps:
+                out[(int(a), i, n)] = cached(vib._disp(a, i, n))
+    return out
+
+
+def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
+                       member_names, committee_modes):
+    """Per-member frequencies, ZPE, per-mode spread and mode overlaps.
+
+    Each member's Hessian is diagonalized independently and its eigenvalues
+    come back sorted ascending, so for near-degenerate modes member A's mode
+    7 and member B's mode 7 need not be the same physical mode. Pairing is by
+    index and the risk is made visible rather than corrected: ``overlaps``
+    carries ``|<u_member,i | u_committee,i>|`` per member per mode, which is
+    close to 1 for a clean match.
+
+    ``VibrationsData.get_modes()`` returns Cartesian mode vectors that are
+    unit-normalized in the MASS-WEIGHTED basis, not in plain Cartesian space
+    -- ``modes = eigh_vectors * masses ** -0.5`` -- so their raw Cartesian
+    L2 norm is ``1/sqrt(mass)``, not 1 (exactly reproduced for two identical
+    N2 members: every row norm came out ``1/sqrt(14.007) = 0.267``, and the
+    raw dot product of two identical rows was its square, ``0.071``, not
+    ``1.0``). Both mode arrays are renormalized to unit Cartesian L2 norm
+    per row before the dot product so that a clean match reads as 1.0
+    regardless of atomic mass.
+
+    Frequency magnitude uses the complex modulus (``np.abs``), exactly like
+    the headline column in :func:`run_frequencies`: a mode's ASE frequency is
+    the complex square root of a real eigenvalue, so exactly one of
+    ``.real``/``.imag`` is nonzero and ``np.abs`` always recovers it with no
+    separate classification step. A mode ENERGY threshold
+    (``IMAGINARY_ENERGY_TOL_EV``, the rule the headline ``imaginary`` column
+    uses) only matters for *labelling* a mode real or imaginary for display;
+    it changes nothing about its magnitude. This path does not label modes
+    per member -- ``_write_committee_frequency_csv`` writes one ``imaginary``
+    column, from the committee's own (headline) classification, and every
+    member's magnitude is comparable to it because both use the same modulus
+    expression.
+
+    Returns
+    -------
+    dict
+        ``frequencies`` ({name: (3n,) magnitudes}), ``zpe`` ({name: float}),
+        ``std`` ((3n,) across members, ddof=1), ``overlaps``
+        ({name: (3n,) floats}).
+    """
+    from ase.vibrations import VibrationsData
+
+    def unit_rows(array):
+        norms = np.linalg.norm(array, axis=1, keepdims=True)
+        return array / norms
+
+    committee_unit = unit_rows(committee_modes)
+    per_displacement = _member_forces(vib, nfree)
+    frequencies, zpe, overlaps = {}, {}, {}
+
+    for position, name in enumerate(member_names):
+        forces = {key: value[position]
+                  for key, value in per_displacement.items()}
+        hessian = assemble_hessian(forces, indices, delta, nfree=nfree,
+                                   direction=direction, method=method)
+        data = VibrationsData.from_2d(atoms, hessian, indices)
+        raw = np.asarray(data.get_frequencies())
+        frequencies[name] = np.abs(raw)
+        zpe[name] = float(data.get_zero_point_energy())
+        modes = unit_rows(np.asarray(data.get_modes()).reshape(len(raw), -1))
+        overlaps[name] = np.abs(
+            np.einsum("ij,ij->i", modes, committee_unit))
+
+    stacked = np.stack([frequencies[name] for name in member_names])
+    return {
+        "frequencies": frequencies,
+        "zpe": zpe,
+        "std": stacked.std(axis=0, ddof=1),
+        "overlaps": overlaps,
+    }
+
+
+def _write_committee_frequency_csv(path, magnitudes, imaginary, member_names,
+                                   block):
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        header = ["mode_index", "frequency_committee_cm-1", "imaginary"]
+        header += [f"{name}_cm-1" for name in member_names]
+        header += ["frequency_member_std_cm-1"]
+        header += [f"{name}_overlap" for name in member_names]
+        writer.writerow(header)
+        for index in range(len(magnitudes)):
+            row = [index, float(magnitudes[index]), bool(imaginary[index])]
+            row += [float(block["frequencies"][name][index])
+                    for name in member_names]
+            row += [float(block["std"][index])]
+            row += [float(block["overlaps"][name][index])
+                    for name in member_names]
+            writer.writerow(row)
+
+
 def _write_frequency_csv(path, frequencies, energies_eV, imaginary):
     """Magnitudes plus a boolean, never a signed number.
 
@@ -528,6 +662,36 @@ def run_frequencies(
     _write_frequency_csv(frequencies_csv, magnitudes, energies.real,
                          imaginary)
 
+    results_committee = None
+    if committee is not None:
+        committee_modes = np.asarray(data.get_modes()).reshape(
+            len(frequencies), -1)
+        block = member_frequencies(
+            vib, atoms, chosen, delta, nfree, direction, method,
+            committee.member_names, committee_modes)
+        _write_committee_frequency_csv(
+            output_path / f"{prefix}_committee_frequencies.csv",
+            magnitudes, imaginary, committee.member_names, block)
+        zpe_values = [block["zpe"][name] for name in committee.member_names]
+        worst_overlap = min(
+            float(block["overlaps"][name].min())
+            for name in committee.member_names)
+        results_committee = {
+            "zpe_eV_per_member": block["zpe"],
+            "zpe_mean_eV": float(np.mean(zpe_values)),
+            "zpe_std_eV": float(np.std(zpe_values, ddof=1)),
+            "frequency_member_std_cm-1": [float(v) for v in block["std"]],
+            "worst_mode_overlap": worst_overlap,
+            "mode_pairing_suspect": bool(worst_overlap < MODE_OVERLAP_WARN),
+        }
+        if worst_overlap < MODE_OVERLAP_WARN:
+            logger.warning(
+                "committee frequencies: lowest mode overlap is %.3f, below "
+                "%.2f. Modes are paired by index, so a near-degenerate pair "
+                "whose order differs between members is compared "
+                "like-for-unlike and its spread is not disagreement.",
+                worst_overlap, MODE_OVERLAP_WARN)
+
     if write_modes == "all":
         for index in range(len(frequencies)):
             vib.write_mode(index)
@@ -549,11 +713,13 @@ def run_frequencies(
         "n_force_calls": int(vib.n_force_calls),
         "unhandled_constraints": unhandled,
     }
+    if results_committee is not None:
+        results["committee_frequencies"] = results_committee
 
     record.complete(status="completed", results=results)
     return results
 
 
 def _vibrations_class(committee):
-    """``CountingVibrations``, or the committee-aware subclass from Task 12."""
-    return CountingVibrations
+    """The committee-aware subclass when there is a committee to capture."""
+    return CommitteeVibrations if committee is not None else CountingVibrations
