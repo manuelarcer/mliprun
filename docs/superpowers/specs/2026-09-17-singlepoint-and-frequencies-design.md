@@ -410,11 +410,27 @@ silently absorb an ordering swap as disagreement.
 Pairing is by index, and the design makes the risk visible rather than
 correcting it: for each member and each mode, the column `<member>_overlap`
 carries `|⟨u_member,i | u_committee,i⟩|`, the absolute overlap between that
-member's mode vector and the committee's. A clean match is close to 1. When any
-overlap falls below 0.9 the command warns, naming the modes, and states that
-their spread is not a like-for-like comparison. The 0.9 is a diagnostic trigger
-for a warning, not a scientific verdict, and the overlaps themselves are in the
-CSV for anyone who disagrees with it.
+member's mode vector and the committee's, **each normalised to unit Cartesian
+length first**. A clean match is close to 1. When any overlap falls below 0.9
+the command warns, naming the modes, and states that their spread is not a
+like-for-like comparison. The 0.9 is a diagnostic trigger for a warning, not a
+scientific verdict, and the overlaps themselves are in the CSV for anyone who
+disagrees with it.
+
+**The normalisation is not a detail, added 2026-09-18 (Task 12).** An earlier
+draft of this document took the dot product of ASE's mode vectors directly.
+ASE's Cartesian modes are unit-normalised in the **mass-weighted** basis, not
+in Cartesian space, so `⟨u|u⟩` equals `1/m` rather than 1. Measured on N₂:
+0.0713928749910759 against a nitrogen mass of 14.007 amu — exactly `1/m` to
+fifteen digits, recovering 1.0 after unit normalisation.
+
+Left unfixed, the column would have reported ~0.07 for **identical** members
+and tripped the 0.9 warning on every committee frequency run ever made. A
+diagnostic that always fires is worse than none: it trains the reader to
+ignore it, and then it cannot report the real mode-ordering problem it exists
+for. Worse, the number would have been mass-dependent — about 0.005 on a
+platinum slab, about 0.99 on hydrogen — so it would have been an inverse-mass
+readout wearing the name of a mode comparison.
 
 ### A caveat the documentation must carry
 
