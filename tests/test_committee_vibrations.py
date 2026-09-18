@@ -214,6 +214,35 @@ def test_a_single_model_cache_is_refused_by_a_committee_run(structure,
     assert "per-member forces" in record["stages"][-1]["results"]["error"]
 
 
+def test_member_frequencies_refuses_a_single_model_cache_directly(tmp_path):
+    """`member_frequencies` is a public entry point, so the backstop inside
+    `_member_forces` is reachable without going through `run_frequencies`.
+    A library caller handing it a single-model cache gets the named error
+    rather than a bare `KeyError`."""
+    from ase.calculators.emt import EMT
+
+    from mliprun.core.vibrations import (
+        CountingVibrations,
+        FrequencyCacheError,
+        member_frequencies,
+    )
+
+    atoms = molecule("N2")
+    atoms.calc = EMT()
+    vib = CountingVibrations(atoms, name=str(tmp_path / "vib"), delta=0.01,
+                             nfree=2)
+    vib.run()
+    vib.read()
+    data = vib.get_vibrations()
+    modes = np.asarray(data.get_modes()).reshape(
+        len(data.get_frequencies()), -1)
+
+    with pytest.raises(FrequencyCacheError) as caught:
+        member_frequencies(vib, atoms, vib.indices, vib.delta, 2, "central",
+                           "standard", ["member_a"], modes)
+    assert "per-member forces" in str(caught.value)
+
+
 def test_a_different_prefix_lets_a_committee_run_beside_a_single_model_one(
         structure, tmp_path):
     """The remedy the refusal names has to actually work."""
