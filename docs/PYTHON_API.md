@@ -12,6 +12,7 @@ The CLI commands wrap a small set of pure-Python functions and one class. This p
 | `mliprun.core.optimize` | `run_optimization(atoms, ...)` | Geometry optimization with progress logging and plots |
 | `mliprun.core.optimize` | `OPTIMIZER_MAP` | dict of supported ASE optimizers |
 | `mliprun.core.singlepoint` | `run_singlepoint(atoms, ...)` | Evaluate a structure once: energy, per-atom forces, stress — no relaxation |
+| `mliprun.core.vibrations` | `run_frequencies(atoms, ...)` | Vibrational frequencies, imaginary-mode count and ZPE by finite differences of forces; per-member frequencies and mode-overlap diagnostics with `committee=` |
 | `mliprun.core.committee.config` | `load_committee(path)` | Parse and validate a `committee.yaml` into a `CommitteeConfig` |
 | `mliprun.core.committee.remote` | `RemoteMember(name, python_exe, ...)` | One committee member's worker subprocess, addressed as a calculator |
 | `mliprun.core.committee.calculator` | `CommitteeCalculator(members, ...)` | ASE calculator over N members: mean force drives the relaxation, their spread is reported |
@@ -357,6 +358,93 @@ reported and `flagged` is `None`. `threshold_source` is `"none"` or
 `uncertainty_threshold=None` means exactly this: no default, not "use
 `fmax`". See [OUTPUTS.md#the-flagging-rule](OUTPUTS.md#the-flagging-rule)
 for what each returned key means and the `flagged` tri-state.
+
+---
+
+## Vibrational frequencies
+
+Computes vibrational frequencies by finite differences of forces
+(`ase.vibrations.Vibrations` under the hood) and reports the frequencies,
+the imaginary-mode count, and the zero-point energy (ZPE). See
+[OUTPUTS.md](OUTPUTS.md#freq-run) for the full output reference: the
+frequency-column convention (magnitude plus a boolean, never signed), the
+imaginary-mode threshold, why ZPE counts the real modes only, and the
+stationary-point warning.
+
+```python
+from pathlib import Path
+from ase.io import read
+from mliprun.cli.utils import setup_calculator
+from mliprun.core.vibrations import run_frequencies
+
+structure = Path("structure.vasp")
+atoms = read(structure)
+setup_calculator(atoms, "uma-s-1p2", "omat")
+
+results = run_frequencies(
+    atoms,
+    output_dir="./freq",             # its own folder: a run record is
+                                       # replaced, not appended to, by the
+                                       # next command that writes there
+    structure_dir=structure.parent,   # where the fmax expectation is looked
+                                       # up -- keep it the STRUCTURE's own
+                                       # directory even when output_dir
+                                       # points elsewhere
+    prefix="freq",
+    model_name="uma-s-1p2",
+    uma_task="omat",       # or mace_head="omat_pbe" — see "Run-record keywords"
+    indices=None,          # default: every atom not held by FixAtoms
+    delta=0.01,             # Å
+    nfree=2,                 # or 4 (five-point stencil, twice the cost)
+    write_modes="imaginary",  # "none", "imaginary" (default) or "all"
+    expect_fmax=None,        # default: the fmax a converged optimize stage
+                              # in structure_dir actually met, if there is one
+)
+```
+
+Side effects (written to `output_dir`):
+
+- `<prefix>_frequencies.csv` — one row per mode: magnitude, energy, imaginary flag
+- `<prefix>_summary.txt` — ASE's own `vib.summary()` table
+- `<prefix>_vibrations.json` — `VibrationsData.write()` output
+- `<prefix>/` — ASE's per-displacement JSON cache (makes a restart free)
+- `<prefix>.<n>.traj` — one animated trajectory per written mode
+- `mliprun_run.json` — the run record, stage kind `freq`
+
+`<prefix>_vibrations.json` reloads through `VibrationsData.read` and carries
+the **full Hessian**, not just the frequencies:
+
+```python
+from ase.vibrations import VibrationsData
+
+data = VibrationsData.read("freq/freq_vibrations.json")
+```
+
+That is what makes a later free-energy calculation
+(`ase.thermochemistry.HarmonicThermo` / `IdealGasThermo`) cost **no forces**:
+the Hessian and the atoms are already on disk, and thermochemistry is
+deliberately out of scope for `run_frequencies` itself (design note D3) —
+this file is what keeps it reachable without recomputing anything.
+
+Which atoms get displaced follows the structure's own `FixAtoms`
+constraints unless `indices=` overrides it; any other constraint type warns
+(via the returned `results["unhandled_constraints"]`) and is displaced in
+full, because ASE's `indices` selects whole atoms and cannot express a
+partial Hessian. Cost is `1 + 6 * n_displaced` force calls at `nfree=2`,
+`1 + 12 * n_displaced` at `nfree=4`; a restart re-reads the `<prefix>/`
+cache and makes only the calls not already there.
+
+A committee runs here too: pass `committee=` and `committee_config=` exactly
+as for `run_optimization` (see [Committee
+evaluation](#committee-evaluation) above for how to start one). One
+displacement sweep then yields one Hessian per member — not one sweep per
+member — and `results["committee_frequencies"]` carries each member's ZPE
+plus its mean and standard deviation across members. This is a genuinely
+different mechanism from the `committee_statistics` block above (it
+diagonalizes a separate Hessian per member rather than reducing a per-atom
+force spread), and it carries its own caveats — mode pairing by index, and
+noise-vs-disagreement at small `--delta` — documented in
+[OUTPUTS.md#committee-frequencies](OUTPUTS.md#committee-frequencies).
 
 ---
 

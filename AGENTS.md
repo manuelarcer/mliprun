@@ -57,26 +57,34 @@ MLIP is installed — script against its exit code.
 ## Running
 
 - Entry points: `mlip <subcmd>` or standalone `optimize`, `singlepoint`,
-  `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark`. All support
-  `--help`.
+  `freq`, `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark`. All
+  support `--help`.
 - Typical: `optimize run --structure POSCAR --fmax 0.05`. Model selection via
   `--mlip` (default `auto`), device via `--device` (note: `neb` defaults to
   CPU, the others to auto).
 - Plots are **opt-in** (`--plot`); CSV outputs are always written.
-- Output locations differ: `optimize`/`singlepoint`/`md` write next to the
-  input structure; `neb`/`autoneb` write into the current working
-  directory. Full file reference: `docs/OUTPUTS.md`.
+- Output locations differ: `optimize`/`singlepoint`/`freq`/`md` write next
+  to the input structure (`freq` unless `--output-dir` says otherwise —
+  give a frequency run its own folder, since a run record is replaced, not
+  appended to, by the next command that writes into the same directory);
+  `neb`/`autoneb` write into the current working directory. Full file
+  reference: `docs/OUTPUTS.md`.
 - Python API (for scripts/notebooks): `docs/PYTHON_API.md`.
 - `optimize run --committee committee.yaml` relaxes with several MLIPs at
   once, one per env, and reports their disagreement as an uncertainty;
   `singlepoint run --committee` evaluates one configuration with a
-  committee the same way, with no relaxation. `mliprun` must be installed
+  committee the same way, with no relaxation; `freq run --committee` runs
+  one displacement sweep and reports each member's own frequencies plus
+  the per-mode spread and a mode-overlap diagnostic (mode pairing is by
+  index, so a near-degenerate ordering swap between members shows up as a
+  low overlap rather than as disagreement), instead of the consensus force
+  uncertainty the other two commands report. `mliprun` must be installed
   (`pip install -e .`) in **every** member env: each runs as a worker
   subprocess driven by its own interpreter, not the driver's. The bridge is
   POSIX-only (it uses `select` on a pipe), so committees are not supported
-  on Windows. `optimize run` and `singlepoint run` are the only commands
-  that support committees. Details: `docs/OUTPUTS.md#committee-outputs`,
-  `docs/PYTHON_API.md`.
+  on Windows. `optimize run`, `singlepoint run` and `freq run` are the only
+  commands that support committees. Details: `docs/OUTPUTS.md#committee-outputs`,
+  `docs/OUTPUTS.md#committee-frequencies`, `docs/PYTHON_API.md`.
 
 ## Testing
 

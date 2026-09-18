@@ -6,6 +6,55 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **`freq run`, vibrational frequencies by finite differences.** Computes
+  frequencies from `ase.vibrations.Vibrations`, reporting the imaginary-mode
+  count and the zero-point energy (ZPE) alongside them. Frequencies are
+  written as a magnitude plus a boolean, never a signed number — the
+  convention of writing an imaginary mode as negative is a silent trap for
+  anything that sums or sorts the column. A mode is imaginary when
+  `abs(energy.imag) > 1e-8` eV, matching ASE's own `im_tol` and applied to
+  the same quantity ASE applies it to, so `<prefix>_frequencies.csv` and
+  ASE's own `<prefix>_summary.txt` (written from the same run) can never
+  disagree about which modes are imaginary. ZPE sums the real modes only:
+  an imaginary mode contributes exactly zero, so a structure carrying one
+  has no well-defined zero-point energy.
+  Which atoms are displaced comes from the structure's own `FixAtoms`
+  constraints (`--indices` overrides them); any other constraint type —
+  ASE's `indices` selects whole atoms, so a partial Hessian cannot be
+  expressed through it — warns, names the type, and displaces those atoms
+  in full rather than refusing.
+  A structure that is not at a stationary point produces spurious imaginary
+  modes indistinguishable by eye from a real transition state, so fmax at
+  the input geometry (free to measure — `Vibrations.run()` evaluates it
+  first) is compared against `--expect-fmax`, else the fmax a *converged*
+  `optimize` stage in the structure's own directory actually met, else
+  nothing. **This warning never refuses**, only prints and sets
+  `fmax_warning: true`.
+  Cost is `1 + 6 × n_displaced` force calls at `--nfree 2`, `1 + 12 ×
+  n_displaced` at `--nfree 4`; a restart replays only the displacements not
+  already in the `<prefix>/` cache.
+  `--committee committee.yaml` yields one Hessian **per member** from a
+  **single** displacement sweep — not one sweep per member — since members
+  are queried concurrently, so wall time is the slowest member's, not the
+  sum of all of them (measured on EMT; not yet verified against real MLIP
+  potentials). Per-member frequencies, per-member ZPE and the per-mode
+  standard deviation across members are reported in
+  `<prefix>_committee_frequencies.csv` and the run record. Because each
+  member's Hessian is diagonalized independently with eigenvalues sorted
+  ascending, near-degenerate modes can pair up out of order between
+  members; a per-member, per-mode `<member>_overlap` column (each mode
+  vector normalised to unit Cartesian length first, since ASE's own modes
+  are normalised in the mass-weighted basis instead) makes an ordering swap
+  visible rather than letting it hide inside the spread, and the run warns
+  when any overlap drops below 0.9.
+  Thermochemistry is deliberately absent from this work — no
+  `HarmonicThermo`/`IdealGasThermo` call is made here — but stays reachable
+  at no extra cost: `<prefix>_vibrations.json` writes the full Hessian via
+  `VibrationsData.write()` and reloads through `VibrationsData.read`, so a
+  later free-energy calculation costs no forces.
+  Additive to the run record: new stage kind `freq`, schema version
+  unchanged. See `docs/OUTPUTS.md#freq-run` and `docs/PYTHON_API.md`.
+
 - **`singlepoint run`, single-point evaluation.** Evaluates a structure once
   and stops: energy, per-atom forces, and stress, with no optimizer and no
   trajectory. Replaces the `optimize run --max-steps 0` workaround, which
