@@ -13,7 +13,8 @@ Canonical list of every file each CLI command writes. Search this page to find w
 | `autoneb run` | Current working directory at invocation |
 | `autoneb-results results` | The directory passed via `--directory` (default `.`) |
 | `benchmark run` | Nothing on disk by default; `--output bench.json` writes a JSON file there |
-| `singlepoint run` | Directory containing `--structure` by default; `--output-dir` overrides this (see below) |
+| `singlepoint run` | Directory containing `--structure`, unless `--output-dir` is given |
+| `freq run` | Directory containing `--structure`, unless `--output-dir` is given |
 
 This is not always the same directory the user is sitting in. `optimize` and `md` write *next to the input structure*; `neb` and `autoneb` write *into the cwd*. Set up the working directory accordingly before running NEB / AutoNEB.
 
@@ -292,6 +293,82 @@ No figure is written when the trace has fewer than two steps (a run that
 converged at step 0); the run says so on the terminal rather than emitting a
 one-point plot.
 
+### Committee frequencies
+
+`freq run --committee committee.yaml` (see [`freq run`](#freq-run) below)
+gets one Hessian per member from a **single** displacement sweep:
+`CommitteeVibrations` captures each member's own forces at every
+displacement alongside the mean forces ASE already sees, so a per-member
+Hessian is assembled from data the sweep was already computing. Cost is
+therefore **one sweep, not one per member** — members are queried
+concurrently, exactly as in a committee relaxation, so wall time is the
+slowest member's, not the sum of all of them. This is measured on EMT only
+and not yet verified against real MLIP potentials.
+
+Two caveats belong here because without them a spread reads as a clean
+number instead of the qualified one it is:
+
+- **Mode pairing is by index.** Each member's Hessian is diagonalized
+  independently and its eigenvalues come back sorted ascending, so for
+  near-degenerate modes member A's mode 7 and member B's mode 7 need not be
+  the same physical mode — comparing them by index is then not a
+  like-for-like comparison, and the per-mode standard deviation would
+  silently absorb an ordering swap as disagreement. The `<member>_overlap`
+  columns in `<prefix>_committee_frequencies.csv` are how that becomes
+  visible: for each member and each mode, the absolute overlap
+  `|⟨u_member,i | u_committee,i⟩|` between that member's mode vector and the
+  committee's, each **normalised to unit Cartesian length first** (ASE's own
+  mode vectors are unit-normalised in the *mass-weighted* basis instead, not
+  in Cartesian space, so the raw dot product would be mass-dependent rather
+  than a clean-match indicator). Close to 1 is a clean match; when any
+  overlap falls below 0.9 the run warns, naming the modes, and
+  `mode_pairing_suspect` is set `true` in the run record. 0.9 is a
+  diagnostic trigger for a warning, not a scientific verdict — the overlaps
+  themselves are in the CSV for anyone who disagrees with it.
+  **Expect this flag to be noisy, and treat it as untested against real
+  potentials.** It takes its minimum over *every* mode, near-zero ones
+  included, and the eigenvectors of a near-zero frustrated translation or
+  rotation are an arbitrary basis that differs freely between members — so
+  the flag may well fire on runs where nothing is wrong. It has been
+  exercised against EMT only. Read `worst_mode_overlap` and the per-mode
+  `<member>_overlap` columns next to the frequencies before acting on the
+  flag: an overlap that is low only for modes at a few cm⁻¹ says nothing
+  about the modes you are reporting. Whether to apply a frequency floor
+  below which the diagnostic is skipped is an open question for the project
+  owner, not something this command decides.
+- **At `delta = 0.01 Å` (the default), a merely noisy member contributes to
+  the spread alongside genuine model disagreement, and one sweep cannot
+  separate the two.** The force differences being divided are small at that
+  displacement, and MLIP forces carry their own numerical noise at that
+  scale. Running at two values of `--delta` distinguishes noise from
+  disagreement. Do not present `frequency_member_std_cm-1` as pure model
+  uncertainty without checking that.
+  **Give each `--delta` its own `--prefix` or its own `--output-dir`.** The
+  displacement cache is named after the prefix and carries no record of the
+  displacement size in its entry names, so a second delta in the same
+  directory would have reused the first one's forces — reported at 415.08
+  cm⁻¹ where the truth was 930.86, a factor of 2.24, with no warning. That
+  is now refused rather than silently reused (see [The displacement
+  cache](#the-displacement-cache-and-what-it-is-checked-against)), but the
+  refusal costs you the run: set the prefix up front.
+
+`<prefix>_committee_frequencies.csv`:
+
+| Column | Meaning |
+|--------|---------|
+| `mode_index` | As in `<prefix>_frequencies.csv` |
+| `frequency_committee_cm-1` | The headline value, from the **mean** forces — one Hessian, not the mean of the per-member frequencies below (those are different numbers, D8 in the design note) |
+| `imaginary` | bool, for the committee (headline) value |
+| `<member>_cm-1` | One column per member, magnitude |
+| `frequency_member_std_cm-1` | Standard deviation across members, `ddof=1` |
+| `<member>_overlap` | One column per member — see above |
+
+Per-member ZPE, plus its mean and standard deviation across members, is in
+the run record's `results.committee_frequencies`, not in the CSV:
+`zpe_eV_per_member` (one value per member), `zpe_mean_eV`, `zpe_std_eV`,
+`frequency_member_std_cm-1` (the same values as the CSV column),
+`worst_mode_overlap`, and `mode_pairing_suspect`.
+
 ### The run record (committee fields)
 
 `mliprun_run.json` gains the following, present only when a committee
@@ -526,8 +603,8 @@ converge against. The mask columns say which rows `fmax_free` covers.
 | `n_free_atoms` | How many atoms retain at least one free force component |
 | `worst_force_atom_all` | Index of the atom with the largest raw (unconstrained) force |
 | `worst_force_atom_all_symbol` | Its chemical symbol |
-| `worst_force_atom_free` | Index of the atom with the largest constrained force |
-| `worst_force_atom_free_symbol` | Its chemical symbol |
+| `worst_force_atom_free` | Index of the atom with the largest constrained force, or `null` when every atom is fixed — there is then no free atom to be the worst one |
+| `worst_force_atom_free_symbol` | Its chemical symbol, `null` alongside a `null` index |
 | `unhandled_constraints` | Constraint type names left unmasked (see [Constraint masking](#constraint-masking)); their atoms count as free, so `fmax_free` over-reports for them |
 | `stress_eV_per_A3`, `stress_GPa` | Voigt-order stress tensor, or both `null` when not attempted or not available |
 | `stress_unavailable_reason` | Why stress is `null`: `"not requested"` (`--no-stress`), a pbc message (see [Stress](#stress) below), or the calculator's own exception; `null` when stress was reported |
@@ -564,6 +641,270 @@ and never aborts the run — a missing stress must not cost the energy.
 
 ---
 
+## `freq run`
+
+Computes vibrational frequencies by finite differences of forces
+(`ase.vibrations.Vibrations`) and reports the frequencies, the imaginary-mode
+count, and the zero-point energy (ZPE). With `--committee committee.yaml`,
+one displacement sweep additionally yields one Hessian per member: see
+[Committee frequencies](#committee-frequencies) above.
+
+| File | Format | Contents |
+|------|--------|----------|
+| `<prefix>_frequencies.csv` | CSV | One row per mode: magnitude, energy, imaginary flag (see below) |
+| `<prefix>_summary.txt` | text | ASE's own `vib.summary()` table — the format users already recognise from other ASE-driven work |
+| `<prefix>_vibrations.json` | JSON | `VibrationsData.write()` output: the full Hessian and the atoms. Reloads through `VibrationsData.read` (see [PYTHON_API.md](PYTHON_API.md#vibrational-frequencies)) |
+| `<prefix>/` | folder | ASE's per-displacement JSON cache. An interrupted sweep resumes at the displacement it stopped on. Entries are named by atom, axis and sign only — nothing about the displacement size or the model — so a reusing run verifies the cache is its own first; see [The displacement cache](#the-displacement-cache-and-what-it-is-checked-against) |
+| `<prefix>_cache.json` | JSON | What the cache beside it was swept under: `delta`, `nfree`, `model`, `per_member_forces`. Checked before a run reuses anything; a cache with no readable one is refused |
+| `<prefix>.<n>.traj` | ASE trajectory | One animated trajectory per written mode, `n` its mode index. Which modes get one follows `--write-modes` (`none`, `imaginary` — the default, or `all`); a clean minimum under the default writes nothing |
+| `mliprun_run.json` | JSON | Canonical run record; stage kind `freq` (see [The run record](#the-run-record)) |
+
+With `--committee committee.yaml`, one more file is always written:
+
+| File | Format | Contents |
+|------|--------|----------|
+| `<prefix>_committee_frequencies.csv` | CSV | Per-member frequencies, the per-mode standard deviation across members, and the per-member mode-overlap diagnostic — see [Committee frequencies](#committee-frequencies) above |
+
+`<prefix>` defaults to `freq` and follows `--prefix`.
+
+**Give a frequency run its own output directory.** A run record is
+*replaced*, not appended to, by the next command that writes into the same
+directory — measured: `optimize run` followed by `singlepoint run` in one
+directory leaves the `optimize` stage gone from `mliprun_run.json`. `freq`
+is no different, so running it in the directory that produced the structure
+risks losing that structure's `optimize` provenance the next time something
+writes there. `--output-dir` puts a frequency run's outputs in their own
+folder instead (default: next to `--structure`, as `optimize`/`singlepoint`/
+`md` do). This only moves where *this run's* files land — the
+stationary-point warning below still looks up the fmax expectation in the
+*structure's own* directory regardless of `--output-dir`, so the warning
+keeps working.
+
+### `<prefix>_frequencies.csv`
+
+| Column | Meaning |
+|--------|---------|
+| `mode_index` | 0-based, in ASE's ascending-eigenvalue order |
+| `frequency_cm-1` | **magnitude**, always positive |
+| `energy_meV` | The same mode's energy, in meV — a **magnitude** like `frequency_cm-1`, positive for an imaginary mode too |
+| `imaginary` | bool |
+
+**The frequency column is a magnitude plus a boolean, never a signed
+number.** Writing an imaginary frequency as a negative one is the widespread
+convention elsewhere, and it is a silent trap here: anything that sums or
+sorts this column would treat an imaginary mode as an unusually soft real
+one rather than flagging it. `energy_meV` follows the same rule: it is the
+same mode's energy magnitude, so the two numeric columns on a row always
+describe the same mode in two units (`energy_meV = frequency_cm-1 ×
+ase.units.invcm × 1000`), imaginary rows included.
+
+A mode counts as imaginary when `abs(energy.imag) > 1e-8` eV — the same
+threshold ASE's own `im_tol` uses in
+`VibrationsData._tabulate_from_energies`, applied to the same quantity (the
+mode **energy**, never the frequency in cm⁻¹). This alignment matters
+because `freq` writes both this CSV and ASE's own `<prefix>_summary.txt`
+from the same run; a mismatched threshold, or the same threshold applied to
+a different quantity, would let the two files disagree about which modes
+are imaginary. It does **not** settle whether a *larger* tolerance should
+suppress genuine near-zero modes — a frustrated translation or rotation on
+a slab can pick up an arbitrary tiny sign from finite differences, so a mode
+at a few cm⁻¹ may be numerical noise rather than real negative curvature.
+That is an open scientific question (recorded in the design note), and it
+bears directly on any "exactly one imaginary mode" transition-state check
+built on this output.
+
+**ZPE counts the real modes only.** ASE's zero-point energy sums the real
+parts of the mode energies, so an imaginary mode contributes exactly zero to
+it. A structure with imaginary modes therefore has **no well-defined
+zero-point energy**, and `zpe_eV` in the run record is the ZPE of its real
+modes only.
+
+### The stationary-point warning
+
+A frequency analysis assumes the input geometry sits at a stationary point.
+`freq` measures fmax at the input geometry — at no extra cost, since
+`Vibrations.run()` evaluates the undisplaced geometry first, before any
+displacement — and compares it against an expectation, in order:
+
+1. `--expect-fmax X`, when given (`fmax_expectation_source: "explicit"`).
+2. Otherwise, the fmax a **converged** `optimize` stage in the *structure's
+   own directory* actually met, read from that directory's
+   `mliprun_run.json` (`fmax_expectation_source: "run_record"`). This is not
+   an invented constant: it is the convergence criterion that was actually
+   applied to this structure, with its provenance attached. A
+   not-converged `optimize` stage supplies nothing — the fmax it was aiming
+   at is not one it met.
+3. Otherwise, no comparison (`fmax_expectation_source: "none"`,
+   `fmax_warning: null`). The measured fmax is still reported, with a line
+   saying no relaxation provenance was found next to the structure.
+
+**Two fmax values are reported, and the comparison uses the free one.**
+`fmax_at_input_free_eV_per_A` covers only the force components no constraint
+holds, exactly as `singlepoint`'s `fmax_free_eV_per_A` does; it is what the
+expectation above is measured against, because that expectation is the
+*constrained* criterion an `optimize` stage converged to.
+`fmax_at_input_all_eV_per_A` is the same forces with no mask applied — what
+the model predicts before anything is held fixed. On a slab with frozen
+layers they differ by an order of magnitude (measured on a relaxed Pt(111)
+2×2×4 + H slab: 0.0198 eV/Å free against 0.3809 eV/Å over all atoms), so
+comparing the all-atom number against an `optimize` record's fmax would
+raise the warning on every correctly relaxed slab. The masking follows
+[Constraint masking](#constraint-masking): a projecting constraint
+(`FixedPlane`, `FixedLine`, …) is left unmasked, so the free value
+over-reports for those atoms and their type names appear in
+`unhandled_constraints`.
+
+**This warning never refuses.** Exceeding the expectation prints a warning
+and sets `fmax_warning: true`; the run completes regardless. A geometry that
+is not a stationary point produces spurious imaginary modes that look, by
+eye, indistinguishable from a real transition state — the warning is the
+only defence against that, and it is only ever advisory.
+
+The fmax-expectation lookup always reads the *structure's own* directory
+(`Path(--structure).parent`), never `--output-dir`: keeping a frequency
+run's outputs in their own folder (see above) does not disconnect the
+warning from the `optimize` stage that produced the structure.
+
+### Which atoms move
+
+Every atom **not** held by a `FixAtoms` constraint — the structure's own
+answer, and also ASE's own default for `Vibrations`. `--indices` overrides
+it explicitly (accepts `0,1,5`, `12-30`, or a mix, inclusive ranges).
+
+Any other constraint type (`FixCartesian`, `FixedPlane`, `FixedLine`,
+`FixBondLength`/`FixBondLengths`, `FixScaled`, …) **warns and is displaced
+in full**: ASE's `indices` selects whole atoms, so a partially-held atom has
+no partial Hessian to express through it. Those atoms' held components then
+enter the Hessian as if free. The warned-about type names are recorded in
+`unhandled_constraints`; pass `--indices` to exclude those atoms explicitly
+if that is not acceptable.
+
+### Cost
+
+Force calls: `1 + 6 × n_displaced` at `--nfree 2` (the default), `1 + 12 ×
+n_displaced` at `--nfree 4` (five-point stencil, doubling the cost). The
+leading `1` is the equilibrium evaluation. Restart is nearly free — an
+interrupted sweep resumes only the displacements not already in the
+`<prefix>/` cache, and pays one extra force evaluation for the cache check
+described next.
+
+### The displacement cache, and what it is checked against
+
+The `<prefix>/` folder is ASE's own per-displacement JSON cache. ASE names
+each entry after the **atom, axis and sign** of the displacement
+(`0x+`, `1z--`, …) and nothing else. The displacement *size*, the stencil,
+and the model that produced the forces all leave no trace in the name, and
+the folder's own name is `<output_dir>/<prefix>` with `--prefix` defaulting
+to `freq` whatever `--mlip` says. A second `freq run` in the same directory
+therefore used to reuse whatever was there, whether or not it belonged to
+that run. Two measured failures, both silent, both `status: completed`:
+
+| Second run | Reported | Truth |
+|---|---|---|
+| `--delta 0.05` over a `--delta 0.01` cache | 0 force calls, top mode **415.08 cm⁻¹** | 930.86 cm⁻¹ — **wrong by 2.24×** |
+| Lennard-Jones over an EMT cache | 0 force calls, top mode 928.1448 cm⁻¹, `provenance.mlip_model: "lj"` | EMT's numbers under LJ's name |
+
+The delta case is the more dangerous of the two, because the forces are
+reused and then divided by the *new* `--delta`: the Hessian comes out a
+factor `δ_old/δ_new` wrong and every frequency by its square root.
+
+Two checks now stand in front of this.
+
+**1. The recorded identity, checked before the sweep.** Every run writes
+`<prefix>_cache.json` beside the cache folder, recording what the cache was
+swept under:
+
+```json
+{ "delta": 0.01, "model": "emt", "nfree": 2, "per_member_forces": false }
+```
+
+A run that finds existing entries compares its own identity against that
+file **before it computes anything**, and refuses on any difference, naming
+the field and both values. Checking first is what keeps a refusal clean: a
+guard that fired after the sweep would already have written its own
+displacements into the shared folder, leaving a mixture of two identities
+that a later run of either one would partly match and accept.
+
+A cache with **no readable `<prefix>_cache.json`** beside it — one written
+before this file existed, or one whose sidecar was removed — is **refused**,
+not accepted on trust. `delta` and `nfree` leave no trace in the cached
+forces, so there is no measurement that could recover them; accepting such
+a cache would be reintroducing the 2.24× error for exactly the caches that
+cannot be verified.
+
+The comparison is whole-identity, not field-by-field compatibility. A
+`--nfree 2` cache is in fact reusable by an `--nfree 4` run (ASE's `ndisp=1`
+entries sit at ±`delta` under both, and the `ndisp=2` entries carry distinct
+names — verified bit-identical to a clean `--nfree 4` sweep), so that one
+refusal costs a re-sweep it did not strictly have to. It is deliberate: that
+compatibility rests on an ASE internal that a future release could change
+without saying so, and a re-sweep is a cheaper mistake than a wrong number.
+Pass a different `--prefix` when you want both stencils side by side.
+
+**2. The equilibrium forces, checked after the sweep.** The identity file
+records the model *name the caller declared*, which cannot see a changed
+checkpoint, head or task behind an unchanged name. So whenever a run reuses
+anything, it also re-evaluates the undisplaced geometry once with its own
+calculator and compares against the cached equilibrium forces, with
+`numpy.allclose(rtol=0, atol=1e-6)` in eV/Å. Not exact equality: a real MLIP
+on a GPU is not bit-reproducible between runs, while a different model
+differs by orders of magnitude (3.56 eV/Å for the EMT/Lennard-Jones pair
+above), so that tolerance separates the two cases cleanly. This check is
+structurally blind to `--delta` — undisplaced forces do not depend on the
+displacement size — which is why check 1 exists and runs first.
+
+On either mismatch the run **stops**, the run record is completed as
+`failed`, and the message gives both remedies: delete the `<prefix>/` folder
+(the sidecar is rewritten on the next run), or pass a different `--prefix`
+so this run gets its own cache. Check 2 costs one force evaluation on a
+restart, against the `6 × n_displaced` a restart saves, and it is not
+counted in `n_force_calls` (which reports the sweep's own cost).
+
+**A committee run can only restart a committee sweep.** A committee restart
+is otherwise as cheap as a single-model one — the per-member forces survive
+ASE's JSON cache, so a resumed committee run keeps its spread and still
+reports `committee_uncertainty` (that block never comes from the cache; it
+comes from one explicit evaluation of the input geometry after the sweep).
+But a cache written by a **single-model** run holds the consensus forces
+only: there are no per-member forces in it for a committee to build one
+Hessian per member from. `freq run` followed by `freq run --committee` in
+one directory — both default to the same directory and the same prefix — is
+therefore refused by the same check, with the same two remedies, rather
+than crashing partway through with the run record left saying `running`.
+
+### `freq run --committee`
+
+A committee run reports **two different things**, not one:
+
+1. **Per-member frequencies** — one Hessian per member from a single
+   displacement sweep, in `<prefix>_committee_frequencies.csv` and
+   `results.committee_frequencies`. This is `freq`'s own mechanism; see
+   [Committee frequencies](#committee-frequencies) above.
+2. **The consensus force disagreement** — the same `committee_uncertainty`
+   block `optimize run --committee` and `singlepoint run --committee` write,
+   with the same keys and the same meaning (see [Committee
+   outputs](#committee-outputs)). `freq` measures it **at the input
+   geometry of the sweep**, not at a displaced one: `Vibrations.run()`
+   restores the positions after every displacement, so the members are
+   evaluated once, explicitly, at the geometry the frequencies describe.
+   That one evaluation is also why a fully cached restart still reports this
+   block, with the same numbers as a fresh run.
+
+`--uncertainty-threshold X` (eV/Å) is opt-in here exactly as it is on the
+other two commands: there is **no default**, and without it sigma is
+reported and no verdict asserted (`threshold_source: "none"`,
+`flagged: null`). With it, `sigma_max_free` above `X` sets `flagged: true`
+and prints a warning saying the configuration deserves a DFT check. It
+never stops the run, and it is independent of `--expect-fmax`, which
+answers a different question (is this geometry a stationary point?) against
+a different quantity.
+
+The terminal echo after a committee run names the geometry it describes —
+"Committee disagreement at the input geometry" — because this is the same
+shared reporter `optimize` uses at a relaxation's final geometry.
+
+---
+
 ## Parameter file conventions
 
 `*_params.txt` and `*_parameters.txt` are written by `mliprun.core.params_io.write_parameters_file`. Same two-column layout (`{key:<23}{value}`) for every command. The keys include their trailing colon. These files are plain text and intended to be diffed across runs.
@@ -583,9 +924,9 @@ layer — so a script that calls `run_optimization` directly gets one too.
 
 | Key | Meaning |
 |-----|---------|
-| `schema_version` | Currently `5`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. The `singlepoint` stage kind is additive and does not bump the schema: `provenance` is untouched, and no existing field changes meaning. |
-| `command` | `optimize`, `md`, `neb`, `autoneb` or `singlepoint`. |
-| `status` | Status of the **latest** stage: `running`, `converged`, `not_converged`, `completed` (a `singlepoint` stage: there is nothing to converge) or `failed`. A record left saying `running` means the job died without reporting back. |
+| `schema_version` | Currently `5`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. The `singlepoint` and `freq` stage kinds are additive and do not bump the schema: `provenance` is untouched, and no existing field changes meaning. |
+| `command` | `optimize`, `md`, `neb`, `autoneb`, `singlepoint` or `freq`. |
+| `status` | Status of the **latest** stage: `running`, `converged`, `not_converged`, `completed` (a `singlepoint` or `freq` stage: there is nothing to converge) or `failed`. A record left saying `running` means the job died without reporting back. |
 | `run.mode` | `one-off` or `batch`. |
 | `run.batch` | `null` for one-off runs; otherwise `batch_id`, `driver`, `argv`, `root`, `config_file`. Every run of one batch shares a `batch_id`. |
 | `inputs` | For `optimize` and `md`: structure filename and absolute path, atom count, formula. For `neb` and `autoneb`: `n_images` and `n_atoms` (there is no single input structure). |
@@ -635,8 +976,8 @@ produced under another.
 directory — most commonly a plain NEB followed by a CI-NEB restart, or an MD
 run extended with `--resume`. Each stage records its own `kind`
 (`optimize`, `md`, `md-resume`, `neb`, `neb-restart`, `autoneb`,
-`singlepoint`), `status`, `steps`, `walltime_s`, any `parameters` that stage
-changed, and its `results`.
+`singlepoint`, `freq`), `status`, `steps`, `walltime_s`, any `parameters`
+that stage changed, and its `results`.
 A stage's terminal status is never rewritten, so a converged stage 0 followed
 by a failed stage 1 keeps both facts.
 
@@ -711,6 +1052,19 @@ outcome for this command, only `converged` or `failed`.
 Status is always `completed` on success — there is nothing to converge — or
 `failed`. See [`singlepoint run`](#singlepoint-run) above for what each key
 means.
+
+**freq** — `n_modes`, `n_imaginary`, `frequencies_cm-1` (list, magnitudes),
+`imaginary_mask` (list, bool), `zpe_eV` (real modes only, see [`freq
+run`](#freq-run) above), `fmax_at_input_free_eV_per_A`,
+`fmax_at_input_all_eV_per_A`, `fmax_expectation`,
+`fmax_expectation_source`, `fmax_warning`, `n_displaced_atoms`,
+`n_force_calls`, `unhandled_constraints`, and — with `--committee` — both
+`committee_frequencies` (see [Committee
+frequencies](#committee-frequencies) above) and `committee_uncertainty`
+(the same consensus-disagreement block `optimize` and `singlepoint` write,
+here measured at the **input geometry** of the displacement sweep; see
+[`freq run --committee`](#freq-run---committee) below). Status is always
+`completed` on success — there is nothing to converge — or `failed`.
 
 ### Failure behavior
 
