@@ -112,7 +112,15 @@ def test_per_member_zpe_reaches_the_run_record(structure, tmp_path):
 def test_a_restart_reproduces_the_same_per_member_frequencies(
         structure, tmp_path):
     """Per-member forces must survive ASE's JSON cache, or a resumed
-    committee run silently loses its spread."""
+    committee run silently loses its spread.
+
+    EMT is deterministic, so matching CSV text alone would also pass if the
+    second run silently recomputed everything from scratch instead of
+    reusing the displacement cache. The zero-force-calls assertion below is
+    what actually distinguishes "the cache worked" from "it was bypassed" --
+    losing per-member forces on restart is this feature's quiet failure
+    mode.
+    """
     from mliprun.cli.commands.freq import app
     runner.invoke(app, [
         "run", "--structure", str(structure),
@@ -123,6 +131,12 @@ def test_a_restart_reproduces_the_same_per_member_frequencies(
         "--committee", str(_committee_file(tmp_path))])
     second = (structure.parent / "freq_committee_frequencies.csv").read_text()
     assert first == second
+
+    # `freq` overwrites mliprun_run.json rather than appending, so the
+    # second run's stage is stages[0], not stages[1].
+    record = json.loads(
+        (structure.parent / "mliprun_run.json").read_text())
+    assert record["stages"][0]["results"]["n_force_calls"] == 0
 
 
 def test_a_disagreeing_committee_gives_a_non_zero_spread(tmp_path):
