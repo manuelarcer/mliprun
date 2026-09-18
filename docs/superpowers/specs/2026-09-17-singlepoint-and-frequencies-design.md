@@ -292,6 +292,35 @@ defensible convention but it is not a well-defined zero-point energy, and the
 documentation must say so wherever `zpe_eV` appears: a structure with imaginary
 modes has no ZPE, and the number reported is the ZPE of its real modes only.
 
+**What counts as an imaginary mode, added 2026-09-18 (Task 10 review).** A mode
+is classified imaginary when `abs(energy.imag) > IMAGINARY_ENERGY_TOL_EV`, with
+that constant set to `1e-8` — matching ASE's own `im_tol` in
+`VibrationsData._tabulate_from_energies`, and applied to the mode **energy in
+eV** rather than the frequency in cm⁻¹.
+
+That alignment is a consistency requirement, not a preference. `freq` writes
+both its own `<prefix>_frequencies.csv` and ASE's `<prefix>_summary.txt` from
+the same run; if the two use different thresholds, or the same threshold on
+different quantities, one file can call a mode imaginary while the other calls
+it real. An earlier draft classified with `> 0` on the frequency and had
+exactly that defect.
+
+**[OPEN — Juan's decision, not settled here.]** Aligning with ASE removes the
+disagreement between our two files. It does not answer the separate scientific
+question: whether a *larger* tolerance should suppress near-zero modes
+altogether. An adsorbate on a slab carries frustrated translations and
+rotations at low frequency, and finite differences give those eigenvalues
+arbitrary tiny signs — so a mode at a few cm⁻¹ with a negative eigenvalue may
+be numerical noise rather than a real negative curvature.
+
+This matters because it changes the transition-state test. Confirming a saddle
+means finding **exactly one** imaginary mode, and that count is taken against
+whatever threshold this spec sets. Until the question is settled, the reported
+count is "imaginary by ASE's own definition", which is the most defensible
+position available without a ruling, and the docs say so. Task 15's
+transition-state check inherits this and should not be read as a verdict on
+the threshold.
+
 ### Cost
 
 Force calls are `1 + 6 × n_displaced` at `nfree=2`, and `1 + 12 × n_displaced`
