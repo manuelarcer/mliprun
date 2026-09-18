@@ -134,9 +134,10 @@ def test_a_prior_record_in_the_structure_directory_survives(
                      '"stages": [{"index": 0, "kind": "optimize", '
                      '"status": "converged"}]}')
     before = prior.read_text()
-    runner.invoke(app, [
+    result = runner.invoke(app, [
         "run", "--structure", str(structure),
         "--output-dir", str(tmp_path / "sp")])
+    assert result.exit_code == 0, result.stdout
     assert prior.read_text() == before
 
 
