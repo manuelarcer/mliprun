@@ -26,6 +26,12 @@ VALID_NFREE = (2, 4)
 VALID_DIRECTIONS = ("central", "forward", "backward")
 VALID_METHODS = ("standard", "frederiksen")
 
+#: Imaginary-mode threshold, matching ASE's own `im_tol` in
+#: `VibrationsData._tabulate_from_energies`. Applied to the mode ENERGY in
+#: eV, not to the frequency in cm^-1, so that <prefix>_frequencies.csv and
+#: <prefix>_summary.txt can never classify the same mode differently.
+IMAGINARY_ENERGY_TOL_EV = 1e-8
+
 
 def assemble_hessian(forces, indices, delta, nfree=2,
                      direction="central", method="standard"):
@@ -491,9 +497,26 @@ def run_frequencies(
     data = vib.get_vibrations(method=method, direction=direction)
     energies = np.asarray(data.get_energies())
     frequencies = np.asarray(data.get_frequencies())
-    imaginary = np.abs(frequencies.imag) > 0
-    magnitudes = np.where(imaginary, np.abs(frequencies.imag),
-                          frequencies.real)
+    # Classify exactly as ASE's own summary table does (data.py's
+    # _tabulate_from_energies): on the mode ENERGY in eV against im_tol,
+    # never on the frequency in cm^-1. A near-zero frustrated
+    # translation/rotation on a slab can pick up an arbitrary tiny sign from
+    # finite differences; a `> 0` threshold on the frequency would call that
+    # noise imaginary here while the summary table -- and any transition-
+    # state "exactly one imaginary mode" check -- called it real.
+    imaginary = np.abs(energies.imag) > IMAGINARY_ENERGY_TOL_EV
+    # ASE's frequency for each mode is the complex square root of a real
+    # eigenvalue: non-negative gives a purely real, non-negative result;
+    # negative gives a purely imaginary result with a non-negative
+    # imaginary part. Exactly one of .real/.imag is nonzero, so np.abs()
+    # (the complex modulus) always recovers that value -- unlike selecting
+    # .imag or .real by the `imaginary` flag above, which now uses a
+    # threshold on a DIFFERENT quantity (the energy) and can therefore pick
+    # the wrong, exactly-zero component for a mode sitting right at that
+    # threshold (see test_the_frequency_csv_and_summary_agree_on_which_
+    # modes_are_imaginary and the regression it caught in
+    # test_frequencies_match_ases_own_for_the_same_settings).
+    magnitudes = np.abs(frequencies)
 
     with vibrations_json.open("w") as handle:
         data.write(handle)

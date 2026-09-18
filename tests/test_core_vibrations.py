@@ -196,3 +196,34 @@ def test_write_modes_none_writes_no_trajectory(tmp_path):
 def test_write_modes_all_writes_every_mode(n2, tmp_path):
     results = run_frequencies(n2, output_dir=tmp_path, write_modes="all")
     assert len(list(tmp_path.glob("freq.*.traj"))) == results["n_modes"]
+
+
+def test_no_imaginary_modes_writes_no_trajectory_by_default(n2, tmp_path):
+    """write_modes defaults to 'imaginary'; with none present, nothing is
+    written -- the selection logic is right by inspection, but nothing
+    pinned it."""
+    results = run_frequencies(n2, output_dir=tmp_path)
+    assert results["n_imaginary"] == 0
+    assert list(tmp_path.glob("freq.*.traj")) == []
+
+
+def test_the_frequency_csv_and_summary_agree_on_which_modes_are_imaginary(
+        tmp_path):
+    """ASE's own summary table classifies a mode by ``abs(energy.imag) >
+    1e-8`` on the mode ENERGY in eV (VibrationsData._tabulate_from_energies),
+    not by the sign of the frequency in cm^-1. H2O relaxed under EMT with
+    nfree=4 reproducibly leaves one mode's energy imaginary part at ~6e-9 eV
+    -- below that threshold -- while its frequency in cm^-1 (~5e-5) is still
+    nonzero to floating point. Classifying on the frequency instead of the
+    energy would call that mode imaginary in the CSV while the summary table
+    calls it real: exactly the disagreement this guards against."""
+    from ase.optimize import BFGS
+    atoms = molecule("H2O")
+    atoms.calc = EMT()
+    BFGS(atoms, logfile=None).run(fmax=1e-6)
+    results = run_frequencies(atoms, output_dir=tmp_path, nfree=4)
+    summary = (tmp_path / "freq_summary.txt").read_text()
+    n_imaginary_in_summary = sum(
+        1 for line in summary.splitlines() if line.rstrip().endswith("i"))
+    assert results["n_imaginary"] > 0          # the case is not vacuous
+    assert results["n_imaginary"] == n_imaginary_in_summary
