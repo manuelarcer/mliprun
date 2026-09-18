@@ -397,6 +397,14 @@ class CommitteeCalculator(Calculator):
                 "their atoms are counted as free and sigma is over-reported",
                 ", ".join(unhandled))
         stats["energies"] = dict(energies)
+        # Every member's own forces, in `self.members` order (verified by
+        # reading `_validate`: `stacked` is built by a plain `for member in
+        # self.members` loop, not a dict, so there is no ordering risk to
+        # guard against here). Kept so a caller can build one Hessian per
+        # member from a single displacement sweep (`freq --committee`).
+        # Negligible memory: 72 kB for six members on 500 atoms, and
+        # `latest` is overwritten every evaluation.
+        stats["forces_per_member"] = stacked
         self.latest = stats
         self.n_evaluations += 1
         return stats
