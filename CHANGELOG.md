@@ -50,6 +50,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   record is completed as `failed` rather than left saying `running`. Without
   it, EMT then Lennard-Jones on N₂ in one directory gave run 2 zero force
   calls, EMT's frequencies, and `provenance.mlip_model: "lj"`.
+  The same check refuses a **single-model** cache to a `--committee` run: a
+  single-model sweep stores the consensus forces only, with no per-member
+  forces to build one Hessian per member from. A committee restarting a
+  committee sweep is unaffected — the per-member forces survive ASE's JSON
+  cache, and `committee_uncertainty` is reported on a restart too, since it
+  comes from one explicit evaluation of the input geometry rather than from
+  the cache.
   `--committee committee.yaml` yields one Hessian **per member** from a
   **single** displacement sweep — not one sweep per member — since members
   are queried concurrently, so wall time is the slowest member's, not the

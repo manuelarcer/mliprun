@@ -140,6 +140,106 @@ def test_a_restart_reproduces_the_same_per_member_frequencies(
     assert record["stages"][0]["results"]["n_force_calls"] == 0
 
 
+def test_a_restart_keeps_the_uncertainty_block_it_reports(structure,
+                                                           tmp_path):
+    """A fully cached committee restart must still report its disagreement.
+
+    `committee_uncertainty` does not come from the cache -- it comes from one
+    explicit evaluation of the input geometry after the sweep -- so a restart
+    that made zero force calls must still carry it, correctly. The
+    zero-force-calls assertion is what makes this a restart and not a second
+    fresh sweep.
+    """
+    from mliprun.cli.commands.freq import app
+    first = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path)),
+        "--uncertainty-threshold", "0.05"])
+    assert first.exit_code == 0, first.stdout
+
+    second = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path)),
+        "--uncertainty-threshold", "0.05"])
+    assert second.exit_code == 0, second.stdout
+
+    record = json.loads((structure.parent / "mliprun_run.json").read_text())
+    results = record["stages"][0]["results"]
+    assert results["n_force_calls"] == 0          # the cache was reused
+    block = results["committee_uncertainty"]
+    # Two identical EMT members: sigma is exactly zero, and with a threshold
+    # of 0.05 eV/A nothing is flagged. Both are values, not mere presence.
+    assert block["sigma_max_free_final_eV_per_A"] == pytest.approx(
+        0.0, abs=1e-12)
+    assert block["threshold_source"] == "explicit"
+    assert block["threshold_eV_per_A"] == pytest.approx(0.05)
+    assert block["flagged"] is False
+    assert block["n_free_atoms"] == 2             # N2, nothing constrained
+
+
+# -- crossing a single-model cache with a committee run -----------------
+
+def test_a_single_model_cache_is_refused_by_a_committee_run(structure,
+                                                             tmp_path):
+    """`freq` then `freq --committee` in one directory.
+
+    A single-model sweep writes entries whose only force key is `forces`, so
+    reading `forces_per_member` out of them used to raise a bare
+    `KeyError: 'forces_per_member'` -- after the run record was opened and
+    before it was completed, leaving it saying `status: "running"`, which
+    docs/OUTPUTS.md defines as "the job died without reporting back".
+    """
+    from ase.calculators.emt import EMT
+    from ase.io import read
+
+    from mliprun.cli.commands.freq import app
+    from mliprun.core.vibrations import run_frequencies
+
+    single = read(structure)
+    single.calc = EMT()
+    first = run_frequencies(single, output_dir=structure.parent,
+                            model_name="emt")
+    assert first["n_force_calls"] == 1 + 6 * 2    # a real single-model sweep
+
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path))])
+
+    assert result.exit_code == 1
+    assert str(structure.parent / "freq") in result.stdout
+    assert "--prefix" in result.stdout
+    record = json.loads((structure.parent / "mliprun_run.json").read_text())
+    assert record["status"] == "failed"
+    assert record["stages"][-1]["status"] == "failed"
+    assert "per-member forces" in record["stages"][-1]["results"]["error"]
+
+
+def test_a_different_prefix_lets_a_committee_run_beside_a_single_model_one(
+        structure, tmp_path):
+    """The remedy the refusal names has to actually work."""
+    from ase.calculators.emt import EMT
+    from ase.io import read
+
+    from mliprun.cli.commands.freq import app
+    from mliprun.core.vibrations import run_frequencies
+
+    single = read(structure)
+    single.calc = EMT()
+    run_frequencies(single, output_dir=structure.parent, model_name="emt")
+
+    result = runner.invoke(app, [
+        "run", "--structure", str(structure),
+        "--committee", str(_committee_file(tmp_path)),
+        "--prefix", "freq_committee"])
+    assert result.exit_code == 0, result.stdout
+    rows = list(csv.DictReader(
+        (structure.parent
+         / "freq_committee_committee_frequencies.csv").open()))
+    assert rows
+    for row in rows:
+        assert float(row["member_a_overlap"]) == pytest.approx(1.0, abs=1e-9)
+
+
 def test_a_disagreeing_committee_gives_a_non_zero_spread(tmp_path):
     """Driven directly, not through the CLI: the point is the arithmetic."""
     from mliprun.core.vibrations import assemble_hessian

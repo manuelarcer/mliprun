@@ -395,23 +395,40 @@ class CommitteeVibrations(CountingVibrations):
         return results
 
 
-def _member_forces(vib, nfree):
-    """Every displacement's per-member forces, back out of ASE's cache.
+def _displacement_keys(vib, nfree):
+    """``(cache name, forces-dict key)`` for every entry this sweep uses.
+
+    One enumeration, used both to check a cache before trusting it and to
+    read it back per member, so the two can never drift apart.
 
     ``_disp`` and ``_eq_disp`` are ASE-private, used deliberately: the cache
     is the only complete record once a restart has skipped displacements.
     Pinned against ase>=3.23 by tests/test_vibrations_hessian.py.
     """
-    def cached(disp):
-        return np.asarray(vib.cache[disp.name]["forces_per_member"],
-                          dtype=float)
-
-    out = {"eq": cached(vib._eq_disp())}
+    pairs = [(vib._eq_disp().name, "eq")]
     steps = [-1, 1] if nfree == 2 else [-2, -1, 1, 2]
     for a in vib.indices:
         for i in range(3):
             for n in steps:
-                out[(int(a), i, n)] = cached(vib._disp(a, i, n))
+                pairs.append((vib._disp(a, i, n).name, (int(a), i, n)))
+    return pairs
+
+
+def _member_forces(vib, nfree):
+    """Every displacement's per-member forces, back out of ASE's cache."""
+    out = {}
+    for name, key in _displacement_keys(vib, nfree):
+        entry = vib.cache[name]
+        if "forces_per_member" not in entry:
+            # Reachable for a direct caller of `member_frequencies`; a run
+            # through `run_frequencies` is stopped earlier, by
+            # `_reject_a_cache_without_member_forces`, before any output
+            # file has been rewritten.
+            raise FrequencyCacheError(
+                f"the displacement cache entry {name!r} holds no per-member "
+                f"forces: it was written by a single-model run, which stores "
+                f"only the consensus forces.")
+        out[key] = np.asarray(entry["forces_per_member"], dtype=float)
     return out
 
 
@@ -427,7 +444,54 @@ def _expected_force_calls(n_displaced, nfree):
     return 1 + (6 if nfree == 2 else 12) * int(n_displaced)
 
 
-def _reject_a_foreign_cache(vib, atoms, cache_dir, nfree):
+def _check_the_displacement_cache(vib, atoms, cache_dir, nfree, committee):
+    """Every cache guard, run only when a displacement was actually reused.
+
+    A sweep that computed every displacement itself wrote every cache entry
+    itself, so there is nothing to verify and nothing to pay for. Once
+    anything has been reused, the cache came from an earlier run that this
+    one cannot identify from the filename: ASE keys the cache by
+    displacement, never by model or by committee membership.
+    """
+    if vib.n_force_calls >= _expected_force_calls(len(vib.indices), nfree):
+        return
+    _reject_a_foreign_cache(vib, atoms, cache_dir)
+    if committee is not None:
+        _reject_a_cache_without_member_forces(vib, cache_dir, nfree)
+
+
+def _reject_a_cache_without_member_forces(vib, cache_dir, nfree):
+    """Refuse a single-model cache to a committee run.
+
+    A single-model sweep writes entries whose only force key is ``forces``:
+    the consensus is all there is. A committee needs ``forces_per_member`` to
+    build one Hessian per member, so reading a single-model cache used to
+    fail on a bare ``KeyError: 'forces_per_member'`` -- raised after the run
+    record had been opened and before it was completed, which left the record
+    saying ``status: "running"``, i.e. (docs/OUTPUTS.md) "the job died
+    without reporting back".
+
+    `freq` then `freq --committee` in one directory is the obvious way to
+    reach this: both default to the same directory and the same prefix.
+
+    Raises
+    ------
+    FrequencyCacheError
+        When any entry this sweep will read carries no per-member forces.
+    """
+    for name, _ in _displacement_keys(vib, nfree):
+        if "forces_per_member" in vib.cache[name]:
+            continue
+        raise FrequencyCacheError(
+            f"the displacement cache in {cache_dir} was written by a "
+            f"single-model run: entry {name!r} holds the consensus forces "
+            f"only, with no per-member forces for a committee to build one "
+            f"Hessian per member from. Delete {cache_dir} to recompute the "
+            f"sweep with the committee, or pass a different --prefix to "
+            f"give this run its own cache.")
+
+
+def _reject_a_foreign_cache(vib, atoms, cache_dir):
     """Refuse a displacement cache that a different calculator wrote.
 
     ASE names its cache ``<output_dir>/<prefix>``, and ``prefix`` defaults to
@@ -440,10 +504,10 @@ def _reject_a_foreign_cache(vib, atoms, cache_dir, nfree):
     structure is an obvious workflow and both runs default to the same
     directory and the same prefix.
 
-    The check runs only when something was actually reused -- a fresh sweep
-    has nothing to verify -- and costs exactly one force evaluation against
-    the ``6n`` a restart saves. It is not counted in ``n_force_calls``, which
-    reports the sweep's own cost.
+    Called only when something was actually reused (see
+    :func:`_check_the_displacement_cache`), and costs exactly one force
+    evaluation against the ``6n`` a restart saves. It is not counted in
+    ``n_force_calls``, which reports the sweep's own cost.
 
     Raises
     ------
@@ -452,8 +516,6 @@ def _reject_a_foreign_cache(vib, atoms, cache_dir, nfree):
         differ from the cached ones by more than
         :data:`CACHE_IDENTITY_ATOL`.
     """
-    if vib.n_force_calls >= _expected_force_calls(len(vib.indices), nfree):
-        return                      # nothing reused: nothing to verify
     cached = np.asarray(vib._eq_disp().forces(), dtype=float)
     # `vib.calc.get_forces(atoms)` is exactly the call ASE's own
     # `Vibrations.calculate` makes (`results['forces'] =
@@ -720,7 +782,8 @@ def run_frequencies(
     try:
         vib.run()
         vib.read(method=method, direction=direction)
-        _reject_a_foreign_cache(vib, atoms, vibration_name, nfree)
+        _check_the_displacement_cache(vib, atoms, vibration_name, nfree,
+                                      committee)
 
         results_uncertainty = None
         if committee is not None:

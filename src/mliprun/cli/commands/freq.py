@@ -29,6 +29,7 @@ from mliprun.core.vibrations import (
     VALID_DIRECTIONS,
     VALID_METHODS,
     VALID_NFREE,
+    FrequencyCacheError,
     parse_indices,
     run_frequencies,
 )
@@ -204,29 +205,37 @@ def run(
                    f"{len(chosen) if chosen is not None else 'the free'} "
                    f"atoms, delta = {delta} Å, nfree = {nfree}\n")
 
-        results = run_frequencies(
-            atoms=atoms,
-            output_dir=output_dir,
-            prefix=prefix,
-            model_name=mlip,
-            indices=chosen,
-            delta=delta,
-            nfree=nfree,
-            direction=direction,
-            method=method,
-            write_modes=write_modes,
-            expect_fmax=expect_fmax,
-            structure_dir=structure.parent,
-            run_context=run_context,
-            device_requested=device,
-            device_resolved=_resolve_device(device),
-            uma_task=uma_task,
-            mace_head=mace_head,
-            sevennet_task=sevennet_task,
-            committee=committee_calc,
-            committee_config=committee_config,
-            uncertainty_threshold=uncertainty_threshold,
-        )
+        # A cache this run must not trust is a user-fixable situation, not a
+        # bug: the message already names the directory and both remedies, so
+        # print it rather than letting a traceback carry it. `run_frequencies`
+        # has already completed the run record as `failed` by this point.
+        try:
+            results = run_frequencies(
+                atoms=atoms,
+                output_dir=output_dir,
+                prefix=prefix,
+                model_name=mlip,
+                indices=chosen,
+                delta=delta,
+                nfree=nfree,
+                direction=direction,
+                method=method,
+                write_modes=write_modes,
+                expect_fmax=expect_fmax,
+                structure_dir=structure.parent,
+                run_context=run_context,
+                device_requested=device,
+                device_resolved=_resolve_device(device),
+                uma_task=uma_task,
+                mace_head=mace_head,
+                sevennet_task=sevennet_task,
+                committee=committee_calc,
+                committee_config=committee_config,
+                uncertainty_threshold=uncertainty_threshold,
+            )
+        except FrequencyCacheError as exc:
+            typer.echo(f"\n❌ {exc}")
+            raise typer.Exit(1)
 
     typer.echo(f"\n〰️  {results['n_modes']} modes over "
                f"{results['n_displaced_atoms']} displaced atoms "

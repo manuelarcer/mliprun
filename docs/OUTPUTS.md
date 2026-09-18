@@ -794,6 +794,18 @@ force evaluation on a restart, against the `6 × n_displaced` a restart
 saves, and it is not counted in `n_force_calls` (which reports the sweep's
 own cost).
 
+**A committee run can only restart a committee sweep.** A committee restart
+is otherwise as cheap as a single-model one — the per-member forces survive
+ASE's JSON cache, so a resumed committee run keeps its spread and still
+reports `committee_uncertainty` (that block never comes from the cache; it
+comes from one explicit evaluation of the input geometry after the sweep).
+But a cache written by a **single-model** run holds the consensus forces
+only: there are no per-member forces in it for a committee to build one
+Hessian per member from. `freq run` followed by `freq run --committee` in
+one directory — both default to the same directory and the same prefix — is
+therefore refused by the same check, with the same two remedies, rather
+than crashing partway through with the run record left saying `running`.
+
 ---
 
 ## Parameter file conventions
