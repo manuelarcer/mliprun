@@ -11,6 +11,12 @@ from ase.md.nptberendsen import Inhomogeneous_NPTBerendsen, NPTBerendsen
 from ase.md.nvtberendsen import NVTBerendsen
 
 from mliprun.core.md import setup_dynamics, run_md
+from ase import units
+
+_MASK_TEST_COMPRESSIBILITY = 4.57e-5  # 1/GPa; see TestBarostatMask
+# The pre-2026-09 auto pfactor at ttime = 25 fs, in ASE units (2.27e6 GPa
+# fs^2): the masked npt test's dz below was measured with it.
+_MASK_TEST_PFACTOR = (25.0 * 75 * units.GPa) ** 2
 
 
 class TestSetupDynamics:
@@ -160,6 +166,12 @@ class TestBarostatMask:
     The motivating case is a slab-liquid interface: the in-plane lattice is
     fixed by the relaxed bulk and must not be strained, while the z length
     must be free so the liquid reaches its own density at the set pressure.
+
+    The Berendsen tests below pin ``compressibility`` to the pre-2026-09
+    default (4.57e-5 1/GPa) with ``taup = 10`` fs: that is the scenario the
+    deltas in their comments were measured on. With the corrected default
+    (0.457) and taup = 10 fs the isotropic cell overshoots by +35 A in 10
+    steps -- the assertions would still pass, on a broken run.
     """
 
     def _cubic_atoms(self, a=3.9):
@@ -225,6 +237,7 @@ class TestBarostatMask:
         dyn = setup_dynamics(atoms, ensemble="npt", barostat="berendsen",
                              temperature=300, pressure=0.0, timestep=1.0,
                              taup=10.0, barostat_mask=(0, 0, 1),
+                             compressibility=_MASK_TEST_COMPRESSIBILITY,
                              set_velocities=False)
         dyn.run(10)
 
@@ -253,7 +266,8 @@ class TestBarostatMask:
 
         dyn = setup_dynamics(atoms, ensemble="npt", barostat="berendsen",
                              temperature=300, pressure=0.0, timestep=1.0,
-                             taup=10.0, set_velocities=False)
+                             taup=10.0, set_velocities=False,
+                             compressibility=_MASK_TEST_COMPRESSIBILITY)
         dyn.run(10)
 
         cell_after = atoms.get_cell().array
@@ -268,6 +282,7 @@ class TestBarostatMask:
         dyn = setup_dynamics(atoms, ensemble="npt", barostat="npt",
                              temperature=300, pressure=0.0, timestep=1.0,
                              ttime=25.0, barostat_mask=(0, 0, 1),
+                             pfactor=_MASK_TEST_PFACTOR,
                              set_velocities=False)
         dyn.run(20)
 

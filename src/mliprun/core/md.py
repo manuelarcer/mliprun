@@ -41,7 +41,7 @@ DYNAMICS_MAP = {
         # The class each barostat keyword resolves to with the default,
         # isotropic mask. A non-default ``barostat_mask`` keeps the keyword
         # but swaps ``berendsen`` for the Inhomogeneous_NPTBerendsen
-        # subclass, which scales each axis separately; ``npt`` (MTK) takes
+        # subclass, which scales each axis separately; ``npt`` (ASE NPT, Melchionna) takes
         # the mask on the same class. See :func:`setup_dynamics`.
         "npt": NPT,
         "berendsen": NPTBerendsen,
@@ -50,6 +50,40 @@ DYNAMICS_MAP = {
 
 #: Every axis coupled to the barostat -- the historical, isotropic behaviour.
 DEFAULT_BAROSTAT_MASK = (1, 1, 1)
+
+#: NPT pressure columns of md_energy.csv, kinetic term included.
+NPT_PRESSURE_COLUMNS = (
+    "pressure(GPa)", "pressure_xx(GPa)", "pressure_yy(GPa)", "pressure_zz(GPa)",
+)
+
+#: Berendsen barostat compressibility default, in 1/GPa: liquid water near
+#: 300 K (4.57e-5 1/bar). Until 2026-09 the default was the bare number
+#: 4.57e-5 -- the 1/bar value -- while the code converted it as 1/GPa, so
+#: every Berendsen NPT run responded 1e4 times too slowly.
+DEFAULT_COMPRESSIBILITY_PER_GPA = 0.457
+
+#: One GPa*fs^2 in ASE units (eV/A^3 * ASE-time^2). ``pfactor`` is
+#: ptime^2 * B, so this is the natural human unit: ptime in fs, B in GPa.
+PFACTOR_GPA_FS2 = units.GPa * units.fs ** 2
+
+#: Default barostat time for the ``npt`` barostat (fs) -- ASE's suggestion.
+DEFAULT_PTIME_FS = 75.0
+#: Default bulk modulus for the ``npt`` barostat (GPa) -- ASE's "typical
+#: metallic" value. Softer systems (water: B ~ 2.2 GPa) respond more slowly
+#: than ``DEFAULT_PTIME_FS``; set ``--pfactor`` for them.
+DEFAULT_BULK_MODULUS_GPA = 100.0
+
+
+def default_pfactor() -> float:
+    """The pfactor used when none is given, in ASE units.
+
+    ASE's documented form ``ptime**2 * B`` with ptime = 75 fs and
+    B = 100 GPa: 5.625e5 GPa fs^2. Until 2026-09 the default was
+    ``(ttime * 75 * units.GPa) ** 2`` (2.27e6 GPa fs^2 at ttime = 25 fs),
+    which squared the bulk modulus and omitted ``units.fs``; it was
+    replaced, not kept, because no production run depended on it.
+    """
+    return (DEFAULT_PTIME_FS * units.fs) ** 2 * (DEFAULT_BULK_MODULUS_GPA * units.GPa)
 
 
 def normalize_barostat_mask(barostat_mask) -> tuple:
@@ -116,7 +150,7 @@ def setup_dynamics(
     pfactor=None,
     taut: float = 100.0,
     taup: float = 1000.0,
-    compressibility: float = 4.57e-5,
+    compressibility: float = DEFAULT_COMPRESSIBILITY_PER_GPA,
     set_velocities: bool = True,
 ):
     """Set up MD dynamics with specified ensemble and parameters.
@@ -130,7 +164,8 @@ def setup_dynamics(
     thermostat : str
         Thermostat for NVT: ``'langevin'``, ``'nose-hoover'``, ``'berendsen'``.
     barostat : str
-        Barostat for NPT: ``'npt'`` (MTK), ``'berendsen'``.
+        Barostat for NPT: ``'npt'`` (ASE ``NPT``, Melchionna -- not
+        Martyna-Tobias-Klein), ``'berendsen'``.
     barostat_mask : sequence of 3 ints
         Which Cartesian axes the barostat may change, ``(x, y, z)``. ``1``
         couples that axis; ``0`` holds its length fixed. Defaults to
@@ -151,13 +186,18 @@ def setup_dynamics(
     ttime : float
         Nose-Hoover/NPT time constant (fs).
     pfactor : float or None
-        NPT pressure coupling factor (auto-calculated if None).
+        Barostat constant of ASE's ``NPT`` (Melchionna), in **ASE units**
+        (eV/A^3 * ASE-time^2), i.e. ``ptime**2 * B``. Multiply a value in
+        GPa fs^2 by :data:`PFACTOR_GPA_FS2`. ``None`` uses
+        :func:`default_pfactor`. Must be positive.
     taut : float
         Berendsen temperature coupling time (fs).
     taup : float
         Berendsen pressure coupling time (fs).
     compressibility : float
-        Berendsen compressibility (1/GPa).
+        Berendsen compressibility in 1/GPa (default 0.457, liquid water).
+        Together with ``taup`` it sets how fast the cell responds; a solid
+        is typically 0.005-0.02 1/GPa. Must be positive.
 
     Returns
     -------
@@ -223,7 +263,13 @@ def setup_dynamics(
 
         if barostat == "npt":
             if pfactor is None:
-                pfactor = (ttime * 75 * units.GPa) ** 2
+                pfactor = default_pfactor()
+            elif not pfactor > 0:
+                raise ValueError(
+                    f"pfactor must be positive, got {pfactor!r}. ASE reads "
+                    f"pfactor=None as 'barostat off', and a non-positive "
+                    f"value has no physical meaning."
+                )
             return NPT(
                 atoms, timestep=timestep_ase,
                 temperature_K=temperature, externalstress=externalstress,
@@ -236,6 +282,12 @@ def setup_dynamics(
                 mask=None if isotropic else barostat_mask,
             )
         elif barostat == "berendsen":
+            if not compressibility > 0:
+                raise ValueError(
+                    f"compressibility must be positive (1/GPa), got "
+                    f"{compressibility!r}. Zero freezes the cell and a "
+                    f"negative value drives it away from the set pressure."
+                )
             if isotropic:
                 return NPTBerendsen(
                     atoms, timestep=timestep_ase,
@@ -303,6 +355,10 @@ def _md_statistics(df, n_atoms: int) -> dict:
 
     if "pressure(GPa)" in df:
         stats["mean_pressure_GPa"] = float(df["pressure(GPa)"].mean())
+        for axis in "xyz":
+            col = f"pressure_{axis}{axis}(GPa)"
+            if col in df:
+                stats[f"mean_pressure_{axis}{axis}_GPa"] = float(df[col].mean())
         stats["mean_volume_A3"] = float(df["volume(A^3)"].mean())
     return stats
 
@@ -321,7 +377,7 @@ def run_md(
     pfactor=None,
     taut: float = 100.0,
     taup: float = 1000.0,
-    compressibility: float = 4.57e-5,
+    compressibility: float = DEFAULT_COMPRESSIBILITY_PER_GPA,
     steps: int = 1000,
     log_interval: int = 10,
     traj_interval: int = 100,
@@ -408,13 +464,27 @@ def run_md(
         "total_energy(eV)": [], "potential_energy(eV)": [], "kinetic_energy(eV)": [],
     }
     if ensemble == "npt":
-        log_data["pressure(GPa)"] = []
+        # Full pressure, kinetic (ideal-gas) term included -- the quantity
+        # both barostats act on -- plus the diagonal components, because a
+        # masked Berendsen run drives each free axis's own component (P_zz
+        # for "0,0,1"), not the mean.
+        for col in NPT_PRESSURE_COLUMNS:
+            log_data[col] = []
         log_data["volume(A^3)"] = []
 
     prior_steps = 0
     n_prior_rows = 0
     if resume:
         prior_df = pd.read_csv(csv_file)
+        missing = [col for col in log_data if col not in prior_df.columns]
+        if missing:
+            # Seeding only some columns would leave them different lengths;
+            # the run would then crash at the end, after all the MD time.
+            raise ValueError(
+                f"Cannot resume: {csv_file} has no {missing} column(s). It "
+                f"was written by an older mliprun or a different ensemble; "
+                f"start a fresh run instead."
+            )
         n_prior_rows = len(prior_df)
         for col in log_data:
             if col in prior_df.columns:
@@ -432,6 +502,12 @@ def run_md(
             "thermostat": thermostat, "barostat": barostat,
             "barostat_mask": barostat_mask,
             "friction": friction, "ttime": ttime, "taut": taut, "taup": taup,
+            # Units in the key: these two are the numbers whose unit was
+            # wrong before. pfactor is the value actually used, auto or not.
+            "compressibility_per_GPa": compressibility,
+            "pfactor_GPa_fs2": (
+                default_pfactor() if pfactor is None else pfactor
+            ) / PFACTOR_GPA_FS2,
             "log_interval": log_interval, "traj_interval": traj_interval,
         },
         inputs={"n_atoms": len(atoms), "formula": atoms.get_chemical_formula()},
@@ -497,9 +573,14 @@ def run_md(
             "kinetic_energy(eV)": atoms.get_kinetic_energy(),
         }
         if ensemble == "npt":
-            stress = atoms.get_stress(voigt=False)
-            pressure_ase = -stress.trace() / 3.0
-            row["pressure(GPa)"] = pressure_ase / GPA_TO_EV_PER_ANG3
+            # include_ideal_gas=True: ASE's default (False) drops N k_B T / V,
+            # ~+0.4 GPa for liquid water at 300 K, while the barostats use it.
+            stress = atoms.get_stress(voigt=False, include_ideal_gas=True)
+            diag = -np.diag(stress) / GPA_TO_EV_PER_ANG3
+            row["pressure(GPa)"] = float(diag.mean())
+            row["pressure_xx(GPa)"] = float(diag[0])
+            row["pressure_yy(GPa)"] = float(diag[1])
+            row["pressure_zz(GPa)"] = float(diag[2])
             row["volume(A^3)"] = atoms.get_volume()
 
         for k, v in row.items():
@@ -590,7 +671,12 @@ def run_md(
         volume_plot = output_path / "md_volume.png"
 
         plt.figure(figsize=(8, 5))
-        plt.plot(df["time(fs)"], df["pressure(GPa)"], color="blue", linewidth=1.5)
+        for axis, color in zip("xyz", ("C1", "C2", "C3")):
+            plt.plot(df["time(fs)"], df[f"pressure_{axis}{axis}(GPa)"],
+                     color=color, linewidth=0.8, alpha=0.6,
+                     label=f"$P_{{{axis}{axis}}}$")
+        plt.plot(df["time(fs)"], df["pressure(GPa)"], color="blue",
+                 linewidth=1.5, label="Mean")
         plt.axhline(y=pressure, color="r", linestyle="--", label=f"Target: {pressure} GPa", alpha=0.5)
         plt.xlabel("Time (fs)")
         plt.ylabel("Pressure (GPa)")

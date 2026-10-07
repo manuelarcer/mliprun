@@ -462,7 +462,7 @@ NPT-only extras (also require `--plot`):
 | `md_pressure.png` | PNG | Pressure vs time, target line shown |
 | `md_volume.png` | PNG | Volume vs time |
 
-NPT also adds `pressure(GPa)` and `volume(A^3)` columns to `md_energy.csv`.
+NPT also adds `pressure(GPa)`, `pressure_xx(GPa)`, `pressure_yy(GPa)`, `pressure_zz(GPa)` and `volume(A^3)` columns to `md_energy.csv`. All pressures include the kinetic term (see `docs/MD_REFERENCE.md`, *What the pressure columns are*).
 
 ---
 
@@ -1022,7 +1022,7 @@ read each stage's own keys for what that stage recorded.
 `mean_total_energy_eV`, `std_total_energy_eV`, `mean_potential_energy_eV`,
 `std_potential_energy_eV`, `total_energy_drift_eV_per_atom_per_ps`, and
 `decile_mean_total_energy_eV` (ten block means over the segment, for judging
-equilibration by eye). NPT adds `mean_pressure_GPa` and `mean_volume_A3`.
+equilibration by eye). NPT adds `mean_pressure_GPa`, `mean_pressure_xx_GPa`, `mean_pressure_yy_GPa`, `mean_pressure_zz_GPa` and `mean_volume_A3`.
 Statistics describe **that stage's segment only**, not the whole trajectory.
 
 There is deliberately no equilibration-window detection and no production

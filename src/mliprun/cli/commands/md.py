@@ -3,6 +3,9 @@ from pathlib import Path
 from ase.io import read
 from mliprun.core.md import (
     DEFAULT_BAROSTAT_MASK,
+    DEFAULT_COMPRESSIBILITY_PER_GPA,
+    PFACTOR_GPA_FS2,
+    default_pfactor,
     normalize_barostat_mask,
     run_md,
 )
@@ -70,7 +73,7 @@ def run(
 
     # Thermostat/Barostat selection
     thermostat: str = typer.Option("langevin", help="Thermostat for NVT: 'langevin', 'nose-hoover', 'berendsen'"),
-    barostat: str = typer.Option("npt", help="Barostat for NPT: 'npt' (MTK), 'berendsen'"),
+    barostat: str = typer.Option("npt", help="Barostat for NPT: 'npt' (ASE NPT, Melchionna/Nosé-Hoover-Parrinello-Rahman), 'berendsen'"),
     barostat_mask: str = typer.Option(
         _format_barostat_mask(DEFAULT_BAROSTAT_MASK),
         "--barostat-mask",
@@ -82,6 +85,25 @@ def run(
     ttime: float = typer.Option(25.0, help="Nosé-Hoover/NPT time constant (fs)"),
     taut: float = typer.Option(100.0, help="Berendsen temperature coupling time (fs)"),
     taup: float = typer.Option(1000.0, help="Berendsen pressure coupling time (fs)"),
+    compressibility: float = typer.Option(
+        DEFAULT_COMPRESSIBILITY_PER_GPA,
+        "--compressibility",
+        help=(
+            "Berendsen barostat compressibility in 1/GPa. Default 0.457 "
+            "(liquid water); solids are ~0.005-0.02. With --taup it sets how "
+            "fast the cell responds. --barostat berendsen only."
+        ),
+    ),
+    pfactor: float = typer.Option(
+        None,
+        "--pfactor",
+        help=(
+            "Barostat constant for --barostat npt, in GPa*fs^2: ptime^2 * B "
+            "(e.g. 75 fs and 100 GPa -> 5.625e5). Default 5.625e5 (ptime 75 "
+            "fs, B 100 GPa, a metal); a soft system such as water (B ~ 2.2 "
+            "GPa) then responds slowly. --barostat npt only."
+        ),
+    ),
 
     # MLIP options
     mlip: str = typer.Option("auto", help=MLIP_HELP),
@@ -169,6 +191,40 @@ def run(
             param_hint="--barostat-mask",
         )
 
+    # Each knob belongs to one barostat. An explicit value the chosen
+    # barostat never reads is refused, same as the mask outside NPT: the
+    # user would otherwise believe they had tuned the run.
+    sources = param_sources_from_ctx(ctx)
+    uses_berendsen = ensemble == 'npt' and barostat.lower() == 'berendsen'
+    uses_npt = ensemble == 'npt' and barostat.lower() == 'npt'
+    if sources.get("compressibility") == "user" and not uses_berendsen:
+        raise typer.BadParameter(
+            "only applies to --ensemble npt --barostat berendsen.",
+            param_hint="--compressibility",
+        )
+    if pfactor is not None and not uses_npt:
+        raise typer.BadParameter(
+            "only applies to --ensemble npt --barostat npt.",
+            param_hint="--pfactor",
+        )
+    if uses_berendsen and not compressibility > 0:
+        raise typer.BadParameter(
+            f"must be positive (1/GPa), got {compressibility}.",
+            param_hint="--compressibility",
+        )
+    if pfactor is not None and not pfactor > 0:
+        raise typer.BadParameter(
+            f"must be positive (GPa*fs^2), got {pfactor}.",
+            param_hint="--pfactor",
+        )
+    # Human unit on the CLI, ASE units in the core API.
+    pfactor_ase = None if pfactor is None else pfactor * PFACTOR_GPA_FS2
+    if pfactor is None:
+        pfactor_label = (f"{default_pfactor() / PFACTOR_GPA_FS2:.4g}"
+                         f" (auto: (75 fs)^2 x 100 GPa)")
+    else:
+        pfactor_label = f"{pfactor:.4g}"
+
     # Detect or use specified model
     if mlip == "auto":
         mlip = detect_mlip()
@@ -202,9 +258,11 @@ def run(
         typer.echo(f"   Pressure:    {pressure} GPa")
         if barostat == 'npt':
             typer.echo(f"   Time const:  {ttime} fs")
+            typer.echo(f"   pfactor:     {pfactor_label} GPa fs^2")
         elif barostat == 'berendsen':
             typer.echo(f"   Tau T:       {taut} fs")
             typer.echo(f"   Tau P:       {taup} fs")
+            typer.echo(f"   Compressibility: {compressibility} 1/GPa")
 
     if ensemble in ['nvt', 'npt']:
         typer.echo(f"   Temperature: {temperature} K")
@@ -258,9 +316,11 @@ def run(
             f.write(f"Pressure (GPa):    {pressure}\n")
             if barostat == 'npt':
                 f.write(f"Time constant (fs): {ttime}\n")
+                f.write(f"pfactor (GPa fs^2): {pfactor_label}\n")
             elif barostat == 'berendsen':
                 f.write(f"Tau T (fs):        {taut}\n")
                 f.write(f"Tau P (fs):        {taup}\n")
+                f.write(f"Compressibility (1/GPa): {compressibility}\n")
 
         if ensemble in ['nvt', 'npt']:
             f.write(f"Temperature (K):   {temperature}\n")
@@ -271,10 +331,16 @@ def run(
         f.write(f"Output dir:        {output_dir.resolve()}\n")
 
     # Run MD
+    # The record keys carry their unit, so the CLI source tags are copied
+    # across; without this both would be recorded as "unspecified".
+    for cli_name, record_key in (("compressibility", "compressibility_per_GPa"),
+                                 ("pfactor", "pfactor_GPa_fs2")):
+        if cli_name in sources:
+            sources[record_key] = sources[cli_name]
     run_context = RunContext(
         command="md",
         mode="one-off",
-        param_sources=param_sources_from_ctx(ctx),
+        param_sources=sources,
     )
     run_context.extra_inputs = {
         "structure": structure.name,
@@ -294,6 +360,8 @@ def run(
         ttime=ttime,
         taut=taut,
         taup=taup,
+        compressibility=compressibility,
+        pfactor=pfactor_ase,
         steps=steps,
         log_interval=log_interval,
         traj_interval=traj_interval,
