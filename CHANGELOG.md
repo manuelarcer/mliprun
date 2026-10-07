@@ -426,6 +426,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`freq run` crashed on every constrained slab under ASE ≤ 3.28.** ASE's
+  `VibrationsData.todict` up to 3.28 compares the displaced indices with
+  `range(len(atoms))` through `np.allclose`, which raises a broadcast
+  `ValueError` whenever only some atoms are displaced. The crash came after
+  the whole sweep, so the record ended `failed` with the forces cached. Found
+  on cos-cluster, where all three MLIP envs carry ASE 3.28, on a 52-atom
+  CH3/Ni(111) slab with 4 free atoms; CI installs 3.29, which rewrote the
+  method, so no test saw it. `<prefix>_vibrations.json` is now written
+  directly in the same format, and `indices` is always an explicit list:
+  3.28 reads `null` as every atom, 3.29 as every unconstrained atom.
+
 - **Berendsen NPT compressibility default was in the wrong unit, so the cell
   responded 10⁴ times too slowly.** The default `4.57e-5` is water's
   compressibility in 1/bar, but the code converts it as 1/GPa. It is now
