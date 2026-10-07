@@ -19,7 +19,7 @@ md run --structure structure.vasp --ensemble nve --steps 10000
 md run --structure structure.vasp --ensemble nvt \
    --thermostat nose-hoover --temperature 300 --ttime 50 --steps 10000
 
-# NPT (isotropic MTK) at zero pressure for lattice relaxation
+# NPT (isotropic, ASE NPT / Melchionna) at zero pressure for lattice relaxation
 md run --structure structure.vasp --ensemble npt \
    --temperature 300 --pressure 0.0 --steps 10000
 
@@ -38,7 +38,7 @@ md run --structure structure.vasp --ensemble npt --barostat berendsen \
 | Constant temperature, production MD | `nvt` | Langevin |
 | Fast thermal equilibration only | `nvt` | Berendsen |
 | Rigorous canonical sampling | `nvt` | Nose-Hoover |
-| Lattice / volume relaxation | `npt` | NPT (isotropic MTK) |
+| Lattice / volume relaxation | `npt` | NPT (isotropic, ASE `NPT`) |
 | Fast pressure equilibration | `npt` | Berendsen |
 
 NVT Langevin is the default when `--ensemble` is omitted.
@@ -59,8 +59,8 @@ Nose-Hoover requires a recent ASE; the platform raises `ImportError` if it is mi
 
 | `--barostat` | Backing class | Key parameters | Best for |
 |--------------|---------------|----------------|----------|
-| `npt` (default) | `ase.md.npt.NPT` (Martyna-Tobias-Klein) | `--ttime` (fs); `pfactor` is auto-computed | Lattice constant optimization, isotropic expansion |
-| `berendsen` | `ase.md.nptberendsen.NPTBerendsen` | `--taut`, `--taup` (fs) | Quick volume relaxation; not for production statistics |
+| `npt` (default) | `ase.md.npt.NPT` (Melchionna's Nosé-Hoover/Parrinello-Rahman; ASE 3.29 aliases it to `ase.md.melchionna.MelchionnaNPT`. It is **not** Martyna-Tobias-Klein) | `--ttime` (fs), `--pfactor` (GPa·fs², auto if omitted) | Lattice constant optimization, isotropic expansion |
+| `berendsen` | `ase.md.nptberendsen.NPTBerendsen` | `--taut`, `--taup` (fs), `--compressibility` (1/GPa) | Quick volume relaxation; not for production statistics |
 
 ### Restricting which axes may change (`--barostat-mask`)
 
@@ -124,9 +124,11 @@ isotropic one without opening the trajectory.
 | `--barostat` | `npt` | — | NPT only: `npt`, `berendsen` |
 | `--barostat-mask` | `"1,1,1"` | — | NPT only: which axes the barostat may change, `(x,y,z)` as three 0/1 values. `"0,0,1"` relaxes z alone (slab–liquid interface). Rejected for NVE/NVT unless it is the default |
 | `--friction` | `0.01` | 1/fs | Langevin friction coefficient |
-| `--ttime` | `25.0` | fs | Time constant for Nose-Hoover and NPT (MTK) |
+| `--ttime` | `25.0` | fs | Time constant for Nose-Hoover and the `npt` barostat's thermostat |
 | `--taut` | `100.0` | fs | Berendsen temperature coupling time |
 | `--taup` | `1000.0` | fs | Berendsen pressure coupling time (NPT Berendsen only) |
+| `--compressibility` | `0.457` | 1/GPa | Berendsen NPT only. The cell responds at a rate set by `compressibility / taup`. Default is liquid water; solids are ~0.005–0.02 (B = 50–200 GPa). Rejected with any other barostat |
+| `--pfactor` | auto | GPa·fs² | `--barostat npt` only. `ptime² × B` (e.g. 75 fs and 100 GPa → 5.6e5). Omitted: `(ttime · 75 GPa)²` in ASE units, ≈ 2.27e6 GPa·fs² at `ttime = 25` fs. Rejected with any other barostat |
 | `--mlip` | `auto` | — | MLIP model; auto-detect or explicit (`uma-s-1p2`, `mace`, `mace-mh-1`, `7net-mf-ompa`, `chgnet`, …) |
 | `--uma-task` | `omat` | — | Task head for UMA models: `omat`, `oc20`, `omol`, `odac` |
 | `--mace-head` | `omat_pbe` | — | Head for multi-head MACE foundation models (`mace-mh-*`): `omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`. Ignored for non-MH MACE |
@@ -136,10 +138,9 @@ isotropic one without opening the trajectory.
 | `--csv-flush-every` | `100` | log calls | Flush buffered `md_energy.csv` rows to disk every N log calls. `0` disables incremental writes (flush only at end) |
 | `--resume` | off | flag | Continue an existing run in the structure's directory. The last frame of `md.traj` is loaded as the starting state, momenta are preserved (no Maxwell-Boltzmann re-init), and `--steps` is interpreted as *additional* steps. New rows append to `md_energy.csv` and the trajectory; `md_params.txt` gets a `--- Resume invocation ---` block appended. Plots are regenerated over the full chain. |
 
-**Not exposed on the CLI** but used internally with sensible defaults:
+**Compressibility unit fix (2026-09).** Before this change the default was the bare number `4.57e-5`, which is water's compressibility in **1/bar**, while the code converts it as **1/GPa**. Every Berendsen NPT run before the fix therefore responded 10⁴ times too slowly: the cell barely moved, and nothing reported an error. Measured on strained EMT Cu (-19 GPa), 20 steps at `taup = 1000` fs: ΔV/V = -1.7e-5 with the old default and -0.13 with 0.457. Old Berendsen NPT runs that relied on the default should be treated as close to NVT.
 
-- `pfactor` for NPT MTK: auto-computed as `(ttime * 75 GPa)^2`.
-- `compressibility` for NPT Berendsen: `4.57e-5 GPa⁻¹` (water value). For metals (~1e-6) or ceramics (~1e-7), the Berendsen barostat will still equilibrate but slower / faster than ideal. If you need to tune these, use the Python API (`mliprun.core.md.run_md`).
+Both values, the one chosen and the auto one, are echoed in the setup block, written to `md_params.txt`, and recorded in `mliprun_run.json` as `parameters.compressibility_per_GPa` and `parameters.pfactor_GPa_fs2`. In the Python API, `run_md(pfactor=...)` stays in **ASE units**; multiply a GPa·fs² value by `mliprun.core.md.PFACTOR_GPA_FS2`.
 
 ---
 
@@ -149,12 +150,12 @@ isotropic one without opening the trajectory.
 |----------|---------|-----|
 | Ensemble | NVT | Most common production setting |
 | Thermostat (NVT) | Langevin | Best accuracy/speed balance |
-| Barostat (NPT) | NPT (MTK, isotropic) | Rigorous; well suited to crystals |
+| Barostat (NPT) | ASE `NPT` (Melchionna, isotropic) | Rigorous; well suited to crystals |
 | Temperature | 300 K | Room temperature |
 | Pressure | 0.0 GPa | Ambient |
 | Timestep | 1.0 fs | Safe for most solids; reduce to 0.5 fs for T > 1000 K or H-containing systems |
 | Friction (Langevin) | 0.01 fs⁻¹ | Mild damping |
-| `ttime` (NPT MTK) | 25 fs | Standard MTK value |
+| `ttime` (ASE `NPT`) | 25 fs | ASE's suggested value |
 
 ---
 
@@ -165,7 +166,7 @@ Every `md run` invocation writes the following to the directory containing the i
 | File | Contents |
 |------|----------|
 | `md.traj` | Full ASE trajectory (every `--traj-interval` steps) |
-| `md_energy.csv` | Step, time (fs), temperature (K), total / potential / kinetic energy (eV); plus `pressure(GPa)` and `volume(A^3)` columns for NPT |
+| `md_energy.csv` | Step, time (fs), temperature (K), total / potential / kinetic energy (eV); plus `pressure(GPa)` and `volume(A^3)` columns for NPT. See *What `pressure(GPa)` is* below |
 | `md_params.txt` | Echo of every parameter the run was launched with |
 | `md_energy.png` | Total / potential / kinetic energy vs time — **only with `--plot`** |
 | `md_temperature.png` | Temperature vs time, with target line for NVT/NPT — **only with `--plot`** |
@@ -236,13 +237,19 @@ Inspect the total energy over time (plot `md_energy.csv`, or run with `--plot` t
 - ASE internal: eV/Å³
 - Conversion: `1 GPa = 0.006241509 eV/Å³` (constant `GPA_TO_EV_PER_ANG3` in `core/utils.py`)
 
-### MTK pfactor formula
+### What `pressure(GPa)` is
+
+`pressure(GPa)` in `md_energy.csv` is `-trace(σ)/3` from `atoms.get_stress()`, converted to GPa. Positive means compression, the same sign as `--pressure`. It is the **virial part only**: ASE's `get_stress` excludes the kinetic (ideal-gas) term by default, while both barostats act on the full stress (`include_ideal_gas=True`). At 300 K the missing term is `N k_B T / V`, about **+0.4 GPa** for liquid water. A converged run at 1 bar therefore logs a mean `pressure(GPa)` near -0.4, not 0.
+
+With a mask, the Berendsen barostat (`Inhomogeneous_NPTBerendsen`) acts on each free axis separately: with `"0,0,1"` it drives **P_zz** to the target, not the mean pressure. The in-plane components, and therefore the logged mean, can stay far from the target in a correctly running slab–liquid simulation.
+
+### `npt` pfactor formula
 
 ```python
-pfactor = (ttime * 75 * units.GPa) ** 2
+pfactor = (ttime * 75 * units.GPa) ** 2      # ASE units, used when --pfactor is omitted
 ```
 
-For `ttime = 25 fs` this gives `pfactor ≈ 140 (eV/Å³)²·fs²`. The factor 75 GPa is a representative bulk modulus. For very stiff (>>200 GPa) or very soft (<10 GPa) systems, the time to reach pressure equilibrium may be unacceptably long; in that case, drive `pfactor` directly via the Python API.
+For `ttime = 25 fs` this is about 137 in ASE units, i.e. **2.27e6 GPa·fs²**. The formula is not ASE's documented `ptime² × B`: it squares the bulk modulus and leaves out `units.fs`. It is kept unchanged so that default runs reproduce earlier ones. Read as `ptime² × B`, 2.27e6 GPa·fs² corresponds to ptime ≈ 150 fs for B = 100 GPa, or ≈ 1 ps for water (B ≈ 2.2 GPa). Set `--pfactor` explicitly when the response time matters.
 
 ### Initial velocities
 

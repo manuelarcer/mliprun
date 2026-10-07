@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **`md run --compressibility` and `--pfactor`, the barostat response
+  controls.** `--compressibility` (1/GPa, Berendsen NPT) and `--pfactor`
+  (GPa·fs², `--barostat npt`) were reachable only through the Python API,
+  so the response rate of an NPT run could not be set from the CLI. `--taup`
+  cannot stand in for a wrong compressibility: the time constant would have
+  to drop below the timestep. Each flag is refused with the barostat that
+  ignores it, and a non-positive value is refused. Both values, chosen or
+  auto, are echoed in the setup block, written to `md_params.txt`, and
+  recorded as `parameters.compressibility_per_GPa` and
+  `parameters.pfactor_GPa_fs2`. The Python API's `pfactor` stays in ASE
+  units, so existing scripts keep their meaning; `PFACTOR_GPA_FS2` converts.
+  Run record schema unchanged (5): two parameter keys added.
+
 - **`freq run`, vibrational frequencies by finite differences.** Computes
   frequencies from `ase.vibrations.Vibrations`, reporting the imaginary-mode
   count and the zero-point energy (ZPE) alongside them. Frequencies are
@@ -406,6 +419,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
   The `7net` MPtrj tags are unchanged pending checkpoint confirmation.
 
 ### Fixed
+
+- **Berendsen NPT compressibility default was in the wrong unit, so the cell
+  responded 10⁴ times too slowly.** The default `4.57e-5` is water's
+  compressibility in 1/bar, but the code converts it as 1/GPa. It is now
+  `0.457` 1/GPa (`DEFAULT_COMPRESSIBILITY_PER_GPA`). Measured on strained EMT
+  Cu (-19 GPa), 20 steps at `taup = 1000` fs: ΔV/V = -1.7e-5 before, -0.13
+  after. **This changes the dynamics of every Berendsen NPT run that used the
+  default**; earlier such runs were close to NVT. The `npt` barostat is
+  unaffected.
+
+- **`--barostat npt` was labelled Martyna-Tobias-Klein; it is Melchionna.**
+  `ase.md.npt.NPT` is Melchionna's Nosé-Hoover/Parrinello-Rahman scheme (ASE
+  3.29 aliases it to `MelchionnaNPT`). Help text and docs corrected; the
+  dynamics are unchanged. `docs/MD_REFERENCE.md` now also states what the
+  `pressure(GPa)` column holds (virial only, no kinetic term) and that a
+  masked Berendsen run controls P_zz, not the mean pressure.
 
 - **A reused committee no longer crashes on a structure that needs no force
   evaluation.** Handing `run_optimization` the same `Atoms` object twice in

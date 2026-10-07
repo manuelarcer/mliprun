@@ -534,11 +534,13 @@ from mliprun.core.md import setup_dynamics
 dyn = setup_dynamics(
     atoms,
     ensemble="npt",
-    barostat="npt",     # MTK
+    barostat="npt",     # ASE NPT (Melchionna)
     temperature=300,
     pressure=0.0,
     timestep=1.0,
     ttime=25.0,
+    # pfactor is in ASE units here; from GPa*fs^2:
+    # pfactor=5.6e5 * mliprun.core.md.PFACTOR_GPA_FS2
 )
 
 dyn.attach(my_callback, interval=100)

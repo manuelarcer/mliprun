@@ -58,7 +58,7 @@ CSV, per step and per atom. See
 - GPU/CPU selection via `--device` (`auto`/`cuda`/`cpu`) on all run commands
 - Geometry optimization with multiple optimizers (FIRE, BFGS, LBFGS, BFGSLineSearch, GPMin, MDMin)
 - MD with NVE, NVT, and NPT ensembles
-- Configurable thermostats (Langevin, Nose-Hoover, Berendsen) and barostats (MTK NPT, Berendsen NPT)
+- Configurable thermostats (Langevin, Nose-Hoover, Berendsen) and barostats (ASE NPT / Melchionna, Berendsen NPT), with `--barostat-mask`, `--compressibility`, and `--pfactor`
 - NEB with IDPP interpolation, restart support, and highly-constrained mode
 - AutoNEB with dynamic image insertion
 - CSV output for all simulations; PNG plots are opt-in via `--plot` (CSVs are always written)
