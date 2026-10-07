@@ -20,10 +20,37 @@ def structure(tmp_path):
     return path
 
 
+@pytest.fixture
+def fully_fixed_structure(tmp_path):
+    """Every atom held, so there is no free atom to be the worst one."""
+    from ase.constraints import FixAtoms
+
+    atoms = fcc111("Pt", size=(2, 2, 3), vacuum=6.0)
+    atoms.set_constraint(FixAtoms(indices=list(range(len(atoms)))))
+    path = tmp_path / "POSCAR"
+    write(path, atoms, format="vasp")
+    return path
+
+
 def test_help_lists_the_run_command():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "run" in result.stdout
+
+
+def test_a_fully_fixed_structure_says_so_instead_of_printing_none(
+        fully_fixed_structure, monkeypatch):
+    """`worst_force_atom_free` is null there, so the echo must not render it
+    as "None #None", which reads as a bug in the report rather than as the
+    absence it is."""
+    _use_emt(monkeypatch)
+    result = runner.invoke(
+        app, ["run", "--structure", str(fully_fixed_structure)])
+    assert result.exit_code == 0, result.stdout
+    assert "over 0 free atoms (no free atom)" in result.stdout
+    assert "None" not in result.stdout
+    # The all-atom population still names a real atom.
+    assert "worst: Pt #" in result.stdout
 
 
 def test_a_run_writes_the_forces_csv_and_the_record(structure, monkeypatch):

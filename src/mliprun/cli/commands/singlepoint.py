@@ -168,10 +168,15 @@ def run(
         )
 
     typer.echo(f"\n⚡ Energy: {results['energy_eV']:.6f} eV")
+    # No free atom means no worst one: say so rather than printing
+    # "None #None", which reads as a bug in the report.
+    worst_free = (
+        "no free atom" if results["worst_force_atom_free"] is None
+        else f"worst: {results['worst_force_atom_free_symbol']} "
+             f"#{results['worst_force_atom_free']}")
     typer.echo(f"   fmax_free = {results['fmax_free_eV_per_A']:.6f} eV/Å "
                f"over {results['n_free_atoms']} free atoms "
-               f"(worst: {results['worst_force_atom_free_symbol']} "
-               f"#{results['worst_force_atom_free']})")
+               f"({worst_free})")
     typer.echo(f"   fmax_all  = {results['fmax_all_eV_per_A']:.6f} eV/Å "
                f"(worst: {results['worst_force_atom_all_symbol']} "
                f"#{results['worst_force_atom_all']})")
@@ -194,7 +199,8 @@ def run(
     for name in written:
         typer.echo(f"   📄 {(output_dir / name).resolve()}")
 
-    report_committee_uncertainty(committee_calc)
+    report_committee_uncertainty(committee_calc,
+                                 "the evaluated configuration")
 
 
 if __name__ == "__main__":

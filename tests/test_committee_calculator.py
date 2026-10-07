@@ -233,6 +233,77 @@ class TestRealSubprocessRoundTrip:
                 os.kill(pid, 0)
 
 
+class TestPerMemberForcesOnLatest:
+    """`latest["forces_per_member"]` -- what a per-member Hessian needs.
+
+    No fixture named `started_committee_double` exists anywhere in this
+    repo (checked both this file and test_committee_stats.py). The
+    reusable machinery for a started two-member committee is the
+    module-level `FakeMember`/`_emt_committee`/`_rattled` helpers already
+    used throughout this file, so these tests reuse those rather than
+    adding a third way to build the same object.
+    """
+
+    def test_forces_per_member_matches_shape_and_member_order(self):
+        """per_member[i] must be member i's own array, in `self.members`
+        order -- not merely something whose mean recovers forces_mean,
+        which would hold for any permutation of the same rows."""
+        f_a = np.zeros((2, 3)); f_a[0, 0] = 1.0
+        f_b = np.zeros((2, 3)); f_b[0, 0] = 3.0
+        committee = CommitteeCalculator(
+            [FakeMember("member_a", -1.0, f_a.tolist()),
+             FakeMember("member_b", -3.0, f_b.tolist())])
+        committee.start()
+        atoms = bulk("Cu", "fcc", a=3.6) * (2, 1, 1)
+        atoms.calc = committee
+        atoms.get_potential_energy()
+
+        per_member = committee.latest["forces_per_member"]
+        assert per_member.shape == (2, len(atoms), 3)
+        assert per_member[0] == pytest.approx(f_a, abs=1e-12)
+        assert per_member[1] == pytest.approx(f_b, abs=1e-12)
+        committee.close()
+
+    def test_latest_carries_every_members_own_forces_from_a_real_worker(
+            self, tmp_path):
+        """Per-member Hessians need each member's own forces at every
+        displacement; the mean alone has no spread to report. Exercised
+        through real EMT-tag worker subprocesses via preflight, the same
+        path a frequency calculation would use."""
+        atoms = _rattled()
+        committee = _emt_committee(tmp_path, n=2)
+        committee.start()
+        try:
+            stats = committee.preflight(atoms)
+        finally:
+            committee.close()
+
+        per_member = stats["forces_per_member"]
+        assert per_member.shape == (2, len(atoms), 3)
+        assert np.allclose(per_member.mean(axis=0), stats["forces_mean"],
+                           atol=1e-12)
+
+    def test_the_mean_forces_are_unchanged_by_the_new_key(self):
+        """Regression guard: adding a key must not perturb what `optimize`
+        reads from `forces_mean`."""
+        f_a = np.zeros((2, 3)); f_a[0, 0] = 1.0
+        f_b = np.zeros((2, 3)); f_b[0, 0] = 3.0
+        committee = CommitteeCalculator(
+            [FakeMember("member_a", -1.0, f_a.tolist()),
+             FakeMember("member_b", -3.0, f_b.tolist())])
+        committee.start()
+        atoms = bulk("Cu", "fcc", a=3.6) * (2, 1, 1)
+        atoms.calc = committee
+        atoms.get_potential_energy()
+
+        stats = committee.latest
+        expected_mean = (f_a + f_b) / 2.0
+        assert stats["forces_mean"] == pytest.approx(expected_mean, abs=1e-12)
+        assert stats["forces_per_member"].mean(axis=0) == pytest.approx(
+            stats["forces_mean"], abs=1e-12)
+        committee.close()
+
+
 class TestConstraintsReachTheStatistic:
     """FakeMember answers from a fixed table, so the disagreement is exact
     and independent of geometry."""

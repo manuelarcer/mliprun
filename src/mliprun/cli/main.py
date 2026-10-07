@@ -5,6 +5,7 @@ from mliprun.cli.commands import (
     autoneb_results,
     benchmark,
     doctor,
+    freq,
     md,
     neb,
     optimize,
@@ -21,6 +22,8 @@ app.add_typer(autoneb_results.app, name="autoneb-results", help="Extract and vis
 app.add_typer(benchmark.app, name="benchmark", help="Run MLIP benchmark on a structure")
 app.add_typer(singlepoint.app, name="singlepoint",
               help="Evaluate a structure once: energy, forces, stress")
+app.add_typer(freq.app, name="freq",
+              help="Vibrational frequencies by finite differences")
 app.command("doctor")(doctor.doctor)
 
 

@@ -6,6 +6,110 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **`freq run`, vibrational frequencies by finite differences.** Computes
+  frequencies from `ase.vibrations.Vibrations`, reporting the imaginary-mode
+  count and the zero-point energy (ZPE) alongside them. Frequencies are
+  written as a magnitude plus a boolean, never a signed number — the
+  convention of writing an imaginary mode as negative is a silent trap for
+  anything that sums or sorts the column. A mode is imaginary when
+  `abs(energy.imag) > 1e-8` eV, matching ASE's own `im_tol` and applied to
+  the same quantity ASE applies it to, so `<prefix>_frequencies.csv` and
+  ASE's own `<prefix>_summary.txt` (written from the same run) can never
+  disagree about which modes are imaginary. ZPE sums the real modes only:
+  an imaginary mode contributes exactly zero, so a structure carrying one
+  has no well-defined zero-point energy.
+  Which atoms are displaced comes from the structure's own `FixAtoms`
+  constraints (`--indices` overrides them); any other constraint type —
+  ASE's `indices` selects whole atoms, so a partial Hessian cannot be
+  expressed through it — warns, names the type, and displaces those atoms
+  in full rather than refusing.
+  A structure that is not at a stationary point produces spurious imaginary
+  modes indistinguishable by eye from a real transition state, so fmax at
+  the input geometry (measured at no extra cost — `Vibrations.run()`
+  evaluates the undisplaced geometry first) is compared against
+  `--expect-fmax`, else the fmax a *converged* `optimize` stage in the
+  structure's own directory actually met, else nothing. **This warning never
+  refuses**, only prints and sets `fmax_warning: true`. Both populations are
+  reported, each named for what it covers:
+  `fmax_at_input_free_eV_per_A` over the unconstrained force components —
+  the one the expectation is compared against, since that expectation is the
+  constrained criterion an optimizer converged to — and
+  `fmax_at_input_all_eV_per_A` over every component. On a relaxed Pt(111)
+  2×2×4 + H slab with two frozen layers they measure 0.0198 and 0.3809 eV/Å.
+  Cost is `1 + 6 × n_displaced` force calls at `--nfree 2`, `1 + 12 ×
+  n_displaced` at `--nfree 4`; a restart replays only the displacements not
+  already in the `<prefix>/` cache.
+  ASE names each cache entry after the atom, axis and sign of the
+  displacement and nothing else — no displacement size, no stencil, no
+  model — and the folder is `<output_dir>/<prefix>` with `--prefix`
+  defaulting to `freq` whatever `--mlip` says. Two silent failures followed,
+  both reporting `status: completed`: `--delta 0.05` over a `--delta 0.01`
+  cache reused the old forces and divided them by the new delta, reporting
+  N₂'s top mode at **415.08 cm⁻¹** where the truth is 930.86 — **wrong by a
+  factor of 2.24**; and Lennard-Jones over an EMT cache reported EMT's
+  frequencies under `provenance.mlip_model: "lj"`.
+  Every run now writes `<prefix>_cache.json` beside the cache recording
+  `delta`, `nfree`, `model` and `per_member_forces`, and a run that finds
+  existing entries checks it **before computing anything** — so a refusal
+  cannot leave a mixture of two identities behind. A cache with no readable
+  sidecar is refused rather than trusted: `delta` and `nfree` leave no trace
+  in the cached forces, so nothing can recover them. Behind that, a run that
+  reuses anything also re-evaluates the undisplaced geometry with its own
+  calculator and compares against the cached equilibrium forces
+  (`allclose(rtol=0, atol=1e-6)` eV/Å: a real MLIP on a GPU is not
+  bit-reproducible between runs, while a different model differs by orders
+  of magnitude) — that catches a changed checkpoint or head behind an
+  unchanged model name, which a recorded name cannot see. Either mismatch
+  **stops the run**, names the field and both values, and says to delete the
+  cache or pass a different `--prefix`; the run record is completed as
+  `failed` rather than left saying `running`.
+  Note for the two-delta comparison recommended under *Committee
+  frequencies*: give each `--delta` its own `--prefix` or `--output-dir`.
+  The same check refuses a **single-model** cache to a `--committee` run: a
+  single-model sweep stores the consensus forces only, with no per-member
+  forces to build one Hessian per member from. A committee restarting a
+  committee sweep is unaffected — the per-member forces survive ASE's JSON
+  cache, and `committee_uncertainty` is reported on a restart too, since it
+  comes from one explicit evaluation of the input geometry rather than from
+  the cache.
+  `--committee committee.yaml` yields one Hessian **per member** from a
+  **single** displacement sweep — not one sweep per member — since members
+  are queried concurrently, so wall time is the slowest member's, not the
+  sum of all of them (measured on EMT; not yet verified against real MLIP
+  potentials). Per-member frequencies, per-member ZPE and the per-mode
+  standard deviation across members are reported in
+  `<prefix>_committee_frequencies.csv` and the run record. Because each
+  member's Hessian is diagonalized independently with eigenvalues sorted
+  ascending, near-degenerate modes can pair up out of order between
+  members; a per-member, per-mode `<member>_overlap` column (each mode
+  vector normalised to unit Cartesian length first, since ASE's own modes
+  are normalised in the mass-weighted basis instead) makes an ordering swap
+  visible rather than letting it hide inside the spread, and the run warns
+  when any overlap drops below 0.9. That warning takes its minimum over
+  every mode, near-zero ones included, and has been exercised against EMT
+  only: expect it to be noisy until it has been tried against real
+  potentials.
+  A committee run **also** reports the ordinary consensus force
+  disagreement — the same `results.committee_uncertainty` block `optimize
+  run --committee` and `singlepoint run --committee` write, with the same
+  keys — measured at the **input geometry** of the displacement sweep, not
+  at a displaced one. `freq run --uncertainty-threshold X` (eV/Å) flags it,
+  opt-in with no default exactly as on the other two commands, and never
+  stops the run. It is independent of `--expect-fmax`, which asks a
+  different question of a different quantity.
+  Thermochemistry is deliberately absent from this work — no
+  `HarmonicThermo`/`IdealGasThermo` call is made here — but stays reachable
+  at no extra cost: `<prefix>_vibrations.json` writes the full Hessian via
+  `VibrationsData.write()` and reloads through `VibrationsData.read`, so a
+  later free-energy calculation costs no forces.
+  `--output-dir` puts a frequency run's files in their own folder (default:
+  next to `--structure`). Give a frequency run one: a run record is
+  *replaced*, not appended to, by the next command that writes into the same
+  directory. The fmax-expectation lookup still reads the structure's own
+  directory regardless, so the stationary-point warning keeps working.
+  Additive to the run record: new stage kind `freq`, schema version
+  unchanged. See `docs/OUTPUTS.md#freq-run` and `docs/PYTHON_API.md`.
+
 - **`singlepoint run`, single-point evaluation.** Evaluates a structure once
   and stops: energy, per-atom forces, and stress, with no optimizer and no
   trajectory. Replaces the `optimize run --max-steps 0` workaround, which
@@ -30,45 +134,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
   disagreement statistics `optimize run --committee` reports at a
   relaxation's final geometry are reported here at the one configuration
   given, with no per-step trace and no plots, since nothing moved.
+  `worst_force_atom_free` and `worst_force_atom_free_symbol` are `null` when
+  every atom is fixed: there is then no free atom to be the worst one, and
+  an explicit null says so where an index would not.
+  `--output-dir` puts a single point's files in their own folder (default:
+  next to `--structure`), so running one next to a relaxation does not
+  replace that relaxation's run record.
   Additive to the run record: new stage kind `singlepoint`, schema version
   unchanged. See `docs/OUTPUTS.md#singlepoint-run` and `docs/PYTHON_API.md`.
-
-- **Anisotropic (masked) barostat for NPT MD**
-  (`md run --ensemble npt --barostat-mask "0,0,1"`). The barostat previously
-  coupled to all three cell axes together, which strains the solid in-plane
-  in a slab–liquid interface cell and changes the surface being studied. The
-  mask is three 0/1 values in Cartesian `(x, y, z)` order: `1` lets that axis
-  change, `0` holds its length fixed. A liquid-filled oxide slab can now
-  equilibrate its z length at constant normal pressure — so the water reaches
-  its correct density at 1 bar — while the in-plane lattice stays at the
-  relaxed bulk value it was cleaved with. The alternatives it replaces were a
-  per-system packing calibration, which does not transfer between facets,
-  terminations or MLIPs, and an unknown density error in every interfacial
-  energy computed from the run.
-  Both barostats are wired: `--barostat berendsen` switches from
-  `NPTBerendsen` to ASE's `Inhomogeneous_NPTBerendsen`, which scales each
-  axis separately, and `--barostat npt` (MTK) passes the mask to `ase.md.npt.NPT`.
-  Because ASE's `NPT` stores the outer product of the mask vector, `"0,0,1"`
-  there frees the zz strain alone: no in-plane strain and no xz/yz shear
-  either. Measured on a strained EMT Cu cell, the masked in-plane axes move
-  by exactly 0.0 Å while z contracts (Berendsen −2.261e-3 Å over 10 steps;
-  MTK −1.302e-2 Å over 20).
-  **The default `"1,1,1"` is the previous behaviour and takes the previous
-  code path**: plain `NPTBerendsen`, and `mask=None` (ASE's own default) for
-  MTK, so an existing NPT run is unchanged. A non-default mask outside NPT is
-  rejected rather than ignored, because NVE and NVT never scale the cell and
-  a silent no-op would leave the user believing an axis had been constrained.
-  Malformed masks (`"1,1"`, `"0,0,2"`, `"a,b,c"`) are rejected with a message
-  naming the flag, not a traceback.
-  The resolved mask is echoed in the NPT setup block, written to
-  `md_params.txt`, and recorded in the run record under
-  `parameters.barostat_mask` with the usual `user` / `default` /
-  `unspecified` source tag — so a run whose cell could move only along z is
-  distinguishable from an isotropic one without opening the trajectory.
-  Not semi-isotropic: a mask of `"1,1,0"` scales x and y independently, which
-  is a different thing from tying them together, and that case is deliberately
-  not implemented. Run record schema stays at 5: `parameters` is already
-  command-specific and open, and no existing key changes meaning.
 
 - **Committee evaluation with per-configuration uncertainty**
   (`optimize run --committee committee.yaml`). Several MLIPs, each in its own

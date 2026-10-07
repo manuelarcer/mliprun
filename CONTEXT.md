@@ -23,7 +23,7 @@ A per-MLIP markdown file under `docs/install/<tag-or-package>.md` containing tes
 The ASE `Calculator` subclass instantiated from an MLIP package (e.g. `MACECalculator`, `FAIRChemCalculator`, `SevenNetCalculator`, `CHGNetCalculator`). Lives in the **MLIP env**, attached to an `ase.Atoms` object by `setup_calculator()` in `src/mliprun/cli/utils.py`.
 
 **Committee**:
-Two or more **Members** evaluated together against the same structure, reporting the members' disagreement as a per-configuration uncertainty (sigma, eV/Å). Either driving one relaxation trajectory with their mean force (`optimize run --committee`) or evaluating one static configuration with no relaxation (`singlepoint run --committee`). Declared in a `committee.yaml`; not supported by `optimize batch`, `md`, or `neb`/`autoneb`.
+Two or more **Members** evaluated together against the same structure, reporting the members' disagreement as a per-configuration uncertainty (sigma, eV/Å). Driving one relaxation trajectory with their mean force (`optimize run --committee`), evaluating one static configuration with no relaxation (`singlepoint run --committee`), or running one displacement sweep with their mean force and reporting both that sigma at the input geometry and one Hessian per member (`freq run --committee`). Declared in a `committee.yaml`; not supported by `optimize batch`, `md`, or `neb`/`autoneb`.
 
 **Member**:
 One **MLIP tag** in one **MLIP env**, addressed by the driver process through a worker subprocess. A **Committee** needs at least two.

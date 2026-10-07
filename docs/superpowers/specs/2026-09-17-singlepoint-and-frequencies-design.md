@@ -161,16 +161,40 @@ full, and its held components enter the Hessian as though they were free.
 ASE's `indices` selects whole atoms, so a partial Hessian cannot be expressed
 through it.
 
-The command therefore **warns and continues**. Detection reuses the existing
-`free_component_mask`, whose second return value is already the sorted list of
-constraint type names it could not mask; that list is echoed, logged, and
-recorded as `unhandled_constraints`. Wording names the affected types and
-states the consequence: those atoms were displaced in full and their held
-components are in the Hessian as if free, so `--indices` is the way to exclude
-them.
+The command therefore **warns and continues**. `select_indices` returns the
+sorted names of the constraint types it could not honour; that list is echoed,
+logged, and recorded as `unhandled_constraints`. Wording names the affected
+types and states the consequence: those atoms were displaced in full and their
+held components are in the Hessian as if free, so `--indices` is the way to
+exclude them.
 
-This mirrors what the committee sigma path already does with the same
-constraint types, so one rule covers both.
+**Correction, 2026-09-18 (Task 8).** This document originally said detection
+could reuse `free_component_mask`'s second return value, and that "one rule
+covers both" this and the committee sigma path. **That is wrong**, and the
+error is worth recording because the two look interchangeable and are not.
+
+`free_component_mask` answers *which force components are free*, for a
+statistic over components. It **handles** `FixCartesian` — it masks the held
+components and reports nothing unhandled, which is correct there: a held
+component simply does not enter the sum.
+
+`select_indices` answers *which whole atoms to displace*. ASE's `indices`
+selects whole atoms, so a `FixCartesian` atom is displaced in all three
+directions no matter what, and its held components land in the Hessian as
+though free. For this question `FixCartesian` is precisely **not** handled.
+
+Verified on ASE 3.29 against a `FixCartesian(0, mask=(True, True, False))`
+slab: `free_component_mask` returns `unhandled == []` with mask row
+`[False, False, True]`, while `select_indices` returns
+`unhandled == ["FixCartesian"]` and still displaces atom 0. Both are right for
+their own question. The functions must therefore scan constraints separately,
+and `free_component_mask`'s own frozen test pins the behaviour that makes
+reuse impossible.
+
+**Also note the type name.** ASE 3.29's `FixBondLength(a, b)` is a deprecated
+factory that constructs a `FixBondLengths` instance, so the name that reaches
+`unhandled_constraints` is the plural. The same trap is already documented in
+this repo's committee tests.
 
 ### The stationary-point warning (D5)
 
@@ -268,6 +292,35 @@ defensible convention but it is not a well-defined zero-point energy, and the
 documentation must say so wherever `zpe_eV` appears: a structure with imaginary
 modes has no ZPE, and the number reported is the ZPE of its real modes only.
 
+**What counts as an imaginary mode, added 2026-09-18 (Task 10 review).** A mode
+is classified imaginary when `abs(energy.imag) > IMAGINARY_ENERGY_TOL_EV`, with
+that constant set to `1e-8` — matching ASE's own `im_tol` in
+`VibrationsData._tabulate_from_energies`, and applied to the mode **energy in
+eV** rather than the frequency in cm⁻¹.
+
+That alignment is a consistency requirement, not a preference. `freq` writes
+both its own `<prefix>_frequencies.csv` and ASE's `<prefix>_summary.txt` from
+the same run; if the two use different thresholds, or the same threshold on
+different quantities, one file can call a mode imaginary while the other calls
+it real. An earlier draft classified with `> 0` on the frequency and had
+exactly that defect.
+
+**[OPEN — Juan's decision, not settled here.]** Aligning with ASE removes the
+disagreement between our two files. It does not answer the separate scientific
+question: whether a *larger* tolerance should suppress near-zero modes
+altogether. An adsorbate on a slab carries frustrated translations and
+rotations at low frequency, and finite differences give those eigenvalues
+arbitrary tiny signs — so a mode at a few cm⁻¹ with a negative eigenvalue may
+be numerical noise rather than a real negative curvature.
+
+This matters because it changes the transition-state test. Confirming a saddle
+means finding **exactly one** imaginary mode, and that count is taken against
+whatever threshold this spec sets. Until the question is settled, the reported
+count is "imaginary by ASE's own definition", which is the most defensible
+position available without a ruling, and the docs say so. Task 15's
+transition-state check inherits this and should not be read as a verdict on
+the threshold.
+
 ### Cost
 
 Force calls are `1 + 6 × n_displaced` at `nfree=2`, and `1 + 12 × n_displaced`
@@ -302,9 +355,17 @@ synthetic two-member committee on EMT:
 
 3. **`assemble_hessian(forces_by_displacement, indices, delta, nfree,
    direction, method)`** — a pure function mirroring ASE's own assembly in
-   `Vibrations._read`. Applied to the mean forces it reproduces ASE's `vib.H`
-   with a maximum absolute difference of **exactly 0.0** in the probe, and the
-   test suite asserts that equality rather than a tolerance.
+   `Vibrations.read`, which is **public** API in ASE 3.29 (this document
+   originally called it `_read`; there is no such private method, corrected
+   2026-09-18 during Task 7). Applied to the mean forces it reproduces ASE's
+   `vib.H` with a maximum absolute difference of **exactly 0.0** in the probe,
+   and the test suite asserts that equality rather than a tolerance.
+
+   This narrows the fragility this design carries. The arithmetic being
+   mirrored comes from public API; the only ASE-private names used anywhere
+   in this work are `Vibrations._disp` and `_eq_disp`, which read the
+   displacement cache, and those are confined to reading cached forces back
+   out — see the note under the restart discussion.
 
 4. **Per member**: `VibrationsData.from_2d(atoms, H_member, indices)` yields
    that member's frequencies and ZPE. Mass weighting and diagonalization stay
@@ -349,11 +410,27 @@ silently absorb an ordering swap as disagreement.
 Pairing is by index, and the design makes the risk visible rather than
 correcting it: for each member and each mode, the column `<member>_overlap`
 carries `|⟨u_member,i | u_committee,i⟩|`, the absolute overlap between that
-member's mode vector and the committee's. A clean match is close to 1. When any
-overlap falls below 0.9 the command warns, naming the modes, and states that
-their spread is not a like-for-like comparison. The 0.9 is a diagnostic trigger
-for a warning, not a scientific verdict, and the overlaps themselves are in the
-CSV for anyone who disagrees with it.
+member's mode vector and the committee's, **each normalised to unit Cartesian
+length first**. A clean match is close to 1. When any overlap falls below 0.9
+the command warns, naming the modes, and states that their spread is not a
+like-for-like comparison. The 0.9 is a diagnostic trigger for a warning, not a
+scientific verdict, and the overlaps themselves are in the CSV for anyone who
+disagrees with it.
+
+**The normalisation is not a detail, added 2026-09-18 (Task 12).** An earlier
+draft of this document took the dot product of ASE's mode vectors directly.
+ASE's Cartesian modes are unit-normalised in the **mass-weighted** basis, not
+in Cartesian space, so `⟨u|u⟩` equals `1/m` rather than 1. Measured on N₂:
+0.0713928749910759 against a nitrogen mass of 14.007 amu — exactly `1/m` to
+fifteen digits, recovering 1.0 after unit normalisation.
+
+Left unfixed, the column would have reported ~0.07 for **identical** members
+and tripped the 0.9 warning on every committee frequency run ever made. A
+diagnostic that always fires is worse than none: it trains the reader to
+ignore it, and then it cannot report the real mode-ordering problem it exists
+for. Worse, the number would have been mass-dependent — about 0.005 on a
+platinum slab, about 0.99 on hydrogen — so it would have been an inverse-mass
+readout wearing the name of a mode comparison.
 
 ### A caveat the documentation must carry
 

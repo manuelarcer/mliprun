@@ -267,7 +267,7 @@ def run(
         typer.echo("   - Relaxing fmax threshold")
         typer.echo("   - Trying a different optimizer")
 
-    report_committee_uncertainty(committee_calc)
+    report_committee_uncertainty(committee_calc, "the final geometry")
 
 
 @app.command()

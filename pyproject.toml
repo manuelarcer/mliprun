@@ -89,6 +89,7 @@ autoneb-results = "mliprun.cli.commands.autoneb_results:app"
 benchmark = "mliprun.cli.commands.benchmark:app"
 optimize = "mliprun.cli.commands.optimize:app"
 singlepoint = "mliprun.cli.commands.singlepoint:app"
+freq = "mliprun.cli.commands.freq:app"
 
 [project.urls]
 Homepage = "https://github.com/manuelarcer/mliprun"

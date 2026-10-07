@@ -7,6 +7,7 @@ A modular CLI toolkit for evaluating Machine Learning Interatomic Potentials (ML
 
 - **Geometry Optimization**
 - **Single-point evaluation** — energy, forces, and stress for one structure, no relaxation
+- **Vibrational frequencies** — finite-difference frequencies, imaginary-mode count, and zero-point energy, with per-member spread from a committee
 - **Molecular Dynamics (MD)** with NVE, NVT, and NPT ensembles
 - **Nudged Elastic Band (NEB) simulations** with restart support
 - **AutoNEB** with dynamic image insertion
@@ -49,7 +50,7 @@ CSV, per step and per atom. See
 
 ## Key Features
 
-- Unified CLI commands: `optimize run`, `singlepoint run`, `md run`, `neb run`, `autoneb run`
+- Unified CLI commands: `optimize run`, `singlepoint run`, `freq run`, `md run`, `neb run`, `autoneb run`
 - Auto-detection of available MLIP models (UMA > MACE > SevenNet > CHGNet)
 - UMA model support with multiple task types (OMat, OC20, OMol, ODAC)
 - MACE multi-head foundation models (`mace-mh-*`) with selectable heads (`omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, …)
@@ -158,13 +159,13 @@ For detailed Windows installation instructions, see: [Windows Setup Guide](docs/
 The package installs the following entry points:
 
 - `mlip` — top-level namespace; `mlip --help` lists every subcommand (including `mlip doctor`, the environment self-check)
-- `optimize`, `singlepoint`, `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark` — standalone aliases
+- `optimize`, `singlepoint`, `freq`, `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark` — standalone aliases
 
 `mlip <subcmd>` is equivalent to running `<subcmd>` directly. For example, `mlip md run --structure POSCAR` and `md run --structure POSCAR` do the same thing. The examples below use the standalone form for brevity. All commands support `--help`.
 
 ### Common model options
 
-These apply to `optimize`, `singlepoint`, `md`, `neb`, `autoneb`, and `benchmark`:
+These apply to `optimize`, `singlepoint`, `freq`, `md`, `neb`, `autoneb`, and `benchmark`:
 
 - `--mlip`: Model tag. `auto` (default) picks the first installed in order **UMA → MACE → SevenNet → CHGNet** (UMA preferred when present, MACE as the readily-usable fallback), or pass an explicit tag: any `uma-*` (e.g. `uma-s-1p2`), `mace` (MACE-MP-0), `mace-mh-1` (multi-head foundation), any `7net-*` tag (e.g. `7net-omni`, which requires `--sevennet-task`), `chgnet`.
 - `--uma-task`: Task head for UMA models. **No default and required for every `uma-*` model** — the heads are independent fine-tunes with independent energy zeros, so a guessed head silently changes the level of theory. One of `omat` (bulk inorganic), `omc` (molecular crystals), `omol` (molecules), `oc20` (catalysis/surfaces), `oc22`, `oc25`, `odac`. Ignored for non-UMA models.
@@ -228,7 +229,7 @@ Run several MLIPs, each in its own environment, against the same structure. The 
 optimize run --structure POSCAR --committee committee.yaml --fmax 0.05
 ```
 
-`committee.yaml` declares two or more members, each with its own env, MLIP tag, and task/head: see [examples/committee.yaml](examples/committee.yaml). `--committee` replaces `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, and `--device`: passing any of those alongside it is an error, since the file already owns model selection and each member's device. Members may sit at different levels of theory (e.g. an RPBE/OC20 head next to a PBE/OMat24 one); mliprun does not refuse this, but the reported spread then becomes a comparison *between* levels of theory rather than an error bar within one, and mliprun warns loudly when it detects the mismatch. `optimize run` and `singlepoint run` (see [Single-Point Evaluation](#single-point-evaluation) below) are the only commands that support committees; `optimize batch`, `md`, and `neb`/`autoneb` do not.
+`committee.yaml` declares two or more members, each with its own env, MLIP tag, and task/head: see [examples/committee.yaml](examples/committee.yaml). `--committee` replaces `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, and `--device`: passing any of those alongside it is an error, since the file already owns model selection and each member's device. Members may sit at different levels of theory (e.g. an RPBE/OC20 head next to a PBE/OMat24 one); mliprun does not refuse this, but the reported spread then becomes a comparison *between* levels of theory rather than an error bar within one, and mliprun warns loudly when it detects the mismatch. `optimize run`, `singlepoint run` (see [Single-Point Evaluation](#single-point-evaluation) below) and `freq run` (see [Vibrational Frequencies](#vibrational-frequencies) below) are the only commands that support committees; `optimize batch`, `md`, and `neb`/`autoneb` do not. `freq run --committee` reports each member's own frequencies **in addition to** the consensus statistics documented here: it measures the same `sigma_max_free` disagreement at the input geometry of the displacement sweep, takes the same opt-in `--uncertainty-threshold`, and writes the same `results.committee_uncertainty` block into the run record — see [Vibrational Frequencies](#vibrational-frequencies).
 
 **Outputs (in addition to the usual `optimize run` files):** `opt_committee.csv` (per-step disagreement trace), `opt_committee_peratom.csv` (per-atom disagreement at the final geometry), `committee_<member>.log` (one per member). Full column reference: [OUTPUTS.md](docs/OUTPUTS.md#committee-outputs).
 
@@ -264,6 +265,59 @@ reference: [OUTPUTS.md](docs/OUTPUTS.md#singlepoint-run).
 
 ---
 
+### Vibrational Frequencies
+```bash
+freq run --structure POSCAR --mlip uma-s-1p2 --uma-task oc20
+```
+
+Computes vibrational frequencies by finite differences of forces
+(`ase.vibrations.Vibrations`), and reports the frequencies, the
+imaginary-mode count, and the zero-point energy (ZPE).
+
+**Key options:**
+- `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, `--device`: same model-selection options as `optimize`.
+- `--committee committee.yaml`: one Hessian per member from a **single** displacement sweep, with per-member frequencies, per-member ZPE, and the per-mode spread across members — see [Committee evaluation](#committee-evaluation) above and [Committee frequencies](docs/OUTPUTS.md#committee-frequencies) for the two caveats that make the spread a qualified number rather than a clean one. A committee run **also** reports the ordinary consensus force disagreement (`results.committee_uncertainty`), measured at the input geometry of the sweep.
+- `--uncertainty-threshold`: flag the input geometry when the committee's force disagreement over the free atoms exceeds this (eV/Å). Opt-in with **no default**, as on `optimize` and `singlepoint`: without it sigma is reported and no verdict asserted. It never stops the run, and it is independent of `--expect-fmax` below, which asks a different question of a different quantity. Only meaningful with `--committee`.
+- `--indices`: atoms to displace, e.g. `0,1,5` or `12-30` (inclusive), or a mix. Default: every atom **not** held by a `FixAtoms` constraint — the structure's own answer. Any other constraint type warns and is displaced in full, since ASE's `indices` selects whole atoms and cannot express a partial Hessian.
+- `--delta`: displacement in Å (default `0.01`, ASE's own default).
+- `--nfree`: `2` (three-point stencil, default) or `4` (five-point stencil, doubling the cost).
+- `--direction` / `--method`: `central` (default), `forward` or `backward`; `standard` (default) or `frederiksen` (acoustic sum-rule correction, useful on slabs).
+- `--write-modes`: `none`, `imaginary` (default) or `all` — which modes get an animated trajectory.
+- `--expect-fmax`: warn when fmax at the input geometry, **over the free force components**, exceeds this (eV/Å). Default: the fmax a **converged** `optimize` stage in the structure's own directory actually met, if there is one. **This never stops the run** — it only warns. Both `fmax_at_input_free_eV_per_A` and `fmax_at_input_all_eV_per_A` are reported; the comparison uses the free one, since that is the criterion an optimizer converges against (see [OUTPUTS.md](docs/OUTPUTS.md#the-stationary-point-warning)).
+- `--output-dir`: directory for this run's outputs (default: next to `--structure`, as `optimize`/`singlepoint`/`md` do). Give a frequency run its own folder: a run record is *replaced*, not appended to, by the next command that writes into the same directory. The fmax-expectation lookup above still reads the structure's own directory regardless of `--output-dir`.
+- `--prefix`: stem for the output file names (default `freq`).
+
+**The frequency column is a magnitude plus a boolean, never a signed
+number.** Writing an imaginary frequency as negative is a common convention
+elsewhere and a silent trap for anything that sums or sorts the column.
+**ZPE counts the real modes only:** ASE sums the real parts of the mode
+energies, so an imaginary mode contributes exactly zero, and a structure
+with imaginary modes has no well-defined zero-point energy.
+
+**Outputs:** `freq_frequencies.csv`, `freq_summary.txt`,
+`freq_vibrations.json`, the `freq/` displacement cache with its
+`freq_cache.json` identity file, and any written `freq.<n>.traj` mode
+trajectories (plus `freq_committee_frequencies.csv` with `--committee`).
+Full field reference: [OUTPUTS.md](docs/OUTPUTS.md#freq-run).
+
+**Re-running in the same directory: change `--prefix` whenever anything
+about the sweep changes.** ASE's displacement cache names its entries by
+atom, axis and sign only, so a second run at a different `--delta` used to
+reuse the first one's forces and divide them by the new displacement —
+N₂'s top mode reported at 415.08 cm⁻¹ where the truth was 930.86, a factor
+of 2.24, with no warning. `freq` now records what the cache was swept under
+in `freq_cache.json` and refuses a cache that does not match, naming the
+field and both values. This matters most for the two-`--delta` comparison
+recommended for committee runs: give each delta its own `--prefix` or
+`--output-dir`.
+
+Thermochemistry (free energies) is deliberately out of scope here:
+`freq_vibrations.json` carries the full Hessian and reloads through
+`VibrationsData.read`, so a later free-energy calculation costs no forces.
+See [PYTHON_API.md](docs/PYTHON_API.md#vibrational-frequencies).
+
+---
+
 ### Molecular Dynamics
 ```bash
 md run --structure path/to/structure.vasp
@@ -277,7 +331,6 @@ md run --structure path/to/structure.vasp
 - `--timestep`: Timestep in fs
 - `--thermostat`: For NVT (`langevin`, `nose-hoover`, `berendsen`)
 - `--barostat`: For NPT (`npt`, `berendsen`)
-- `--barostat-mask`: Which cell axes the barostat may change, as three 0/1 values (default `"1,1,1"`, isotropic). `"0,0,1"` relaxes only z — a slab–liquid cell then reaches the correct liquid density at the set pressure while the in-plane lattice stays at its relaxed bulk value. NPT only
 - `--log-interval`: Append a row to `md_energy.csv` every N steps (default: 10)
 - `--traj-interval`: Write a frame to `md.traj` every N steps (default: 100)
 - `--resume`: Continue an existing run — loads the last frame of `md.traj`, preserves momenta, and treats `--steps` as *additional* steps
@@ -295,16 +348,6 @@ md run --structure POSCAR --ensemble nvt --temperature 300 --steps 5000 --thermo
 ```bash
 md run --structure POSCAR --ensemble npt --temperature 300 --pressure 0.0 --steps 10000 --barostat berendsen
 ```
-
-**Example (slab–liquid interface: relax z only, hold the in-plane lattice):**
-```bash
-md run --structure POSCAR --ensemble npt --temperature 300 --pressure 0.0001 \
-       --steps 50000 --barostat berendsen --barostat-mask "0,0,1"
-```
-The water between the two slab faces reaches its own density at the set
-pressure while the oxide keeps the in-plane lattice constant it was cleaved
-with. The resolved mask is written to `md_params.txt`, so a masked run is
-distinguishable from an isotropic one without opening the trajectory.
 
 **Example (extend a finished run by 5000 more steps):**
 ```bash
@@ -467,6 +510,7 @@ pytest -m uma                          # UMA integration tests only
 
 - **Optimization**: Relax atomic structures to minimum energy configurations
 - **Single-point**: Energy, forces, and stress for one structure, no relaxation — e.g. checking a hand-built or DFT-relaxed geometry against an MLIP
+- **Vibrational frequencies**: Confirm a minimum (zero imaginary modes) or a transition state (exactly one), get the ZPE, and — with a committee — see how much the models agree on the curvature itself, not just the energy
 - **MD**: Simulate temperature and pressure-dependent atomic dynamics
 - **NEB**: Compute Minimum Energy Pathways (MEP) and transition barriers
 - **AutoNEB**: Automatically find complex reaction pathways with adaptive image insertion
@@ -476,13 +520,13 @@ pytest -m uma                          # UMA integration tests only
 
 ## Python API
 
-The CLI commands are thin wrappers over a small set of public functions and one class. To call them directly from a script or notebook, see [PYTHON_API.md](docs/PYTHON_API.md). It covers `setup_calculator`, `run_optimization`, `run_singlepoint`, `run_md` / `setup_dynamics`, the `CustomNEB` class, parameter-file helpers, and small utilities.
+The CLI commands are thin wrappers over a small set of public functions and one class. To call them directly from a script or notebook, see [PYTHON_API.md](docs/PYTHON_API.md). It covers `setup_calculator`, `run_optimization`, `run_singlepoint`, `run_frequencies`, `run_md` / `setup_dynamics`, the `CustomNEB` class, parameter-file helpers, and small utilities.
 
 ---
 
 ## Output Files
 
-For a complete reference of every file each command writes — filename, format, and which command produces it — see [OUTPUTS.md](docs/OUTPUTS.md). It also documents the (different) output-directory conventions: `optimize`, `singlepoint` and `md` write next to the input structure; `neb` and `autoneb` write into the current working directory.
+For a complete reference of every file each command writes — filename, format, and which command produces it — see [OUTPUTS.md](docs/OUTPUTS.md). It also documents the (different) output-directory conventions: `optimize`, `singlepoint`, `freq` and `md` write next to the input structure (`singlepoint` and `freq` unless `--output-dir` says otherwise); `neb` and `autoneb` write into the current working directory.
 
 ---
 
@@ -500,9 +544,10 @@ For a complete reference of every file each command writes — filename, format,
   benchmark = "mliprun.cli.commands.benchmark:app"
   optimize = "mliprun.cli.commands.optimize:app"
   singlepoint = "mliprun.cli.commands.singlepoint:app"
+  freq = "mliprun.cli.commands.freq:app"
   ```
 - Lazy imports for fast CLI startup (no heavy dependencies loaded until needed)
-- Output locations: `optimize`/`md` write next to the input structure; `neb`/`autoneb` write into the current working directory (see [OUTPUTS.md](docs/OUTPUTS.md))
+- Output locations: `optimize`/`singlepoint`/`freq`/`md` write next to the input structure (`singlepoint` and `freq` unless `--output-dir` overrides it); `neb`/`autoneb` write into the current working directory (see [OUTPUTS.md](docs/OUTPUTS.md))
 - Plots are opt-in via `--plot`; CSV data is always written
 - Shared utilities in `core/utils.py` (fmax calculation, unit conversions)
 - Parameter I/O in `core/params_io.py` (reduces duplication across commands)
