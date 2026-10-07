@@ -11,8 +11,12 @@ from ase.md.nptberendsen import Inhomogeneous_NPTBerendsen, NPTBerendsen
 from ase.md.nvtberendsen import NVTBerendsen
 
 from mliprun.core.md import setup_dynamics, run_md
+from ase import units
 
 _MASK_TEST_COMPRESSIBILITY = 4.57e-5  # 1/GPa; see TestBarostatMask
+# The pre-2026-09 auto pfactor at ttime = 25 fs, in ASE units (2.27e6 GPa
+# fs^2): the masked npt test's dz below was measured with it.
+_MASK_TEST_PFACTOR = (25.0 * 75 * units.GPa) ** 2
 
 
 class TestSetupDynamics:
@@ -278,6 +282,7 @@ class TestBarostatMask:
         dyn = setup_dynamics(atoms, ensemble="npt", barostat="npt",
                              temperature=300, pressure=0.0, timestep=1.0,
                              ttime=25.0, barostat_mask=(0, 0, 1),
+                             pfactor=_MASK_TEST_PFACTOR,
                              set_velocities=False)
         dyn.run(20)
 

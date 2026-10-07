@@ -128,7 +128,7 @@ isotropic one without opening the trajectory.
 | `--taut` | `100.0` | fs | Berendsen temperature coupling time |
 | `--taup` | `1000.0` | fs | Berendsen pressure coupling time (NPT Berendsen only) |
 | `--compressibility` | `0.457` | 1/GPa | Berendsen NPT only. The cell responds at a rate set by `compressibility / taup`. Default is liquid water; solids are ~0.005–0.02 (B = 50–200 GPa). Rejected with any other barostat |
-| `--pfactor` | auto | GPa·fs² | `--barostat npt` only. `ptime² × B` (e.g. 75 fs and 100 GPa → 5.6e5). Omitted: `(ttime · 75 GPa)²` in ASE units, ≈ 2.27e6 GPa·fs² at `ttime = 25` fs. Rejected with any other barostat |
+| `--pfactor` | auto | GPa·fs² | `--barostat npt` only. `ptime² × B`. Omitted: (75 fs)² × 100 GPa = 5.625e5, i.e. a 75 fs response for a metal. A soft system responds more slowly (water, B ≈ 2.2 GPa: ≈ 500 fs), so set it there. Rejected with any other barostat |
 | `--mlip` | `auto` | — | MLIP model; auto-detect or explicit (`uma-s-1p2`, `mace`, `mace-mh-1`, `7net-mf-ompa`, `chgnet`, …) |
 | `--uma-task` | `omat` | — | Task head for UMA models: `omat`, `oc20`, `omol`, `odac` |
 | `--mace-head` | `omat_pbe` | — | Head for multi-head MACE foundation models (`mace-mh-*`): `omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`. Ignored for non-MH MACE |
@@ -166,7 +166,7 @@ Every `md run` invocation writes the following to the directory containing the i
 | File | Contents |
 |------|----------|
 | `md.traj` | Full ASE trajectory (every `--traj-interval` steps) |
-| `md_energy.csv` | Step, time (fs), temperature (K), total / potential / kinetic energy (eV); plus `pressure(GPa)` and `volume(A^3)` columns for NPT. See *What `pressure(GPa)` is* below |
+| `md_energy.csv` | Step, time (fs), temperature (K), total / potential / kinetic energy (eV); plus, for NPT, `pressure(GPa)`, `pressure_xx(GPa)`, `pressure_yy(GPa)`, `pressure_zz(GPa)` and `volume(A^3)`. See *What the pressure columns are* below |
 | `md_params.txt` | Echo of every parameter the run was launched with |
 | `md_energy.png` | Total / potential / kinetic energy vs time — **only with `--plot`** |
 | `md_temperature.png` | Temperature vs time, with target line for NVT/NPT — **only with `--plot`** |
@@ -237,19 +237,23 @@ Inspect the total energy over time (plot `md_energy.csv`, or run with `--plot` t
 - ASE internal: eV/Å³
 - Conversion: `1 GPa = 0.006241509 eV/Å³` (constant `GPA_TO_EV_PER_ANG3` in `core/utils.py`)
 
-### What `pressure(GPa)` is
+### What the pressure columns are
 
-`pressure(GPa)` in `md_energy.csv` is `-trace(σ)/3` from `atoms.get_stress()`, converted to GPa. Positive means compression, the same sign as `--pressure`. It is the **virial part only**: ASE's `get_stress` excludes the kinetic (ideal-gas) term by default, while both barostats act on the full stress (`include_ideal_gas=True`). At 300 K the missing term is `N k_B T / V`, about **+0.4 GPa** for liquid water. A converged run at 1 bar therefore logs a mean `pressure(GPa)` near -0.4, not 0.
+`pressure_xx(GPa)`, `pressure_yy(GPa)` and `pressure_zz(GPa)` are the diagonal of `-σ` from `atoms.get_stress(include_ideal_gas=True)`, in GPa. `pressure(GPa)` is their mean. Positive means compression, the same sign as `--pressure`. The kinetic (ideal-gas) term is included because both barostats act on the full stress. At 300 K that term is `N k_B T / V`, about **+0.4 GPa** for liquid water.
 
-With a mask, the Berendsen barostat (`Inhomogeneous_NPTBerendsen`) acts on each free axis separately: with `"0,0,1"` it drives **P_zz** to the target, not the mean pressure. The in-plane components, and therefore the logged mean, can stay far from the target in a correctly running slab–liquid simulation.
+Before 2026-09, `pressure(GPa)` came from `get_stress()` with ASE's default `include_ideal_gas=False`, so it left out that term. A water run at 1 bar then logged about -0.4 GPa while the barostat was working correctly. Files written before this change are not comparable column for column.
+
+With a mask, the Berendsen barostat (`Inhomogeneous_NPTBerendsen`) acts on each free axis separately: with `"0,0,1"` it drives **`pressure_zz(GPa)`** to the target, not the mean. The in-plane components, and therefore the mean, can stay far from the target in a correctly running slab–liquid simulation. The `npt` barostat with a mask acts on the free strain components of the same tensor.
 
 ### `npt` pfactor formula
 
 ```python
-pfactor = (ttime * 75 * units.GPa) ** 2      # ASE units, used when --pfactor is omitted
+pfactor = (75 * units.fs) ** 2 * (100 * units.GPa)   # ASE units, used when --pfactor is omitted
 ```
 
-For `ttime = 25 fs` this is about 137 in ASE units, i.e. **2.27e6 GPa·fs²**. The formula is not ASE's documented `ptime² × B`: it squares the bulk modulus and leaves out `units.fs`. It is kept unchanged so that default runs reproduce earlier ones. Read as `ptime² × B`, 2.27e6 GPa·fs² corresponds to ptime ≈ 150 fs for B = 100 GPa, or ≈ 1 ps for water (B ≈ 2.2 GPa). Set `--pfactor` explicitly when the response time matters.
+This is ASE's documented `ptime² × B` with ASE's suggested ptime (75 fs) and its "typical metal" bulk modulus (100 GPa): **5.625e5 GPa·fs²**. The barostat response time is `sqrt(pfactor / B_real)`, so the same default gives ≈ 75 fs for a metal and ≈ 500 fs for water (B ≈ 2.2 GPa). For a soft or liquid system, set `--pfactor` to `ptime² × B` with that system's B.
+
+Before 2026-09 the default was `(ttime * 75 * units.GPa) ** 2`, about 2.27e6 GPa·fs² at `ttime = 25` fs. That formula squared the bulk modulus and left out `units.fs`, and it tied the barostat to the thermostat time. It was replaced, so default `npt` runs from before the change do not reproduce.
 
 ### Initial velocities
 

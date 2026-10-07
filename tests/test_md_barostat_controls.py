@@ -113,13 +113,28 @@ class TestPfactor:
     def test_unit_constant(self):
         assert PFACTOR_GPA_FS2 == pytest.approx(units.GPa * units.fs ** 2)
 
-    def test_default_pfactor_is_unchanged(self):
-        """The auto value must stay bit-identical to the historical formula;
-        changing it is a separate, scientific decision."""
-        assert default_pfactor(25.0) == (25.0 * 75 * units.GPa) ** 2
-        # 25 fs -> about 2.28e6 GPa fs^2, inside ASE's suggested range.
-        assert default_pfactor(25.0) / PFACTOR_GPA_FS2 == pytest.approx(
-            2.2742e6, rel=1e-4)
+    def test_default_pfactor_is_ptime_squared_times_b(self):
+        """ASE's documented form: (75 fs)^2 * 100 GPa = 5.625e5 GPa fs^2."""
+        assert default_pfactor() == pytest.approx(
+            (75 * units.fs) ** 2 * 100 * units.GPa, rel=1e-12)
+        assert default_pfactor() / PFACTOR_GPA_FS2 == pytest.approx(5.625e5)
+
+    def test_default_npt_contracts_a_strained_cell_and_stays_bounded(self):
+        """Measured on this cell (EMT minimum is dV/V = -0.22): dV/V reaches
+        -0.11 by 50 steps and turns around near -0.33 by ~130 steps. The old
+        default had only reached -0.03 at 50 steps."""
+        atoms = _strained_cu()
+        _seed(atoms)
+        v0 = atoms.get_volume()
+        dyn = setup_dynamics(atoms, ensemble="npt", barostat="npt",
+                             temperature=300, pressure=0.0, timestep=1.0,
+                             set_velocities=False)
+        history = []
+        for _ in range(20):
+            dyn.run(10)
+            history.append(atoms.get_volume() / v0 - 1)
+        assert history[4] < -0.07, history
+        assert -0.5 < min(history) and max(history) < 0.05, history
 
     def test_explicit_pfactor_reaches_npt(self):
         atoms = _strained_cu()
@@ -131,7 +146,7 @@ class TestPfactor:
         atoms = _strained_cu()
         dyn = setup_dynamics(atoms, ensemble="npt", barostat="npt",
                              temperature=300, ttime=25.0)
-        assert dyn.pfactor_given == default_pfactor(25.0)
+        assert dyn.pfactor_given == default_pfactor()
 
     @pytest.mark.parametrize("bad", [0.0, -1.0])
     def test_non_positive_pfactor_raises(self, bad):
@@ -161,8 +176,71 @@ class TestRecord:
                temperature=300, steps=2, log_interval=1, traj_interval=1,
                output_dir=tmp_path, ttime=25.0)
         params = json.loads((tmp_path / "mliprun_run.json").read_text())["parameters"]
-        assert params["pfactor_GPa_fs2"]["value"] == pytest.approx(
-            default_pfactor(25.0) / PFACTOR_GPA_FS2)
+        assert params["pfactor_GPa_fs2"]["value"] == pytest.approx(5.625e5)
+
+
+# -- logged pressure ---------------------------------------------------------
+
+class TestLoggedPressure:
+    """md_energy.csv must log the pressure the barostat acts on: kinetic
+    term included, with the diagonal components a masked run controls."""
+
+    def _run(self, tmp_path, **kw):
+        import pandas as pd
+        atoms = bulk("Cu", "fcc", a=3.7, cubic=True) * (2, 2, 2)
+        atoms.calc = EMT()
+        run_md(atoms, ensemble="npt", barostat="berendsen", temperature=300,
+               steps=3, log_interval=1, traj_interval=1, output_dir=tmp_path,
+               **kw)
+        return pd.read_csv(tmp_path / "md_energy.csv"), atoms
+
+    def test_columns(self, tmp_path):
+        df, _ = self._run(tmp_path)
+        assert list(df.columns[-5:]) == [
+            "pressure(GPa)", "pressure_xx(GPa)", "pressure_yy(GPa)",
+            "pressure_zz(GPa)", "volume(A^3)"]
+
+    def test_mean_is_the_average_of_the_diagonal(self, tmp_path):
+        df, _ = self._run(tmp_path)
+        diag = df[["pressure_xx(GPa)", "pressure_yy(GPa)",
+                   "pressure_zz(GPa)"]].mean(axis=1)
+        assert np.allclose(df["pressure(GPa)"], diag, rtol=0, atol=1e-12)
+
+    def test_last_row_includes_the_kinetic_term(self, tmp_path):
+        """Recompute the final row from the final state: virial pressure +
+        N k_B T / V. The ideal-gas term is the part the old log dropped."""
+        df, atoms = self._run(tmp_path)
+        virial = -np.trace(atoms.get_stress(voigt=False)) / 3
+        ideal = len(atoms) * units.kB * atoms.get_temperature() / atoms.get_volume()
+        assert ideal / units.GPa > 0.05  # large enough to be seen below
+        # abs, not rel: N k_B T / V via get_temperature differs from ASE's
+        # momentum-tensor ideal-gas term by ~2e-7 GPa (measured), far below
+        # the >0.05 GPa term being tested.
+        assert df["pressure(GPa)"].iloc[-1] == pytest.approx(
+            (virial + ideal) / units.GPa, abs=1e-5)
+
+    def test_record_carries_the_per_axis_means(self, tmp_path):
+        df, _ = self._run(tmp_path)
+        results = json.loads(
+            (tmp_path / "mliprun_run.json").read_text())["stages"][0]["results"]
+        for axis in "xyz":
+            assert results[f"mean_pressure_{axis}{axis}_GPa"] == pytest.approx(
+                df[f"pressure_{axis}{axis}(GPa)"].mean())
+
+    def test_resume_from_a_csv_without_the_columns_is_refused(self, tmp_path):
+        import pandas as pd
+        self._run(tmp_path)
+        csv = tmp_path / "md_energy.csv"
+        pd.read_csv(csv).drop(columns=["pressure_zz(GPa)"]).to_csv(csv, index=False)
+        atoms = bulk("Cu", "fcc", a=3.7, cubic=True) * (2, 2, 2)
+        atoms.calc = EMT()
+        with pytest.raises(ValueError, match="pressure_zz"):
+            run_md(atoms, ensemble="npt", barostat="berendsen",
+                   temperature=300, steps=1, output_dir=tmp_path, resume=True)
+
+    def test_npt_plot_draws_the_components(self, tmp_path):
+        self._run(tmp_path, plot=True)
+        assert (tmp_path / "md_pressure.png").stat().st_size > 0
 
 
 # -- CLI ----------------------------------------------------------------------
@@ -229,7 +307,7 @@ class TestCLI:
         text = params.read_text()
         assert "pfactor (GPa fs^2):" in text
         assert "auto" in text
-        assert "2.274e+06" in text
+        assert "5.625e+05" in text
 
     @pytest.mark.parametrize("args, flag", [
         (["--ensemble", "npt", "--barostat", "npt", "--compressibility", "0.1"],

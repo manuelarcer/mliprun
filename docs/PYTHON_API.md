@@ -540,7 +540,7 @@ dyn = setup_dynamics(
     timestep=1.0,
     ttime=25.0,
     # pfactor is in ASE units here; from GPa*fs^2:
-    # pfactor=5.6e5 * mliprun.core.md.PFACTOR_GPA_FS2
+    # pfactor=5.625e5 * mliprun.core.md.PFACTOR_GPA_FS2
 )
 
 dyn.attach(my_callback, interval=100)

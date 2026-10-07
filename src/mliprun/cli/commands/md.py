@@ -99,8 +99,9 @@ def run(
         "--pfactor",
         help=(
             "Barostat constant for --barostat npt, in GPa*fs^2: ptime^2 * B "
-            "(e.g. 75 fs and 100 GPa -> 5.6e5). Default: auto from --ttime, "
-            "2.28e6 at 25 fs. --barostat npt only."
+            "(e.g. 75 fs and 100 GPa -> 5.625e5). Default 5.625e5 (ptime 75 "
+            "fs, B 100 GPa, a metal); a soft system such as water (B ~ 2.2 "
+            "GPa) then responds slowly. --barostat npt only."
         ),
     ),
 
@@ -219,8 +220,8 @@ def run(
     # Human unit on the CLI, ASE units in the core API.
     pfactor_ase = None if pfactor is None else pfactor * PFACTOR_GPA_FS2
     if pfactor is None:
-        pfactor_label = (f"{default_pfactor(ttime) / PFACTOR_GPA_FS2:.4g}"
-                         f" (auto from ttime)")
+        pfactor_label = (f"{default_pfactor() / PFACTOR_GPA_FS2:.4g}"
+                         f" (auto: (75 fs)^2 x 100 GPa)")
     else:
         pfactor_label = f"{pfactor:.4g}"
 

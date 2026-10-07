@@ -19,6 +19,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   units, so existing scripts keep their meaning; `PFACTOR_GPA_FS2` converts.
   Run record schema unchanged (5): two parameter keys added.
 
+- **Per-axis pressure in `md_energy.csv`.** NPT runs add `pressure_xx(GPa)`,
+  `pressure_yy(GPa)` and `pressure_zz(GPa)`, and the record adds their
+  means. A masked Berendsen run controls P_zz, not the mean, so the mean
+  alone could not show whether it worked. `md_pressure.png` draws all three.
+  Resuming from a CSV without these columns is refused before the run starts.
+
 - **`freq run`, vibrational frequencies by finite differences.** Computes
   frequencies from `ase.vibrations.Vibrations`, reporting the imaginary-mode
   count and the zero-point energy (ZPE) alongside them. Frequencies are
@@ -429,12 +435,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
   default**; earlier such runs were close to NVT. The `npt` barostat is
   unaffected.
 
+- **`pressure(GPa)` now includes the kinetic term (changes the column).** It
+  used `get_stress()` with ASE's default `include_ideal_gas=False`, while both
+  barostats act on the full stress. The missing `N k_B T / V` is about
+  +0.4 GPa for water at 300 K, so a correctly running 1 bar water simulation
+  logged about -0.4 GPa. Older files are not comparable column for column.
+
+- **`--barostat npt` default pfactor replaced (changes dynamics).** The old
+  `(ttime * 75 * units.GPa) ** 2` squared the bulk modulus and omitted
+  `units.fs` (2.27e6 GPa·fs² at ttime 25 fs). The default is now ASE's
+  `ptime² × B` with 75 fs and 100 GPa: 5.625e5 GPa·fs², independent of
+  `--ttime`. On strained EMT Cu, dV/V after 50 steps is -0.11 now versus
+  -0.03 before.
+
 - **`--barostat npt` was labelled Martyna-Tobias-Klein; it is Melchionna.**
   `ase.md.npt.NPT` is Melchionna's Nosé-Hoover/Parrinello-Rahman scheme (ASE
   3.29 aliases it to `MelchionnaNPT`). Help text and docs corrected; the
-  dynamics are unchanged. `docs/MD_REFERENCE.md` now also states what the
-  `pressure(GPa)` column holds (virial only, no kinetic term) and that a
-  masked Berendsen run controls P_zz, not the mean pressure.
+  label fix alone does not change the dynamics.
 
 - **A reused committee no longer crashes on a structure that needs no force
   evaluation.** Handing `run_optimization` the same `Atoms` object twice in
