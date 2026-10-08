@@ -315,27 +315,33 @@ number instead of the qualified one it is:
   like-for-like comparison, and the per-mode standard deviation would
   silently absorb an ordering swap as disagreement. The `<member>_overlap`
   columns in `<prefix>_committee_frequencies.csv` are how that becomes
-  visible: for each member and each mode, the absolute overlap
-  `|⟨u_member,i | u_committee,i⟩|` between that member's mode vector and the
-  committee's, each **normalised to unit Cartesian length first** (ASE's own
-  mode vectors are unit-normalised in the *mass-weighted* basis instead, not
-  in Cartesian space, so the raw dot product would be mass-dependent rather
-  than a clean-match indicator). Close to 1 is a clean match; when any
-  overlap falls below 0.9 the run warns, naming the modes, and
-  `mode_pairing_suspect` is set `true` in the run record. 0.9 is a
-  diagnostic trigger for a warning, not a scientific verdict — the overlaps
-  themselves are in the CSV for anyone who disagrees with it.
-  **Expect this flag to be noisy, and treat it as untested against real
-  potentials.** It takes its minimum over *every* mode, near-zero ones
-  included, and the eigenvectors of a near-zero frustrated translation or
-  rotation are an arbitrary basis that differs freely between members — so
-  the flag may well fire on runs where nothing is wrong. It has been
-  exercised against EMT only. Read `worst_mode_overlap` and the per-mode
-  `<member>_overlap` columns next to the frequencies before acting on the
-  flag: an overlap that is low only for modes at a few cm⁻¹ says nothing
-  about the modes you are reporting. Whether to apply a frequency floor
-  below which the diagnostic is skipped is an open question for the project
-  owner, not something this command decides.
+  visible. Each is the overlap of the member's mode `i` with the
+  committee's modes in `i`'s **(near-)degenerate group**: `sqrt(u · P_G ·
+  u)`, with `P_G` the projector onto the span of the group's committee
+  modes. Every mode vector is **normalised to unit Cartesian length first**
+  (ASE's own mode vectors are unit-normalised in the *mass-weighted* basis,
+  so a raw dot product would be mass-dependent). Neighbouring committee
+  modes share a group when their gap is at most 3 % of the larger
+  (`degeneracy_rel_tol`), or when both are below the imaginary floor (noise
+  around zero); the group of each mode is the `mode_group` column. For a
+  group of one this is the plain `|⟨u_member,i | u_committee,i⟩|`.
+  Why a group: inside a degenerate subspace the eigenvector basis is
+  arbitrary, so a one-to-one overlap is low even when the members agree
+  exactly. Measured in the Task 15 committee (CH3*/Ni(111), MACE + UMA +
+  CHGNet): the one-to-one overlap read 0.005 on CH3's C3v pairs at 159,
+  1301 and 2863 cm⁻¹, while MACE's and UMA's subspaces for the same pairs
+  match to 0.99–1.0. A frequency floor would not have helped: those pairs
+  are not low-frequency.
+  Close to 1 is a clean match; when any overlap falls below 0.9 the run
+  warns and `mode_pairing_suspect` is set `true` in the run record. 0.9 is
+  a diagnostic trigger for a warning, not a scientific verdict — the
+  overlaps are in the CSV for anyone who disagrees with it. A low value now
+  means the member's mode has a different *character*: an ordering swap
+  between non-degenerate modes, or a genuinely different eigenvector.
+  The 3 % tolerance also joins neighbours that are close but not
+  symmetry-degenerate (on CH3*/Ni(111) the symmetric C–H stretch at 2803.5
+  joins the 2863 pair, 2.1 % apart), which makes the check more lenient
+  for those modes.
 - **At `delta = 0.01 Å` (the default), a merely noisy member contributes to
   the spread alongside genuine model disagreement, and one sweep cannot
   separate the two.** The force differences being divided are small at that
@@ -359,6 +365,7 @@ number instead of the qualified one it is:
 | `mode_index` | As in `<prefix>_frequencies.csv` |
 | `frequency_committee_cm-1` | The headline value, from the **mean** forces — one Hessian, not the mean of the per-member frequencies below (those are different numbers, D8 in the design note) |
 | `imaginary` | bool, for the committee (headline) value, above the floor |
+| `mode_group` | (Near-)degenerate group of the committee mode, used for the overlap |
 | `<member>_cm-1` | One column per member, **signed** by that member's own Hessian (negative = negative curvature) |
 | `frequency_member_std_cm-1` | Standard deviation across members over the **signed** values, `ddof=1`: a mode one member curves up and another down is a large spread, not a small one |
 | `<member>_overlap` | One column per member — see above |
@@ -368,7 +375,8 @@ the run record's `results.committee_frequencies`, not in the CSV:
 `zpe_eV_per_member` (one value per member), `zpe_mean_eV`, `zpe_std_eV`,
 `n_imaginary_per_member` (each member's own count above the floor),
 `frequency_member_std_cm-1` (the same values as the CSV column),
-`worst_mode_overlap`, and `mode_pairing_suspect`.
+`worst_mode_overlap`, `mode_pairing_suspect`, `degeneracy_rel_tol` and
+`n_mode_groups`.
 
 ### The run record (committee fields)
 

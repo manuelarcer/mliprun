@@ -106,14 +106,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `<prefix>_committee_frequencies.csv` and the run record. Because each
   member's Hessian is diagonalized independently with eigenvalues sorted
   ascending, near-degenerate modes can pair up out of order between
-  members; a per-member, per-mode `<member>_overlap` column (each mode
-  vector normalised to unit Cartesian length first, since ASE's own modes
-  are normalised in the mass-weighted basis instead) makes an ordering swap
-  visible rather than letting it hide inside the spread, and the run warns
-  when any overlap drops below 0.9. That warning takes its minimum over
-  every mode, near-zero ones included, and has been exercised against EMT
-  only: expect it to be noisy until it has been tried against real
-  potentials.
+  members; a per-member, per-mode `<member>_overlap` column makes an
+  ordering swap visible rather than letting it hide inside the spread, and
+  the run warns when any overlap drops below 0.9. The overlap is taken
+  against the committee modes of each mode's (near-)degenerate group
+  (neighbours within 3 %, or both below the imaginary floor; `mode_group`
+  column), with every mode vector normalised to unit Cartesian length
+  first. Ruled by Juan after the cos-cluster verification (2026-10-07): the
+  one-to-one overlap read 0.005 on CH3*/Ni(111)'s C3v pairs at 159, 1301
+  and 2863 cm⁻¹, where an eigenvector basis is arbitrary, so the flag fired
+  on a committee whose MACE and UMA subspaces matched to 0.99–1.0.
   A committee run **also** reports the ordinary consensus force
   disagreement — the same `results.committee_uncertainty` block `optimize
   run --committee` and `singlepoint run --committee` write, with the same

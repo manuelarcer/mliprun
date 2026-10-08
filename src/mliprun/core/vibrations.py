@@ -53,6 +53,15 @@ IMAGINARY_FLOOR_CM1 = 10.0
 #: themselves are in the CSV for anyone who disagrees with the number.
 MODE_OVERLAP_WARN = 0.9
 
+#: Relative gap below which neighbouring committee modes form one
+#: (near-)degenerate group, for the mode overlap. Ruled by Juan, 2026-10-07.
+#: Inside a degenerate subspace an eigenvector basis is arbitrary, so the
+#: one-to-one overlap of Task 15's CH3*/Ni(111) committee read 0.005-0.29 on
+#: the C3v pairs at 159, 1301 and 2863 cm^-1 while the same members'
+#: subspaces matched to 0.99-1.0. Modes below the imaginary floor are
+#: grouped together whatever their gap: they are noise around zero.
+DEGENERACY_REL_TOL = 0.03
+
 #: Tolerance, in eV/A, for deciding that a reused displacement cache was
 #: written by THIS run's calculator.
 #:
@@ -739,17 +748,71 @@ def classify_modes(energies, frequencies, floor_cm1=IMAGINARY_FLOOR_CM1):
     return signed_frequencies, signed_energies, raw, imaginary
 
 
+def degenerate_groups(frequencies, rel_tol=DEGENERACY_REL_TOL,
+                      floor_cm1=IMAGINARY_FLOOR_CM1):
+    """Group ascending modes into runs of (near-)degenerate neighbours.
+
+    Neighbours ``i`` and ``i+1`` share a group when their gap is at most
+    ``rel_tol`` of the larger magnitude, or when both magnitudes are below
+    ``floor_cm1`` (noise around zero). Chained, so a group can span more
+    than two modes.
+
+    Parameters
+    ----------
+    frequencies : array-like of float
+        Signed cm^-1, in ASE's ascending-eigenvalue order.
+
+    Returns
+    -------
+    numpy.ndarray of int
+        Group label per mode, 0-based and non-decreasing.
+    """
+    values = np.asarray(frequencies, dtype=float)
+    labels = np.zeros(len(values), dtype=int)
+    for i in range(1, len(values)):
+        a, b = values[i - 1], values[i]
+        near_zero = abs(a) < floor_cm1 and abs(b) < floor_cm1
+        close = abs(b - a) <= rel_tol * max(abs(a), abs(b))
+        labels[i] = labels[i - 1] + (0 if (near_zero or close) else 1)
+    return labels
+
+
+def subspace_overlaps(member_unit, committee_unit, groups):
+    """Overlap of each member mode with its committee mode's GROUP.
+
+    ``sqrt(u . P_G . u)``, with ``P_G`` the projector onto the span of the
+    committee modes in the group of mode ``i``, built from an orthonormal
+    basis (QR) because unit Cartesian mode vectors are orthogonal only in
+    the mass-weighted basis. For a group of one this is exactly the old
+    ``|<u_member,i | u_committee,i>|``. Clipped to 1 against rounding.
+    """
+    out = np.empty(len(member_unit))
+    for label in np.unique(groups):
+        members = np.flatnonzero(groups == label)
+        basis, _ = np.linalg.qr(committee_unit[members].T)
+        projected = member_unit[members] @ basis
+        out[members] = np.minimum(
+            np.linalg.norm(projected, axis=1), 1.0)
+    return out
+
+
 def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
                        member_names, committee_modes,
-                       floor_cm1=IMAGINARY_FLOOR_CM1):
+                       floor_cm1=IMAGINARY_FLOOR_CM1,
+                       committee_frequencies=None,
+                       rel_tol=DEGENERACY_REL_TOL):
     """Per-member frequencies, ZPE, per-mode spread and mode overlaps.
 
     Each member's Hessian is diagonalized independently and its eigenvalues
-    come back sorted ascending, so for near-degenerate modes member A's mode
-    7 and member B's mode 7 need not be the same physical mode. Pairing is by
-    index and the risk is made visible rather than corrected: ``overlaps``
-    carries ``|<u_member,i | u_committee,i>|`` per member per mode, which is
-    close to 1 for a clean match.
+    come back sorted ascending, so member A's mode 7 and member B's mode 7
+    need not be the same physical mode. Pairing is by index and the risk is
+    made visible rather than corrected: ``overlaps`` carries, per member per
+    mode, the overlap of member mode ``i`` with the committee modes of
+    ``i``'s (near-)degenerate group (:func:`degenerate_groups`,
+    :func:`subspace_overlaps`), close to 1 for a clean match. A group, not
+    the single mode ``i``: inside a degenerate subspace the basis is
+    arbitrary, so a one-to-one overlap is low even when the members agree
+    exactly. Without ``committee_frequencies`` every mode is its own group.
 
     ``VibrationsData.get_modes()`` returns Cartesian mode vectors that are
     unit-normalized in the MASS-WEIGHTED basis, not in plain Cartesian space
@@ -775,7 +838,7 @@ def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
         ``frequencies`` ({name: (3n,) signed cm^-1}), ``zpe``
         ({name: float}), ``n_imaginary`` ({name: int}, above the floor),
         ``std`` ((3n,) across members, ddof=1, over signed values),
-        ``overlaps`` ({name: (3n,) floats}).
+        ``overlaps`` ({name: (3n,) floats}), ``groups`` ((3n,) int).
     """
     from ase.vibrations import VibrationsData
 
@@ -784,6 +847,9 @@ def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
         return array / norms
 
     committee_unit = unit_rows(committee_modes)
+    groups = (np.arange(len(committee_unit)) if committee_frequencies is None
+              else degenerate_groups(committee_frequencies, rel_tol,
+                                     floor_cm1))
     per_displacement = _member_forces(vib, nfree)
     frequencies, zpe, overlaps, n_imaginary = {}, {}, {}, {}
 
@@ -800,8 +866,7 @@ def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
         n_imaginary[name] = int(imaginary.sum())
         zpe[name] = float(data.get_zero_point_energy())
         modes = unit_rows(np.asarray(data.get_modes()).reshape(len(raw), -1))
-        overlaps[name] = np.abs(
-            np.einsum("ij,ij->i", modes, committee_unit))
+        overlaps[name] = subspace_overlaps(modes, committee_unit, groups)
 
     stacked = np.stack([frequencies[name] for name in member_names])
     return {
@@ -810,6 +875,7 @@ def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
         "n_imaginary": n_imaginary,
         "std": stacked.std(axis=0, ddof=1),
         "overlaps": overlaps,
+        "groups": groups,
     }
 
 
@@ -818,13 +884,15 @@ def _write_committee_frequency_csv(path, frequencies, imaginary, member_names,
     """Signed frequencies (negative = negative curvature), headline first."""
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
-        header = ["mode_index", "frequency_committee_cm-1", "imaginary"]
+        header = ["mode_index", "frequency_committee_cm-1", "imaginary",
+                  "mode_group"]
         header += [f"{name}_cm-1" for name in member_names]
         header += ["frequency_member_std_cm-1"]
         header += [f"{name}_overlap" for name in member_names]
         writer.writerow(header)
         for index in range(len(frequencies)):
-            row = [index, float(frequencies[index]), bool(imaginary[index])]
+            row = [index, float(frequencies[index]), bool(imaginary[index]),
+                   int(block["groups"][index])]
             row += [float(block["frequencies"][name][index])
                     for name in member_names]
             row += [float(block["std"][index])]
@@ -1092,7 +1160,8 @@ def run_frequencies(
             block = member_frequencies(
                 vib, atoms, chosen, delta, nfree, direction, method,
                 committee.member_names, committee_modes,
-                floor_cm1=imaginary_floor)
+                floor_cm1=imaginary_floor,
+                committee_frequencies=signed_frequencies)
             _write_committee_frequency_csv(
                 output_path / f"{prefix}_committee_frequencies.csv",
                 signed_frequencies, imaginary, committee.member_names, block)
@@ -1108,17 +1177,23 @@ def run_frequencies(
                 "n_imaginary_per_member": block["n_imaginary"],
                 "frequency_member_std_cm-1": [float(v) for v in block["std"]],
                 "worst_mode_overlap": worst_overlap,
+                "degeneracy_rel_tol": DEGENERACY_REL_TOL,
+                "n_mode_groups": int(len(np.unique(block["groups"]))),
                 "mode_pairing_suspect": bool(
                     worst_overlap < MODE_OVERLAP_WARN),
             }
             if worst_overlap < MODE_OVERLAP_WARN:
                 logger.warning(
                     "committee frequencies: lowest mode overlap is %.3f, "
-                    "below %.2f. Modes are paired by index, so a "
-                    "near-degenerate pair whose order differs between members "
-                    "is compared like-for-unlike and its spread is not "
-                    "disagreement.",
-                    worst_overlap, MODE_OVERLAP_WARN)
+                    "below %.2f (each member mode against the committee "
+                    "modes of its degenerate group, gap <= %.0f%%). Modes "
+                    "are paired by index, so where a member's mode has a "
+                    "different character -- an ordering swap between "
+                    "non-degenerate modes, or a genuinely different "
+                    "eigenvector -- the row compares unlike modes and its "
+                    "spread is not disagreement.",
+                    worst_overlap, MODE_OVERLAP_WARN,
+                    100 * DEGENERACY_REL_TOL)
 
         if write_modes == "all":
             for index in range(len(frequencies)):
