@@ -853,10 +853,13 @@ records the model *name the caller declared*, which cannot see a changed
 checkpoint, head or task behind an unchanged name. So whenever a run reuses
 anything, it also re-evaluates the undisplaced geometry once with its own
 calculator and compares against the cached equilibrium forces, with
-`numpy.allclose(rtol=0, atol=1e-6)` in eV/Å. Not exact equality: a real MLIP
-on a GPU is not bit-reproducible between runs, while a different model
-differs by orders of magnitude (3.56 eV/Å for the EMT/Lennard-Jones pair
-above), so that tolerance separates the two cases cleanly. This check is
+`numpy.allclose(rtol=0, atol=1e-4)` in eV/Å. Not exact equality: a real MLIP
+on a GPU is not bit-reproducible between runs. The tolerance is measured,
+not assumed. Re-evaluating one 52-atom CH3/Ni(111) geometry on an L40S moved
+the forces by up to 2.6e-6 eV/Å for CHGNet (float32), 1.1e-6 for UMA `omol`,
+5.1e-7 for UMA `oc20` and 2e-15 for `mace-mh-1` (float64). The closest pair
+of different calculators, two heads of `mace-mh-1`, differed by 5.4e-2 eV/Å.
+1e-4 sits 40× above the worst noise and 540× below that gap. This check is
 structurally blind to `--delta` — undisplaced forces do not depend on the
 displacement size — which is why check 1 exists and runs first.
 

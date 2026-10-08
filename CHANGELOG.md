@@ -81,9 +81,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
   in the cached forces, so nothing can recover them. Behind that, a run that
   reuses anything also re-evaluates the undisplaced geometry with its own
   calculator and compares against the cached equilibrium forces
-  (`allclose(rtol=0, atol=1e-6)` eV/Å: a real MLIP on a GPU is not
-  bit-reproducible between runs, while a different model differs by orders
-  of magnitude) — that catches a changed checkpoint or head behind an
+  (`allclose(rtol=0, atol=1e-4)` eV/Å, set from measurement: a re-evaluation
+  moved CHGNet's forces by up to 2.6e-6 eV/Å on the GPU, while the closest
+  two different heads of one model differed by 5.4e-2; the first value,
+  1e-6, refused a real CHGNet restart) — that catches a changed checkpoint or head behind an
   unchanged model name, which a recorded name cannot see. Either mismatch
   **stops the run**, names the field and both values, and says to delete the
   cache or pass a different `--prefix`; the run record is completed as
@@ -134,6 +135,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
   directory regardless, so the stationary-point warning keeps working.
   Additive to the run record: new stage kind `freq`, schema version
   unchanged. See `docs/OUTPUTS.md#freq-run` and `docs/PYTHON_API.md`.
+  **Verified on cos-cluster against real MLIPs (2026-10-07)**, with the ASE
+  fix below applied. `singlepoint` and `optimize --max-steps 0` give the same
+  energy to the last bit (−262.13806234894844 eV, CH3*/Ni(111),
+  `mace-mh-1`/`omat_pbe`). The CO stretch under UMA `omol` is 2236.65
+  cm⁻¹, +93.7 from 2143. The CH3* → CH2* + H* transition state has exactly
+  one imaginary mode, 1032.8i cm⁻¹, on the departing H. The run-record fmax
+  lookup fired against a real `optimize` record. A three-member committee
+  sweep took 1.07–1.19× the slowest member, not the sum. A SIGTERM'd
+  committee run left no worker and no CUDA context. Full report in PR #54
+  and PR #56.
 
 - **`singlepoint run`, single-point evaluation.** Evaluates a structure once
   and stops: energy, per-atom forces, and stress, with no optimizer and no
@@ -431,6 +442,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   The `7net` MPtrj tags are unchanged pending checkpoint confirmation.
 
 ### Fixed
+
+- **`freq run` crashed on every constrained slab under ASE ≤ 3.28.** ASE's
+  `VibrationsData.todict` up to 3.28 compares the displaced indices with
+  `range(len(atoms))` through `np.allclose`, which raises a broadcast
+  `ValueError` whenever only some atoms are displaced. The crash came after
+  the whole sweep, so the record ended `failed` with the forces cached. Found
+  on cos-cluster, where all three MLIP envs carry ASE 3.28, on a 52-atom
+  CH3/Ni(111) slab with 4 free atoms; CI installs 3.29, which rewrote the
+  method, so no test saw it. `<prefix>_vibrations.json` is now written
+  directly in the same format, and `indices` is always an explicit list:
+  3.28 reads `null` as every atom, 3.29 as every unconstrained atom.
 
 - **Berendsen NPT compressibility default was in the wrong unit, so the cell
   responded 10⁴ times too slowly.** The default `4.57e-5` is water's
