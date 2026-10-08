@@ -134,6 +134,56 @@ def test_only_the_free_atoms_are_displaced_on_a_constrained_slab(tmp_path):
     assert results["n_modes"] == 24
 
 
+def _ase_328_todict(self):
+    """``VibrationsData.todict`` exactly as ASE 3.23-3.28 shipped it."""
+    if np.allclose(self._indices, range(len(self._atoms))):
+        indices = None
+    else:
+        indices = self.get_indices()
+    return {"atoms": self.get_atoms(), "hessian": self.get_hessian(),
+            "indices": indices}
+
+
+def test_a_constrained_slab_survives_ases_328_todict(tmp_path, monkeypatch):
+    """ASE <= 3.28's ``todict`` raises on any partial index set, so
+    ``data.write()`` killed every constrained-slab run after the whole
+    sweep (cos-cluster, CH3/Ni(111), 4 of 52 atoms free). CI carries ASE
+    3.29, so the old method is patched in to keep this test meaningful
+    whatever ASE is installed."""
+    monkeypatch.setattr(VibrationsData, "todict", _ase_328_todict)
+    with pytest.raises(ValueError):    # the patch reproduces the defect
+        _ase_328_todict(VibrationsData(
+            fcc111("Pt", size=(2, 2, 3)), np.eye(6).reshape(2, 3, 2, 3),
+            indices=[0, 1]))
+    atoms = fcc111("Pt", size=(2, 2, 3), vacuum=6.0)
+    bottom = [a.index for a in atoms if a.tag == 3]
+    atoms.set_constraint(FixAtoms(indices=bottom))
+    atoms.calc = EMT()
+    results = run_frequencies(atoms, output_dir=tmp_path)
+    assert results["n_modes"] == 24
+    assert (tmp_path / "freq_vibrations.json").stat().st_size > 0
+
+
+def test_the_vibrations_json_reloads_with_explicit_free_indices(tmp_path):
+    """The written file reloads through ``VibrationsData.read`` and names
+    the displaced atoms explicitly, never ``null``: 3.28 and 3.29 read
+    ``null`` as two different atom sets."""
+    atoms = fcc111("Pt", size=(2, 2, 3), vacuum=6.0)
+    bottom = [a.index for a in atoms if a.tag == 3]
+    atoms.set_constraint(FixAtoms(indices=bottom))
+    atoms.calc = EMT()
+    results = run_frequencies(atoms, output_dir=tmp_path)
+    path = tmp_path / "freq_vibrations.json"
+    raw = json.loads(path.read_text())
+    free = [i for i in range(len(atoms)) if i not in bottom]
+    assert raw["indices"] == free
+    assert raw["__ase_objtype__"] == "vibrationsdata"
+    data = VibrationsData.read(str(path))
+    assert list(data.get_indices()) == free
+    assert np.sort(np.abs(data.get_frequencies())) == pytest.approx(
+        np.sort(results["frequencies_cm-1"]), abs=1e-8)
+
+
 def test_the_summary_file_is_written_once_not_appended(n2, tmp_path):
     """vib.summary()'s log argument opens a PATH in append mode. Passing a
     path twice would write two tables into one file."""

@@ -793,6 +793,38 @@ def _write_committee_frequency_csv(path, magnitudes, imaginary, member_names,
             writer.writerow(row)
 
 
+def _write_vibrations_json(handle, data):
+    """Write ``data`` in ``VibrationsData.write()``'s own format, safely.
+
+    Not ``data.write(handle)``, because ``VibrationsData.todict`` in
+    ASE <= 3.28 opens with ``np.allclose(self._indices,
+    range(len(self._atoms)))``, which raises ``ValueError: operands could
+    not be broadcast`` whenever only some atoms were displaced -- that is,
+    on every constrained slab, the main use of this command. Found in the
+    cos-cluster verification: all three MLIP envs there carry ASE 3.28, and
+    ``freq`` failed on a 52-atom CH3/Ni(111) slab with 4 free atoms after
+    finishing the whole sweep. ASE 3.29 rewrote ``todict``; the CI env gets
+    3.29, which is why no test caught it. ``pyproject.toml`` allows
+    ``ase>=3.23``.
+
+    The payload is the same three keys plus the ``__ase_objtype__`` tag
+    that ``ase.utils.jsonable`` adds, so ``VibrationsData.read`` still
+    reloads it. ``indices`` is always written as an explicit list, never
+    ``None``: ASE 3.28 reads ``None`` as "every atom" and 3.29 as "every
+    atom not held by a constraint", so ``None`` would mean different things
+    to different readers.
+    """
+    from ase.io.jsonio import encode
+
+    payload = {
+        "atoms": data.get_atoms(),
+        "hessian": data.get_hessian(),
+        "indices": [int(index) for index in data.get_indices()],
+        "__ase_objtype__": "vibrationsdata",
+    }
+    handle.write(encode(payload))
+
+
 def _write_frequency_csv(path, frequencies, energies_eV, imaginary):
     """Magnitudes plus a boolean, never a signed number.
 
@@ -1049,7 +1081,7 @@ def run_frequencies(
         energy_magnitudes = np.abs(energies)
 
         with vibrations_json.open("w") as handle:
-            data.write(handle)
+            _write_vibrations_json(handle, data)
         # A handle in write mode, not a path: summary()'s log argument opens
         # a path with mode 'a', so a restart would write a second table into
         # the same file and the result would read as twice as many modes.
