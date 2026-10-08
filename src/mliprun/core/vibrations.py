@@ -47,12 +47,24 @@ MODE_OVERLAP_WARN = 0.9
 #: Not exact equality, deliberately. A real MLIP on a GPU is not
 #: bit-reproducible between runs -- the reduction order inside the kernels is
 #: not fixed -- so an exact comparison would reject the legitimate restart
-#: this cache exists to make cheap. A DIFFERENT model, on the other hand,
-#: disagrees by orders of magnitude: the EMT/Lennard-Jones pair that exposed
-#: the bug differs by ~1 eV/A on N2, six orders above this. 1e-6 eV/A
-#: therefore separates "same calculator, re-evaluated" from "someone else's
-#: cache" cleanly, and is itself far below any force anyone reports.
-CACHE_IDENTITY_ATOL = 1e-6
+#: this cache exists to make cheap.
+#:
+#: Set from measurement (Task 15, cos-cluster L40S, 52-atom CH3/Ni(111) and
+#: CO; 15 evaluations of one geometry over 3 processes per model). Same
+#: calculator, re-evaluated, max |dF| over all atoms:
+#:
+#:     mace-mh-1 / omat_pbe (float64)   2.3e-15 eV/A
+#:     uma-s-1p2 / oc20                 5.1e-7
+#:     uma-s-1p2 / omol (CO)            1.1e-6
+#:     chgnet (float32)                 2.6e-6
+#:
+#: The previous value, 1e-6, refused a real CHGNet restart at 2.31e-6 eV/A.
+#: The closest pair of DIFFERENT calculators measured on the same geometry
+#: was two heads of one model, mace-mh-1 omat_pbe vs mp_pbe_refit_add, at
+#: 5.4e-2 eV/A (other heads: 0.19-0.62; MACE vs UMA: 0.32). 1e-4 sits 40x
+#: above the worst noise and 540x below the closest different head. Float32
+#: noise grows with system size, which is what the margin above it is for.
+CACHE_IDENTITY_ATOL = 1e-4
 
 
 class FrequencyCacheError(RuntimeError):

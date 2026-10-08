@@ -75,9 +75,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
   in the cached forces, so nothing can recover them. Behind that, a run that
   reuses anything also re-evaluates the undisplaced geometry with its own
   calculator and compares against the cached equilibrium forces
-  (`allclose(rtol=0, atol=1e-6)` eV/Å: a real MLIP on a GPU is not
-  bit-reproducible between runs, while a different model differs by orders
-  of magnitude) — that catches a changed checkpoint or head behind an
+  (`allclose(rtol=0, atol=1e-4)` eV/Å, set from measurement: a re-evaluation
+  moved CHGNet's forces by up to 2.6e-6 eV/Å on the GPU, while the closest
+  two different heads of one model differed by 5.4e-2; the first value,
+  1e-6, refused a real CHGNet restart) — that catches a changed checkpoint or head behind an
   unchanged model name, which a recorded name cannot see. Either mismatch
   **stops the run**, names the field and both values, and says to delete the
   cache or pass a different `--prefix`; the run record is completed as
