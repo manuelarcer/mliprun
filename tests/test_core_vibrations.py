@@ -430,6 +430,33 @@ def test_a_restart_whose_forces_moved_more_than_the_tolerance_is_refused(
         run_frequencies(shifted, output_dir=tmp_path, model_name="emt")
 
 
+def test_a_restart_at_the_measured_float32_noise_is_accepted(n2, tmp_path):
+    """Measured on cos-cluster (Task 15): re-evaluating one CH3/Ni(111)
+    geometry 15 times moved CHGNet's forces (float32) by up to 2.6e-6 eV/A
+    and UMA omol's by 1.1e-6 -- both above the old 1e-6 tolerance, which
+    refused a real CHGNet restart at 2.31e-6. 3e-6 stands in for that."""
+    run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+    noisy = n2.copy()
+    noisy.calc = _OffsetEMT(3e-6)
+    second = run_frequencies(noisy, output_dir=tmp_path, model_name="emt")
+    assert second["n_force_calls"] == 0
+
+
+def test_a_cache_from_the_closest_measured_other_head_is_refused(
+        n2, tmp_path):
+    """The smallest gap measured between two DIFFERENT calculators: two
+    heads of mace-mh-1 (omat_pbe vs mp_pbe_refit_add) on the same CH3/Ni(111)
+    geometry differ by 5.4e-2 eV/A. Anything that close must still be
+    refused."""
+    from mliprun.core.vibrations import FrequencyCacheError
+
+    run_frequencies(n2, output_dir=tmp_path, model_name="emt")
+    other_head = n2.copy()
+    other_head.calc = _OffsetEMT(5.4e-2)
+    with pytest.raises(FrequencyCacheError):
+        run_frequencies(other_head, output_dir=tmp_path, model_name="emt")
+
+
 def test_a_different_prefix_keeps_the_two_runs_apart(n2, tmp_path):
     """The remedy the error message names has to actually work."""
     from ase.calculators.lj import LennardJones
