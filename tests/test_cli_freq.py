@@ -165,3 +165,53 @@ def test_output_dir_does_not_break_the_fmax_lookup(
     results = record["stages"][0]["results"]
     assert results["fmax_expectation_source"] == "run_record"
     assert results["fmax_expectation"] == pytest.approx(0.01)
+
+
+def test_a_negative_imaginary_floor_is_rejected(structure, monkeypatch):
+    _use_emt(monkeypatch)
+    result = runner.invoke(app, ["run", "--structure", str(structure),
+                                 "--imaginary-floor", "-5"])
+    assert result.exit_code == 1
+    assert "--imaginary-floor" in result.stdout
+    assert not (structure.parent / "freq").exists()   # no force call made
+
+
+def test_noise_below_the_floor_is_reported_but_not_counted(
+        tmp_path, monkeypatch):
+    """Relaxed H2O under EMT at nfree=4 leaves near-zero modes with negative
+    curvature; the echo must say they exist and that they were not
+    counted, and must not raise the imaginary-mode warning."""
+    from ase.calculators.emt import EMT
+    from ase.optimize import BFGS
+
+    _use_emt(monkeypatch)
+    atoms = molecule("H2O")
+    atoms.center(vacuum=5.0)
+    atoms.calc = EMT()
+    BFGS(atoms, logfile=None).run(fmax=1e-6)
+    path = tmp_path / "POSCAR"
+    write(path, atoms, format="vasp")
+    result = runner.invoke(app, ["run", "--structure", str(path),
+                                 "--nfree", "4"])
+    assert result.exit_code == 0, result.stdout
+    record = json.loads((tmp_path / "mliprun_run.json").read_text())
+    stage = record["stages"][-1]["results"]
+    assert stage["n_imaginary"] == 0 < stage["n_imaginary_raw"]
+    assert "below 10 cm⁻¹" in result.stdout
+    assert "imaginary mode(s) above" not in result.stdout
+
+
+def test_a_counted_imaginary_mode_names_the_floor(tmp_path, monkeypatch):
+    _use_emt(monkeypatch)
+    atoms = molecule("N2")
+    atoms.center(vacuum=5.0)
+    atoms.positions[1][2] += 1.6
+    path = tmp_path / "POSCAR"
+    write(path, atoms, format="vasp")
+    result = runner.invoke(app, ["run", "--structure", str(path),
+                                 "--imaginary-floor", "25"])
+    assert result.exit_code == 0, result.stdout
+    record = json.loads((tmp_path / "mliprun_run.json").read_text())
+    assert record["parameters"]["imaginary_floor_cm-1"]["value"] == 25.0
+    assert record["stages"][-1]["results"]["n_imaginary"] >= 1
+    assert "imaginary mode(s) above 25 cm⁻¹" in result.stdout

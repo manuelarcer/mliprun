@@ -28,13 +28,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - **`freq run`, vibrational frequencies by finite differences.** Computes
   frequencies from `ase.vibrations.Vibrations`, reporting the imaginary-mode
   count and the zero-point energy (ZPE) alongside them. Frequencies are
-  written as a magnitude plus a boolean, never a signed number — the
-  convention of writing an imaginary mode as negative is a silent trap for
-  anything that sums or sorts the column. A mode is imaginary when
-  `abs(energy.imag) > 1e-8` eV, matching ASE's own `im_tol` and applied to
-  the same quantity ASE applies it to, so `<prefix>_frequencies.csv` and
-  ASE's own `<prefix>_summary.txt` (written from the same run) can never
-  disagree about which modes are imaginary. ZPE sums the real modes only:
+  **signed**: a mode with negative curvature is written negative, in the
+  CSV, the run record and every committee member's column, so the column
+  reads correctly on its own (Juan's ruling after the cos-cluster
+  verification, 2026-10-07; magnitudes plus a flag had shown CHGNet's two
+  633i cm⁻¹ modes as "633"). The sign follows ASE's own `im_tol`
+  (`abs(energy.imag) > 1e-8` eV, on the mode energy), so it matches ASE's
+  `<prefix>_summary.txt`; that count is `n_imaginary_raw`. A mode COUNTS as
+  imaginary (`n_imaginary`, the `imaginary` column, the default
+  trajectories) only above `--imaginary-floor`, default 10 cm⁻¹: the raw
+  rule alone called the three translations of a relaxed CO, at 0.002–0.013
+  cm⁻¹, imaginary. With a committee, each member's count is
+  `n_imaginary_per_member`, and the per-mode spread is over signed values.
+  ZPE sums the real modes only:
   an imaginary mode contributes exactly zero, so a structure carrying one
   has no well-defined zero-point energy.
   Which atoms are displaced comes from the structure's own `FixAtoms`

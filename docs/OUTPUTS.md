@@ -358,14 +358,15 @@ number instead of the qualified one it is:
 |--------|---------|
 | `mode_index` | As in `<prefix>_frequencies.csv` |
 | `frequency_committee_cm-1` | The headline value, from the **mean** forces — one Hessian, not the mean of the per-member frequencies below (those are different numbers, D8 in the design note) |
-| `imaginary` | bool, for the committee (headline) value |
-| `<member>_cm-1` | One column per member, magnitude |
-| `frequency_member_std_cm-1` | Standard deviation across members, `ddof=1` |
+| `imaginary` | bool, for the committee (headline) value, above the floor |
+| `<member>_cm-1` | One column per member, **signed** by that member's own Hessian (negative = negative curvature) |
+| `frequency_member_std_cm-1` | Standard deviation across members over the **signed** values, `ddof=1`: a mode one member curves up and another down is a large spread, not a small one |
 | `<member>_overlap` | One column per member — see above |
 
 Per-member ZPE, plus its mean and standard deviation across members, is in
 the run record's `results.committee_frequencies`, not in the CSV:
 `zpe_eV_per_member` (one value per member), `zpe_mean_eV`, `zpe_std_eV`,
+`n_imaginary_per_member` (each member's own count above the floor),
 `frequency_member_std_cm-1` (the same values as the CSV column),
 `worst_mode_overlap`, and `mode_pairing_suspect`.
 
@@ -651,7 +652,7 @@ one displacement sweep additionally yields one Hessian per member: see
 
 | File | Format | Contents |
 |------|--------|----------|
-| `<prefix>_frequencies.csv` | CSV | One row per mode: magnitude, energy, imaginary flag (see below) |
+| `<prefix>_frequencies.csv` | CSV | One row per mode: signed frequency, signed energy, imaginary flag (see below) |
 | `<prefix>_summary.txt` | text | ASE's own `vib.summary()` table — the format users already recognise from other ASE-driven work |
 | `<prefix>_vibrations.json` | JSON | `VibrationsData.write()` output: the full Hessian and the atoms. Reloads through `VibrationsData.read` (see [PYTHON_API.md](PYTHON_API.md#vibrational-frequencies)) |
 | `<prefix>/` | folder | ASE's per-displacement JSON cache. An interrupted sweep resumes at the displacement it stopped on. Entries are named by atom, axis and sign only — nothing about the displacement size or the model — so a reusing run verifies the cache is its own first; see [The displacement cache](#the-displacement-cache-and-what-it-is-checked-against) |
@@ -685,33 +686,39 @@ keeps working.
 | Column | Meaning |
 |--------|---------|
 | `mode_index` | 0-based, in ASE's ascending-eigenvalue order |
-| `frequency_cm-1` | **magnitude**, always positive |
-| `energy_meV` | The same mode's energy, in meV — a **magnitude** like `frequency_cm-1`, positive for an imaginary mode too |
-| `imaginary` | bool |
+| `frequency_cm-1` | **signed**: negative for a mode with negative curvature |
+| `energy_meV` | The same mode's energy, in meV, with the same sign |
+| `imaginary` | bool: negative curvature **above the floor** (`--imaginary-floor`, default 10 cm⁻¹) |
 
-**The frequency column is a magnitude plus a boolean, never a signed
-number.** Writing an imaginary frequency as a negative one is the widespread
-convention elsewhere, and it is a silent trap here: anything that sums or
-sorts this column would treat an imaginary mode as an unusually soft real
-one rather than flagging it. `energy_meV` follows the same rule: it is the
-same mode's energy magnitude, so the two numeric columns on a row always
-describe the same mode in two units (`energy_meV = frequency_cm-1 ×
-ase.units.invcm × 1000`), imaginary rows included.
+**The frequency column is signed.** A mode with negative curvature is
+written as a negative frequency, the convention VASP, Gaussian and most
+papers use, so the column reads correctly on its own. `energy_meV` carries
+the same sign, so the two numeric columns on a row always describe the same
+mode in two units (`energy_meV = frequency_cm-1 × ase.units.invcm × 1000`),
+negative rows included. (Before 2026-10-07 both columns were magnitudes
+plus the flag; a reader who ignored the flag saw an imaginary mode as a
+soft real one.)
 
-A mode counts as imaginary when `abs(energy.imag) > 1e-8` eV — the same
-threshold ASE's own `im_tol` uses in
-`VibrationsData._tabulate_from_energies`, applied to the same quantity (the
-mode **energy**, never the frequency in cm⁻¹). This alignment matters
-because `freq` writes both this CSV and ASE's own `<prefix>_summary.txt`
-from the same run; a mismatched threshold, or the same threshold applied to
-a different quantity, would let the two files disagree about which modes
-are imaginary. It does **not** settle whether a *larger* tolerance should
-suppress genuine near-zero modes — a frustrated translation or rotation on
-a slab can pick up an arbitrary tiny sign from finite differences, so a mode
-at a few cm⁻¹ may be numerical noise rather than real negative curvature.
-That is an open scientific question (recorded in the design note), and it
-bears directly on any "exactly one imaginary mode" transition-state check
-built on this output.
+**Two rules decide a mode, one for the sign and one for counting.**
+
+- *Sign*: `abs(energy.imag) > 1e-8` eV, the threshold ASE's own `im_tol`
+  uses in `VibrationsData._tabulate_from_energies`, on the same quantity
+  (the mode **energy**). `<prefix>_summary.txt`, ASE's own table, marks
+  exactly these modes with an `i`; the run record counts them as
+  `n_imaginary_raw`.
+- *Counting*: a negative mode is **imaginary** only when its magnitude is
+  above the floor, `--imaginary-floor` (default 10 cm⁻¹, recorded as
+  `parameters.imaginary_floor_cm-1`). Only these are counted in
+  `n_imaginary`, flagged in the `imaginary` column, and written as
+  trajectories under the default `--write-modes imaginary`.
+
+A negative value below the floor is numerical noise around zero. The
+measured case: a relaxed CO under UMA `omol` has its three translations at
+−0.013, −0.004 and −0.002 cm⁻¹ (0.3–1.6 µeV). The raw rule alone counted
+them as three imaginary modes and wrote three trajectories of noise; the
+genuine transition-state mode of CH3* → CH2* + H* on Ni(111) sat at
+−1032.8 cm⁻¹. A transition-state check ("exactly one imaginary mode") uses
+`n_imaginary`. `--imaginary-floor 0` restores the raw rule.
 
 **ZPE counts the real modes only.** ASE's zero-point energy sums the real
 parts of the mode energies, so an imaginary mode contributes exactly zero to
@@ -1056,8 +1063,9 @@ Status is always `completed` on success — there is nothing to converge — or
 `failed`. See [`singlepoint run`](#singlepoint-run) above for what each key
 means.
 
-**freq** — `n_modes`, `n_imaginary`, `frequencies_cm-1` (list, magnitudes),
-`imaginary_mask` (list, bool), `zpe_eV` (real modes only, see [`freq
+**freq** — `n_modes`, `n_imaginary` (above the floor), `n_imaginary_raw`
+(ASE's 1e-8 eV rule), `imaginary_floor_cm-1`, `frequencies_cm-1` (list,
+signed), `imaginary_mask` (list, bool, above the floor), `zpe_eV` (real modes only, see [`freq
 run`](#freq-run) above), `fmax_at_input_free_eV_per_A`,
 `fmax_at_input_all_eV_per_A`, `fmax_expectation`,
 `fmax_expectation_source`, `fmax_warning`, `n_displaced_atoms`,

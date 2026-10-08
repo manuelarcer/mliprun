@@ -420,6 +420,74 @@ class _AxisSplittingFakeCommittee(Calculator):
         return stats
 
 
+class _OppositeCurvatureFakeCommittee(_AxisSplittingFakeCommittee):
+    """``member_a`` stiffens x; ``member_b`` adds the same spring with the
+    opposite sign, so along x it curves DOWN: a negative eigenvalue far above
+    the imaginary floor, in one member only. The consensus cancels to EMT."""
+
+    def _evaluate(self, atoms):
+        from ase.calculators.emt import EMT
+
+        from mliprun.core.committee.calculator import (
+            committee_statistics,
+            free_component_mask,
+        )
+
+        reference = atoms.copy()
+        reference.calc = EMT()
+        base = np.asarray(reference.get_forces(), dtype=float)
+        energy = float(reference.get_potential_energy())
+        offset = atoms.get_positions() - self._reference
+        f_a = base.copy()
+        f_a[:, 0] -= self._stiffness * offset[:, 0]      # curves up along x
+        f_b = base.copy()
+        f_b[:, 0] += self._stiffness * offset[:, 0]      # curves down along x
+        stacked = np.stack([f_a, f_b])
+        free_mask, unhandled = free_component_mask(atoms)
+        stats = committee_statistics([energy, energy], stacked,
+                                     free_mask=free_mask)
+        stats["free_mask"] = free_mask
+        stats["unhandled_constraints"] = unhandled
+        stats["energies"] = {"member_a": energy, "member_b": energy}
+        stats["forces_per_member"] = stacked
+        self.latest = stats
+        return stats
+
+
+def test_one_members_imaginary_mode_is_signed_and_counted(tmp_path):
+    """Task 15: CHGNet's own Hessian had two modes at 633i cm^-1 at the MACE
+    minimum, written as "633" beside MACE's real 159 with no flag anywhere.
+    Each member's frequencies are now signed by its own Hessian and its
+    imaginary count is in the record."""
+    from mliprun.core.vibrations import IMAGINARY_FLOOR_CM1, run_frequencies
+
+    atoms = molecule("N2")
+    atoms.center(vacuum=5.0)
+    atoms.calc = _OppositeCurvatureFakeCommittee(
+        atoms.get_positions().copy())
+    results = run_frequencies(atoms, output_dir=tmp_path,
+                              committee=atoms.calc)
+
+    block = results["committee_frequencies"]
+    assert block["n_imaginary_per_member"]["member_a"] == 0
+    assert block["n_imaginary_per_member"]["member_b"] >= 1
+    rows = list(csv.DictReader(
+        (tmp_path / "freq_committee_frequencies.csv").open()))
+    member_b = [float(row["member_b_cm-1"]) for row in rows]
+    member_a = [float(row["member_a_cm-1"]) for row in rows]
+    assert min(member_b) < -IMAGINARY_FLOOR_CM1
+    assert min(member_a) > -IMAGINARY_FLOOR_CM1
+    # The spread is over signed values: a mode one member curves up and the
+    # other down is the largest disagreement in the table, not zero.
+    worst = int(np.argmin(member_b))
+    assert float(rows[worst]["frequency_member_std_cm-1"]) == pytest.approx(
+        np.std([member_a[worst], member_b[worst]], ddof=1), rel=1e-9)
+    # Opposite signs: |a - b| >= |b|, so the std is at least |b|/sqrt(2).
+    # Over magnitudes it could have been ~0.
+    assert float(rows[worst]["frequency_member_std_cm-1"]) >= abs(
+        member_b[worst]) / np.sqrt(2) * (1 - 1e-9)
+
+
 def test_a_rotated_mode_basis_is_caught_by_the_overlap_not_by_the_spread(
         tmp_path, caplog):
     """The failure the overlap column exists to make visible, through the
