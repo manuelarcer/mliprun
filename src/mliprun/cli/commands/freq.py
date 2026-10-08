@@ -26,6 +26,7 @@ from mliprun.core.committee.config import CommitteeConfigError, load_committee
 from mliprun.core.committee.remote import DEFAULT_CALC_TIMEOUT_S
 from mliprun.core.run_record import RunContext
 from mliprun.core.vibrations import (
+    IMAGINARY_FLOOR_CM1,
     VALID_DIRECTIONS,
     VALID_METHODS,
     VALID_NFREE,
@@ -94,6 +95,12 @@ def run(
         "imaginary", "--write-modes",
         help="Which modes get an animated trajectory: none, imaginary "
              "(default) or all."),
+    imaginary_floor: float = typer.Option(
+        IMAGINARY_FLOOR_CM1, "--imaginary-floor",
+        help="cm⁻¹. A negative-curvature mode counts as imaginary only "
+             "above this magnitude; below it, it is numerical noise around "
+             "zero (still written with its negative sign). 0 counts every "
+             "mode ASE's own table marks imaginary."),
     expect_fmax: float = typer.Option(
         None, "--expect-fmax",
         help="Warn when fmax at the input geometry exceeds this (eV/Å). "
@@ -132,6 +139,10 @@ def run(
     if write_modes not in ("none", "imaginary", "all"):
         typer.echo("❌ --write-modes must be none, imaginary or all; "
                    f"got {write_modes!r}.")
+        raise typer.Exit(1)
+    if not imaginary_floor >= 0:
+        typer.echo(f"❌ --imaginary-floor must be >= 0 cm⁻¹, "
+                   f"got {imaginary_floor}.")
         raise typer.Exit(1)
     try:
         chosen = parse_indices(indices, n_atoms=len(atoms))
@@ -221,6 +232,7 @@ def run(
                 direction=direction,
                 method=method,
                 write_modes=write_modes,
+                imaginary_floor=imaginary_floor,
                 expect_fmax=expect_fmax,
                 structure_dir=structure.parent,
                 run_context=run_context,
@@ -263,9 +275,24 @@ def run(
             f"{results['fmax_expectation_source']}. A geometry that is not a "
             f"stationary point produces spurious imaginary modes; the run "
             f"continued.")
+    floor = results["imaginary_floor_cm-1"]
     if results["n_imaginary"]:
-        typer.echo(f"\n⚠️  {results['n_imaginary']} imaginary mode(s). ZPE "
+        typer.echo(f"\n⚠️  {results['n_imaginary']} imaginary mode(s) above "
+                   f"{floor:g} cm⁻¹, written as negative frequencies. ZPE "
                    f"above counts the real modes only.")
+    below = results["n_imaginary_raw"] - results["n_imaginary"]
+    if below:
+        typer.echo(f"   {below} more mode(s) with negative curvature below "
+                   f"{floor:g} cm⁻¹: numerical noise around zero, not "
+                   f"counted (--imaginary-floor).")
+    committee_block = results.get("committee_frequencies")
+    if committee_block and any(committee_block["n_imaginary_per_member"]
+                               .values()):
+        per_member = ", ".join(
+            f"{name} {count}" for name, count
+            in committee_block["n_imaginary_per_member"].items())
+        typer.echo(f"   Imaginary modes per member (own Hessian): "
+                   f"{per_member}.")
     if results["unhandled_constraints"]:
         typer.echo(
             f"\n⚠️  Constraint type(s) "

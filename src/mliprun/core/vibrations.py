@@ -30,11 +30,23 @@ VALID_NFREE = (2, 4)
 VALID_DIRECTIONS = ("central", "forward", "backward")
 VALID_METHODS = ("standard", "frederiksen")
 
-#: Imaginary-mode threshold, matching ASE's own `im_tol` in
+#: Sign threshold, matching ASE's own `im_tol` in
 #: `VibrationsData._tabulate_from_energies`. Applied to the mode ENERGY in
-#: eV, not to the frequency in cm^-1, so that <prefix>_frequencies.csv and
-#: <prefix>_summary.txt can never classify the same mode differently.
+#: eV, not to the frequency in cm^-1. A mode above it has a negative
+#: eigenvalue, and is written with a NEGATIVE frequency and energy. This
+#: decides the sign only; whether the mode COUNTS as imaginary is
+#: :data:`IMAGINARY_FLOOR_CM1`'s job. <prefix>_summary.txt, ASE's own table,
+#: marks exactly the modes this flags (`n_imaginary_raw`).
 IMAGINARY_ENERGY_TOL_EV = 1e-8
+
+#: Default floor, in cm^-1, below which a negative-curvature mode is
+#: numerical noise around zero, not an imaginary mode. Ruled by Juan,
+#: 2026-10-07, after Task 15: the 1e-8 eV rule alone flagged the three
+#: translations of a relaxed CO (UMA omol) as imaginary at 0.002-0.013
+#: cm^-1 (0.3-1.6 micro-eV) and wrote three trajectories of noise, while
+#: the real transition-state mode of CH3* -> CH2* + H* sat at 1032.8i.
+#: Overridable per run with --imaginary-floor; 0 restores the raw rule.
+IMAGINARY_FLOOR_CM1 = 10.0
 
 #: Mode-overlap below which index pairing is reported as suspect. A
 #: diagnostic trigger for a warning, not a scientific verdict -- the overlaps
@@ -689,8 +701,47 @@ def _reject_a_foreign_cache(vib, atoms, cache_dir):
         f"different --prefix to give this run its own cache.")
 
 
+def classify_modes(energies, frequencies, floor_cm1=IMAGINARY_FLOOR_CM1):
+    """Signed frequencies and energies, and the two imaginary masks.
+
+    ASE returns each mode's frequency and energy as the complex square root
+    of a real eigenvalue: purely real for a non-negative eigenvalue, purely
+    imaginary for a negative one. The modulus (``np.abs``) recovers the value
+    in both cases, so the sign is attached from the classification instead
+    of from ``.real``/``.imag``, which picks a zero component for one of the
+    two cases.
+
+    Parameters
+    ----------
+    energies, frequencies : array-like of complex
+        ``VibrationsData.get_energies()`` (eV) and ``get_frequencies()``
+        (cm^-1), in the same mode order.
+    floor_cm1 : float
+        A negative-curvature mode counts as imaginary only above this
+        magnitude. 0 reproduces the raw rule.
+
+    Returns
+    -------
+    tuple
+        ``(signed_frequencies_cm1, signed_energies_eV, raw, imaginary)``.
+        ``raw`` is the 1e-8 eV sign rule (ASE's own table); ``imaginary`` is
+        ``raw`` above the floor, the set that is counted, reported and
+        written as trajectories. A negative value below the floor is noise
+        around zero, never counted.
+    """
+    energies = np.asarray(energies)
+    frequencies = np.asarray(frequencies)
+    raw = np.abs(energies.imag) > IMAGINARY_ENERGY_TOL_EV
+    sign = np.where(raw, -1.0, 1.0)
+    signed_frequencies = sign * np.abs(frequencies)
+    signed_energies = sign * np.abs(energies)
+    imaginary = raw & (np.abs(frequencies) > float(floor_cm1))
+    return signed_frequencies, signed_energies, raw, imaginary
+
+
 def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
-                       member_names, committee_modes):
+                       member_names, committee_modes,
+                       floor_cm1=IMAGINARY_FLOOR_CM1):
     """Per-member frequencies, ZPE, per-mode spread and mode overlaps.
 
     Each member's Hessian is diagonalized independently and its eigenvalues
@@ -710,25 +761,21 @@ def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
     per row before the dot product so that a clean match reads as 1.0
     regardless of atomic mass.
 
-    Frequency magnitude uses the complex modulus (``np.abs``), exactly like
-    the headline column in :func:`run_frequencies`: a mode's ASE frequency is
-    the complex square root of a real eigenvalue, so exactly one of
-    ``.real``/``.imag`` is nonzero and ``np.abs`` always recovers it with no
-    separate classification step. A mode ENERGY threshold
-    (``IMAGINARY_ENERGY_TOL_EV``, the rule the headline ``imaginary`` column
-    uses) only matters for *labelling* a mode real or imaginary for display;
-    it changes nothing about its magnitude. This path does not label modes
-    per member -- ``_write_committee_frequency_csv`` writes one ``imaginary``
-    column, from the committee's own (headline) classification, and every
-    member's magnitude is comparable to it because both use the same modulus
-    expression.
+    Each member's frequencies are SIGNED by that member's own Hessian,
+    through :func:`classify_modes`, the same rule as the headline column.
+    They used to be magnitudes with no per-member flag, so in Task 15
+    CHGNet's two imaginary modes at 633i cm^-1 were written as "633" next
+    to MACE's real 159 and were invisible; the spread is now taken over
+    signed values, so a member that curves the other way reads as the
+    disagreement it is.
 
     Returns
     -------
     dict
-        ``frequencies`` ({name: (3n,) magnitudes}), ``zpe`` ({name: float}),
-        ``std`` ((3n,) across members, ddof=1), ``overlaps``
-        ({name: (3n,) floats}).
+        ``frequencies`` ({name: (3n,) signed cm^-1}), ``zpe``
+        ({name: float}), ``n_imaginary`` ({name: int}, above the floor),
+        ``std`` ((3n,) across members, ddof=1, over signed values),
+        ``overlaps`` ({name: (3n,) floats}).
     """
     from ase.vibrations import VibrationsData
 
@@ -738,7 +785,7 @@ def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
 
     committee_unit = unit_rows(committee_modes)
     per_displacement = _member_forces(vib, nfree)
-    frequencies, zpe, overlaps = {}, {}, {}
+    frequencies, zpe, overlaps, n_imaginary = {}, {}, {}, {}
 
     for position, name in enumerate(member_names):
         forces = {key: value[position]
@@ -747,7 +794,10 @@ def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
                                    direction=direction, method=method)
         data = VibrationsData.from_2d(atoms, hessian, indices)
         raw = np.asarray(data.get_frequencies())
-        frequencies[name] = np.abs(raw)
+        signed, _, _, imaginary = classify_modes(
+            data.get_energies(), raw, floor_cm1)
+        frequencies[name] = signed
+        n_imaginary[name] = int(imaginary.sum())
         zpe[name] = float(data.get_zero_point_energy())
         modes = unit_rows(np.asarray(data.get_modes()).reshape(len(raw), -1))
         overlaps[name] = np.abs(
@@ -757,13 +807,15 @@ def member_frequencies(vib, atoms, indices, delta, nfree, direction, method,
     return {
         "frequencies": frequencies,
         "zpe": zpe,
+        "n_imaginary": n_imaginary,
         "std": stacked.std(axis=0, ddof=1),
         "overlaps": overlaps,
     }
 
 
-def _write_committee_frequency_csv(path, magnitudes, imaginary, member_names,
+def _write_committee_frequency_csv(path, frequencies, imaginary, member_names,
                                    block):
+    """Signed frequencies (negative = negative curvature), headline first."""
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         header = ["mode_index", "frequency_committee_cm-1", "imaginary"]
@@ -771,8 +823,8 @@ def _write_committee_frequency_csv(path, magnitudes, imaginary, member_names,
         header += ["frequency_member_std_cm-1"]
         header += [f"{name}_overlap" for name in member_names]
         writer.writerow(header)
-        for index in range(len(magnitudes)):
-            row = [index, float(magnitudes[index]), bool(imaginary[index])]
+        for index in range(len(frequencies)):
+            row = [index, float(frequencies[index]), bool(imaginary[index])]
             row += [float(block["frequencies"][name][index])
                     for name in member_names]
             row += [float(block["std"][index])]
@@ -782,15 +834,16 @@ def _write_committee_frequency_csv(path, magnitudes, imaginary, member_names,
 
 
 def _write_frequency_csv(path, frequencies, energies_eV, imaginary):
-    """Magnitudes plus a boolean, never a signed number.
+    """Signed values plus a boolean.
 
-    Writing an imaginary frequency as a negative one is the widespread
-    convention and a silent trap for anything that sums or sorts the column.
-
-    Both numeric columns are magnitudes, and for the same reason: an
-    imaginary mode's energy is purely imaginary, so taking ``.real`` of it
-    wrote 0.0 meV next to a nonzero frequency on the same row. Caller passes
-    ``np.abs(energies)``, matching ``np.abs(frequencies)``.
+    A negative-curvature mode is written NEGATIVE in both numeric columns,
+    the convention VASP, Gaussian and most papers use, so the column is
+    readable on its own (Juan's ruling, 2026-10-07; magnitudes plus a flag
+    read an imaginary mode as a soft real one whenever the flag was
+    ignored). ``imaginary`` says whether it COUNTS: a negative value below
+    the floor is noise around zero. Both columns come from
+    :func:`classify_modes`, so a row's energy is always its frequency in
+    other units, sign included.
     """
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
@@ -813,6 +866,7 @@ def run_frequencies(
     direction: str = "central",
     method: str = "standard",
     write_modes: str = "imaginary",
+    imaginary_floor=IMAGINARY_FLOOR_CM1,
     expect_fmax=None,
     structure_dir=None,
     run_context=None,
@@ -842,6 +896,9 @@ def run_frequencies(
         Passed to :func:`assemble_hessian` and to ASE's own reader.
     write_modes : str
         ``'none'``, ``'imaginary'`` or ``'all'``.
+    imaginary_floor : float
+        cm^-1. A negative-curvature mode counts as imaginary only above this
+        magnitude; see :data:`IMAGINARY_FLOOR_CM1`.
     expect_fmax : float, optional
         Warn when fmax at the input geometry, over the free force components,
         exceeds this. Never refuses.
@@ -858,6 +915,9 @@ def run_frequencies(
         raise ValueError(
             f"write_modes must be 'none', 'imaginary' or 'all', "
             f"got {write_modes!r}")
+    if not imaginary_floor >= 0:
+        raise ValueError(
+            f"imaginary_floor must be >= 0 cm^-1, got {imaginary_floor!r}")
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -883,6 +943,7 @@ def run_frequencies(
         "direction": direction,
         "method": method,
         "write_modes": write_modes,
+        "imaginary_floor_cm-1": float(imaginary_floor),
         "indices": list(chosen),
         "expect_fmax": expectation,
         **({} if committee is None else {
@@ -1008,33 +1069,11 @@ def run_frequencies(
         data = vib.get_vibrations(method=method, direction=direction)
         energies = np.asarray(data.get_energies())
         frequencies = np.asarray(data.get_frequencies())
-        # Classify exactly as ASE's own summary table does (data.py's
-        # _tabulate_from_energies): on the mode ENERGY in eV against im_tol,
-        # never on the frequency in cm^-1. A near-zero frustrated
-        # translation/rotation on a slab can pick up an arbitrary tiny sign
-        # from finite differences; a `> 0` threshold on the frequency would
-        # call that noise imaginary here while the summary table -- and any
-        # transition-state "exactly one imaginary mode" check -- called it
-        # real.
-        imaginary = np.abs(energies.imag) > IMAGINARY_ENERGY_TOL_EV
-        # ASE's frequency for each mode is the complex square root of a real
-        # eigenvalue: non-negative gives a purely real, non-negative result;
-        # negative gives a purely imaginary result with a non-negative
-        # imaginary part. Exactly one of .real/.imag is nonzero, so np.abs()
-        # (the complex modulus) always recovers that value -- unlike
-        # selecting .imag or .real by the `imaginary` flag above, which now
-        # uses a threshold on a DIFFERENT quantity (the energy) and can
-        # therefore pick the wrong, exactly-zero component for a mode sitting
-        # right at that threshold (see test_the_frequency_csv_and_summary_
-        # agree_on_which_modes_are_imaginary and the regression it caught in
-        # test_frequencies_match_ases_own_for_the_same_settings).
-        magnitudes = np.abs(frequencies)
-        # The same modulus, for the same reason, applied to the mode
-        # energies: an imaginary mode's energy is purely imaginary, so
-        # `.real` of it is exactly 0.0 and the CSV row reported a nonzero
-        # frequency beside a zero energy (654.41 cm-1 written as 0.0 meV,
-        # where the honest value is 81.1 meV).
-        energy_magnitudes = np.abs(energies)
+        # Sign from the mode ENERGY against ASE's im_tol, exactly as ASE's
+        # own summary table does, never from the frequency in cm^-1; then a
+        # floor decides what counts. See classify_modes.
+        signed_frequencies, signed_energies, raw_imaginary, imaginary = (
+            classify_modes(energies, frequencies, imaginary_floor))
 
         with vibrations_json.open("w") as handle:
             data.write(handle)
@@ -1043,8 +1082,8 @@ def run_frequencies(
         # the same file and the result would read as twice as many modes.
         with summary_txt.open("w") as handle:
             vib.summary(method=method, direction=direction, log=handle)
-        _write_frequency_csv(frequencies_csv, magnitudes, energy_magnitudes,
-                             imaginary)
+        _write_frequency_csv(frequencies_csv, signed_frequencies,
+                             signed_energies, imaginary)
 
         results_committee = None
         if committee is not None:
@@ -1052,10 +1091,11 @@ def run_frequencies(
                 len(frequencies), -1)
             block = member_frequencies(
                 vib, atoms, chosen, delta, nfree, direction, method,
-                committee.member_names, committee_modes)
+                committee.member_names, committee_modes,
+                floor_cm1=imaginary_floor)
             _write_committee_frequency_csv(
                 output_path / f"{prefix}_committee_frequencies.csv",
-                magnitudes, imaginary, committee.member_names, block)
+                signed_frequencies, imaginary, committee.member_names, block)
             zpe_values = [block["zpe"][name]
                           for name in committee.member_names]
             worst_overlap = min(
@@ -1065,6 +1105,7 @@ def run_frequencies(
                 "zpe_eV_per_member": block["zpe"],
                 "zpe_mean_eV": float(np.mean(zpe_values)),
                 "zpe_std_eV": float(np.std(zpe_values, ddof=1)),
+                "n_imaginary_per_member": block["n_imaginary"],
                 "frequency_member_std_cm-1": [float(v) for v in block["std"]],
                 "worst_mode_overlap": worst_overlap,
                 "mode_pairing_suspect": bool(
@@ -1089,7 +1130,9 @@ def run_frequencies(
         results = {
             "n_modes": int(len(frequencies)),
             "n_imaginary": int(imaginary.sum()),
-            "frequencies_cm-1": [float(v) for v in magnitudes],
+            "n_imaginary_raw": int(raw_imaginary.sum()),
+            "imaginary_floor_cm-1": float(imaginary_floor),
+            "frequencies_cm-1": [float(v) for v in signed_frequencies],
             "imaginary_mask": [bool(v) for v in imaginary],
             "zpe_eV": float(data.get_zero_point_energy()),
             "fmax_at_input_free_eV_per_A": float(fmax_at_input_free),

@@ -283,13 +283,15 @@ imaginary-mode count, and the zero-point energy (ZPE).
 - `--nfree`: `2` (three-point stencil, default) or `4` (five-point stencil, doubling the cost).
 - `--direction` / `--method`: `central` (default), `forward` or `backward`; `standard` (default) or `frederiksen` (acoustic sum-rule correction, useful on slabs).
 - `--write-modes`: `none`, `imaginary` (default) or `all` — which modes get an animated trajectory.
+- `--imaginary-floor`: cm⁻¹ (default `10`). A mode with negative curvature counts as imaginary only above this magnitude; below it, it is numerical noise around zero (still written negative, not counted). `0` counts every mode ASE's own table marks imaginary.
 - `--expect-fmax`: warn when fmax at the input geometry, **over the free force components**, exceeds this (eV/Å). Default: the fmax a **converged** `optimize` stage in the structure's own directory actually met, if there is one. **This never stops the run** — it only warns. Both `fmax_at_input_free_eV_per_A` and `fmax_at_input_all_eV_per_A` are reported; the comparison uses the free one, since that is the criterion an optimizer converges against (see [OUTPUTS.md](docs/OUTPUTS.md#the-stationary-point-warning)).
 - `--output-dir`: directory for this run's outputs (default: next to `--structure`, as `optimize`/`singlepoint`/`md` do). Give a frequency run its own folder: a run record is *replaced*, not appended to, by the next command that writes into the same directory. The fmax-expectation lookup above still reads the structure's own directory regardless of `--output-dir`.
 - `--prefix`: stem for the output file names (default `freq`).
 
-**The frequency column is a magnitude plus a boolean, never a signed
-number.** Writing an imaginary frequency as negative is a common convention
-elsewhere and a silent trap for anything that sums or sorts the column.
+**The frequency column is signed:** an imaginary mode is written as a
+negative frequency, and the `imaginary` column says whether it counts
+(above `--imaginary-floor`). With a committee, each member's frequencies are
+signed by its own Hessian, and `n_imaginary_per_member` is in the record.
 **ZPE counts the real modes only:** ASE sums the real parts of the mode
 energies, so an imaginary mode contributes exactly zero, and a structure
 with imaginary modes has no well-defined zero-point energy.

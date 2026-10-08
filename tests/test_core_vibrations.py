@@ -10,7 +10,7 @@ from ase.calculators.emt import EMT
 from ase.constraints import FixAtoms
 from ase.vibrations import VibrationsData
 
-from mliprun.core.vibrations import run_frequencies
+from mliprun.core.vibrations import IMAGINARY_FLOOR_CM1, run_frequencies
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ def test_frequencies_match_ases_own_for_the_same_settings(n2, tmp_path):
     reference.run()
     expected = np.sort(np.abs(reference.get_frequencies()))
     results = run_frequencies(n2, output_dir=tmp_path / "ours")
-    assert np.sort(results["frequencies_cm-1"]) == pytest.approx(
+    assert np.sort(np.abs(results["frequencies_cm-1"])) == pytest.approx(
         expected, abs=1e-8)
 
 
@@ -72,26 +72,32 @@ def test_a_stretched_bond_produces_an_imaginary_mode(tmp_path):
     assert any(results["imaginary_mask"])
 
 
-def test_an_imaginary_frequency_is_written_as_a_positive_magnitude(tmp_path):
+def test_an_imaginary_frequency_is_written_negative(tmp_path):
+    """Juan's ruling, 2026-10-07: the column is signed, so it reads
+    correctly on its own; the flag says whether the mode counts."""
     atoms = molecule("N2")
     atoms.positions[1][2] += 1.6
     atoms.calc = EMT()
-    run_frequencies(atoms, output_dir=tmp_path)
+    results = run_frequencies(atoms, output_dir=tmp_path)
     rows = list(csv.DictReader((tmp_path / "freq_frequencies.csv").open()))
     imaginary = [r for r in rows if r["imaginary"] == "True"]
     assert imaginary
     for row in imaginary:
-        assert float(row["frequency_cm-1"]) > 0.0
+        assert float(row["frequency_cm-1"]) < -IMAGINARY_FLOOR_CM1
+    for value, flag in zip(results["frequencies_cm-1"],
+                           results["imaginary_mask"]):
+        if flag:
+            assert value < 0.0
 
 
-def test_the_energy_column_is_a_magnitude_for_an_imaginary_mode(tmp_path):
+def test_the_energy_column_carries_the_same_sign_as_the_frequency(tmp_path):
     """An imaginary mode's energy is purely imaginary, so ``.real`` of it is
-    exactly 0.0 -- and the row then reported a nonzero frequency beside a
+    exactly 0.0 -- and the row once reported a nonzero frequency beside a
     zero energy for the same mode.
 
     The consistency check is the point: every row's ``energy_meV`` must be
     its ``frequency_cm-1`` in energy units (``ase.units.invcm`` eV per
-    cm^-1), imaginary rows included.
+    cm^-1), sign included, imaginary rows included.
     """
     from ase import units
 
@@ -103,7 +109,7 @@ def test_the_energy_column_is_a_magnitude_for_an_imaginary_mode(tmp_path):
     imaginary = [r for r in rows if r["imaginary"] == "True"]
     assert imaginary                       # the case is not vacuous
     for row in imaginary:
-        assert float(row["energy_meV"]) > 0.0
+        assert float(row["energy_meV"]) < 0.0
         assert float(row["energy_meV"]) == pytest.approx(
             float(row["frequency_cm-1"]) * units.invcm * 1000.0, rel=1e-9)
     for row in rows:
@@ -604,5 +610,49 @@ def test_the_frequency_csv_and_summary_agree_on_which_modes_are_imaginary(
     summary = (tmp_path / "freq_summary.txt").read_text()
     n_imaginary_in_summary = sum(
         1 for line in summary.splitlines() if line.rstrip().endswith("i"))
-    assert results["n_imaginary"] > 0          # the case is not vacuous
-    assert results["n_imaginary"] == n_imaginary_in_summary
+    assert results["n_imaginary_raw"] > 0      # the case is not vacuous
+    assert results["n_imaginary_raw"] == n_imaginary_in_summary
+    negative = sum(1 for v in results["frequencies_cm-1"] if v < 0)
+    assert negative == n_imaginary_in_summary  # the sign follows the table
+
+
+def test_noise_below_the_floor_is_signed_but_not_counted(tmp_path):
+    """Task 15: a relaxed CO had three translations at 0.002-0.013 cm^-1
+    with negative curvature, counted imaginary and written as trajectories.
+    The same H2O case as above: its negative-curvature modes are all
+    near-zero rigid-body noise, so none may count and none may get a file,
+    while each keeps its negative sign in the record."""
+    from ase.optimize import BFGS
+    atoms = molecule("H2O")
+    atoms.calc = EMT()
+    BFGS(atoms, logfile=None).run(fmax=1e-6)
+    results = run_frequencies(atoms, output_dir=tmp_path, nfree=4)
+    noise = [v for v in results["frequencies_cm-1"] if v < 0]
+    assert noise                                   # not vacuous
+    assert all(abs(v) < IMAGINARY_FLOOR_CM1 for v in noise)
+    assert results["n_imaginary"] == 0
+    assert results["n_imaginary_raw"] == len(noise)
+    assert not any(results["imaginary_mask"])
+    assert list(tmp_path.glob("freq.*.traj")) == []
+    assert results["imaginary_floor_cm-1"] == IMAGINARY_FLOOR_CM1
+
+
+def test_a_zero_floor_counts_every_negative_curvature_mode(tmp_path):
+    from ase.optimize import BFGS
+    atoms = molecule("H2O")
+    atoms.calc = EMT()
+    BFGS(atoms, logfile=None).run(fmax=1e-6)
+    results = run_frequencies(atoms, output_dir=tmp_path, nfree=4,
+                              imaginary_floor=0.0)
+    assert results["n_imaginary"] == results["n_imaginary_raw"] > 0
+
+
+def test_a_negative_floor_is_refused(n2, tmp_path):
+    with pytest.raises(ValueError, match="imaginary_floor"):
+        run_frequencies(n2, output_dir=tmp_path, imaginary_floor=-1.0)
+
+
+def test_the_floor_is_recorded_as_a_parameter(n2, tmp_path):
+    run_frequencies(n2, output_dir=tmp_path, imaginary_floor=25.0)
+    record = json.loads((tmp_path / "mliprun_run.json").read_text())
+    assert record["parameters"]["imaginary_floor_cm-1"]["value"] == 25.0

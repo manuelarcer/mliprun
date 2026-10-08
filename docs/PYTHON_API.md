@@ -370,8 +370,8 @@ Computes vibrational frequencies by finite differences of forces
 (`ase.vibrations.Vibrations` under the hood) and reports the frequencies,
 the imaginary-mode count, and the zero-point energy (ZPE). See
 [OUTPUTS.md](OUTPUTS.md#freq-run) for the full output reference: the
-frequency-column convention (magnitude plus a boolean, never signed), the
-imaginary-mode threshold, why ZPE counts the real modes only, and the
+frequency-column convention (signed, negative = negative curvature, plus
+a boolean), the sign rule and the imaginary-mode floor, why ZPE counts the real modes only, and the
 stationary-point warning.
 
 ```python
@@ -400,6 +400,7 @@ results = run_frequencies(
     delta=0.01,             # Å
     nfree=2,                 # or 4 (five-point stencil, twice the cost)
     write_modes="imaginary",  # "none", "imaginary" (default) or "all"
+    imaginary_floor=10.0,    # cm^-1; below it a negative mode is noise
     expect_fmax=None,        # default: the fmax a converged optimize stage
                               # in structure_dir actually met, if there is one
 )
@@ -407,7 +408,7 @@ results = run_frequencies(
 
 Side effects (written to `output_dir`):
 
-- `<prefix>_frequencies.csv` — one row per mode: magnitude, energy, imaginary flag
+- `<prefix>_frequencies.csv` — one row per mode: signed frequency, signed energy, imaginary flag
 - `<prefix>_summary.txt` — ASE's own `vib.summary()` table
 - `<prefix>_vibrations.json` — `VibrationsData.write()` output
 - `<prefix>/` — ASE's per-displacement JSON cache (makes a restart free)
