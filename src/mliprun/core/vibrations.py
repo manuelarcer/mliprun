@@ -68,12 +68,24 @@ DEGENERACY_REL_TOL = 0.03
 #: Not exact equality, deliberately. A real MLIP on a GPU is not
 #: bit-reproducible between runs -- the reduction order inside the kernels is
 #: not fixed -- so an exact comparison would reject the legitimate restart
-#: this cache exists to make cheap. A DIFFERENT model, on the other hand,
-#: disagrees by orders of magnitude: the EMT/Lennard-Jones pair that exposed
-#: the bug differs by ~1 eV/A on N2, six orders above this. 1e-6 eV/A
-#: therefore separates "same calculator, re-evaluated" from "someone else's
-#: cache" cleanly, and is itself far below any force anyone reports.
-CACHE_IDENTITY_ATOL = 1e-6
+#: this cache exists to make cheap.
+#:
+#: Set from measurement (Task 15, cos-cluster L40S, 52-atom CH3/Ni(111) and
+#: CO; 15 evaluations of one geometry over 3 processes per model). Same
+#: calculator, re-evaluated, max |dF| over all atoms:
+#:
+#:     mace-mh-1 / omat_pbe (float64)   2.3e-15 eV/A
+#:     uma-s-1p2 / oc20                 5.1e-7
+#:     uma-s-1p2 / omol (CO)            1.1e-6
+#:     chgnet (float32)                 2.6e-6
+#:
+#: The previous value, 1e-6, refused a real CHGNet restart at 2.31e-6 eV/A.
+#: The closest pair of DIFFERENT calculators measured on the same geometry
+#: was two heads of one model, mace-mh-1 omat_pbe vs mp_pbe_refit_add, at
+#: 5.4e-2 eV/A (other heads: 0.19-0.62; MACE vs UMA: 0.32). 1e-4 sits 40x
+#: above the worst noise and 540x below the closest different head. Float32
+#: noise grows with system size, which is what the margin above it is for.
+CACHE_IDENTITY_ATOL = 1e-4
 
 
 class FrequencyCacheError(RuntimeError):
@@ -901,6 +913,38 @@ def _write_committee_frequency_csv(path, frequencies, imaginary, member_names,
             writer.writerow(row)
 
 
+def _write_vibrations_json(handle, data):
+    """Write ``data`` in ``VibrationsData.write()``'s own format, safely.
+
+    Not ``data.write(handle)``, because ``VibrationsData.todict`` in
+    ASE <= 3.28 opens with ``np.allclose(self._indices,
+    range(len(self._atoms)))``, which raises ``ValueError: operands could
+    not be broadcast`` whenever only some atoms were displaced -- that is,
+    on every constrained slab, the main use of this command. Found in the
+    cos-cluster verification: all three MLIP envs there carry ASE 3.28, and
+    ``freq`` failed on a 52-atom CH3/Ni(111) slab with 4 free atoms after
+    finishing the whole sweep. ASE 3.29 rewrote ``todict``; the CI env gets
+    3.29, which is why no test caught it. ``pyproject.toml`` allows
+    ``ase>=3.23``.
+
+    The payload is the same three keys plus the ``__ase_objtype__`` tag
+    that ``ase.utils.jsonable`` adds, so ``VibrationsData.read`` still
+    reloads it. ``indices`` is always written as an explicit list, never
+    ``None``: ASE 3.28 reads ``None`` as "every atom" and 3.29 as "every
+    atom not held by a constraint", so ``None`` would mean different things
+    to different readers.
+    """
+    from ase.io.jsonio import encode
+
+    payload = {
+        "atoms": data.get_atoms(),
+        "hessian": data.get_hessian(),
+        "indices": [int(index) for index in data.get_indices()],
+        "__ase_objtype__": "vibrationsdata",
+    }
+    handle.write(encode(payload))
+
+
 def _write_frequency_csv(path, frequencies, energies_eV, imaginary):
     """Signed values plus a boolean.
 
@@ -1144,7 +1188,7 @@ def run_frequencies(
             classify_modes(energies, frequencies, imaginary_floor))
 
         with vibrations_json.open("w") as handle:
-            data.write(handle)
+            _write_vibrations_json(handle, data)
         # A handle in write mode, not a path: summary()'s log argument opens
         # a path with mode 'a', so a restart would write a second table into
         # the same file and the result would read as twice as many modes.
