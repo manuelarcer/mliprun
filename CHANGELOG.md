@@ -128,6 +128,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
   directory regardless, so the stationary-point warning keeps working.
   Additive to the run record: new stage kind `freq`, schema version
   unchanged. See `docs/OUTPUTS.md#freq-run` and `docs/PYTHON_API.md`.
+  **Verified on cos-cluster against real MLIPs (2026-10-07)**, with the ASE
+  fix below applied. `singlepoint` and `optimize --max-steps 0` give the same
+  energy to the last bit (−262.13806234894844 eV, CH3*/Ni(111),
+  `mace-mh-1`/`omat_pbe`). The CO stretch under UMA `omol` is 2236.65
+  cm⁻¹, +93.7 from 2143. The CH3* → CH2* + H* transition state has exactly
+  one imaginary mode, 1032.8i cm⁻¹, on the departing H. The run-record fmax
+  lookup fired against a real `optimize` record. A three-member committee
+  sweep took 1.07–1.19× the slowest member, not the sum. A SIGTERM'd
+  committee run left no worker and no CUDA context. Full report in PR #54
+  and PR #56.
 
 - **`singlepoint run`, single-point evaluation.** Evaluates a structure once
   and stops: energy, per-atom forces, and stress, with no optimizer and no
