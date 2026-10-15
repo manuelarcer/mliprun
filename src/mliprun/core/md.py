@@ -2,7 +2,7 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -393,6 +393,7 @@ def run_md(
     uma_task: Optional[str] = None,
     mace_head: Optional[str] = None,
     sevennet_task: Optional[str] = None,
+    observer: Optional[Callable[[dict], None]] = None,
 ) -> None:
     """Run molecular dynamics simulation.
 
@@ -439,6 +440,15 @@ def run_md(
     mace_head : str, optional
         MACE head actually used, recorded for provenance. Ignored for
         non-MACE models.
+    observer : callable, optional
+        Called every ``log_interval`` steps, right after the row for that
+        step has been recorded, with a dict ``{"row": dict, "positions":
+        ndarray (N, 3), "cell": ndarray (3, 3)}``. ``row`` is a copy of the
+        ``md_energy.csv`` row (keys are exactly the CSV column names);
+        positions and cell are copies. It reads only, so the trajectory is
+        unchanged. An exception it raises propagates: the run record is
+        completed as ``failed`` and the exception re-raised. ``None``
+        (default) disables it.
 
     (Other parameters as in :func:`setup_dynamics`.)
     """
@@ -591,6 +601,13 @@ def run_md(
         if csv_flush_every > 0 and flush_counter[0] >= csv_flush_every:
             _flush_csv()
             flush_counter[0] = 0
+
+        if observer is not None:
+            observer({
+                "row": dict(row),
+                "positions": atoms.get_positions(),
+                "cell": atoms.get_cell().array.copy(),
+            })
 
     dyn.attach(log_properties, interval=log_interval)
 

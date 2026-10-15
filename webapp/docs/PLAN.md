@@ -2,7 +2,8 @@
 
 Status: authoritative contract for Phase 2 (implementation), Phase 3 (tests) and
 Phase 4 (docs). Branch `feature/webapp`. Written 2026-10-15 from `RECON.md` and
-the source at `c0c8250`.
+the source at `c0c8250`; updated 2026-10-16 after integration to describe what
+was actually built (see section 14, "Changes during implementation").
 
 Three implementers work in parallel and do not talk to each other:
 **Backend** (server, routes, jobs/queue, uploads, launch command, packaging),
@@ -313,10 +314,10 @@ Units: energy eV, length Å, force eV/Å, time fs, temperature K, pressure GPa.
 | timestep | float | 1.0 | (0, 10] fs | - | |
 | temperature | float | 300 | (0, 100000] K | `[{"ensemble":["nvt","npt"]}]` | |
 | thermostat | choice | langevin | langevin, nose-hoover, berendsen | `[{"ensemble":["nvt"]}]` | |
+| barostat | choice | npt | npt, berendsen | `[{"ensemble":["npt"]}]` | |
 | friction | float | 0.01 | (0, 10] 1/fs | `[{"ensemble":["nvt"],"thermostat":["langevin"]}]` | yes |
 | ttime | float | 25.0 | (0, 100000] fs | `[{"ensemble":["nvt"],"thermostat":["nose-hoover"]},{"ensemble":["npt"],"barostat":["npt"]}]` | yes |
 | taut | float | 100.0 | (0, 100000] fs | `[{"ensemble":["nvt"],"thermostat":["berendsen"]},{"ensemble":["npt"],"barostat":["berendsen"]}]` | yes |
-| barostat | choice | npt | npt, berendsen | `[{"ensemble":["npt"]}]` | |
 | pressure | float | 0.0 | [-1000, 1000] GPa | `[{"ensemble":["npt"]}]` | |
 | taup | float | 1000.0 | (0, 1e6] fs | `[{"ensemble":["npt"],"barostat":["berendsen"]}]` | yes |
 | compressibility | float | 0.457 | (0, 100] 1/GPa | `[{"ensemble":["npt"],"barostat":["berendsen"]}]` | yes |
@@ -325,6 +326,10 @@ Units: energy eV, length Å, force eV/Å, time fs, temperature K, pressure GPa.
 | log_interval | int | 10 | [1, 100000] | - | |
 | traj_interval | int | 100 | [1, 100000] | - | |
 | plot | bool | false | | - | yes |
+
+Field order is the table order: `barostat` directly follows `thermostat`
+because `ttime` and `taut` are controlled by it (rule of 3.1: controlling
+fields precede the fields they control).
 
 Help notes the Bridge MUST include: NVE starts from rest (no velocities are
 drawn, `core/md.py` only draws Maxwell-Boltzmann for nvt/npt); `pfactor` null
@@ -506,6 +511,9 @@ Failure entry: `{"id": null, "filename": "x.foo", "ok": false, "error": "message
   in the given order.
 - `neb`: exactly one of (`initial_id` + `final_id`) or `band_id` -> one job.
 - `autoneb`: `initial_id` + `final_id` -> one job.
+- `params`: the browser client sends only visible fields whose value differs
+  from the default, so `param_sources` records exactly the changed values as
+  `user` (an API client may send defaults explicitly; they are then `user`).
 - `structure_every`: int 0..100000, default 5 (0 = never send positions).
 - `label`: optional string <= 80 chars; default = filename (pair:
   `"<initial> -> <final>"`).
@@ -709,7 +717,8 @@ Common keys: `calc_type`, `record_status` (top-level `status` of
     types `job_status`, `result`, `error` (to keep the job list light).
   - `{"action": "unsubscribe", "job_id": "<id>"|"*"}`.
 - Server -> client control messages (no `seq`):
-  `{"type": "ws_ack", "action": "subscribe", "job_id": ..., "replayed": int}`,
+  `{"type": "ws_ack", "action": "subscribe", "job_id": ..., "replayed": int}`
+  (sent **after** the replayed events, so `replayed` is the final count),
   `{"type": "ws_error", "code": "not_found"|"bad_request", "message": ...}`,
   `{"type": "ws_ping", "t": float}` every 20 s.
 - An event is delivered at most once per connection even if both `*` and the
@@ -778,7 +787,9 @@ Common keys: `calc_type`, `record_status` (top-level `status` of
 `build_calculator(name, uma_task=..., device=resolved_device, mace_head=...,
 sevennet_task=...)` from `mliprun.cli.utils`. Catch `click.exceptions.Exit`
 (typer.Exit): message = `exc.exit_code` if it is a `str`, else `"exited with
-code N"`; re-raise as `RuntimeError(message)`.
+code N"`; re-raise as `RuntimeError(message)`. In current typer `typer.Exit`
+is itself a `RuntimeError` subclass, so the `Exit` handler MUST come before
+any generic `RuntimeError` handling.
 
 ---
 
@@ -866,6 +877,13 @@ param_sources=job.param_sources, extra_inputs={"source": "webapp", "job_id":
   max_steps=neb_max_steps, k, dyneb, scale_fmax, plot, run_context,
   observer=adapter)`; then `process_results()`, `plot_results(df)` if plot,
   `export_poscars()`.
+- neb/autoneb `phase load_model`: only `validate_mlip` runs here (no
+  calculator is built in the worker), because `CustomNEB.setup_calculator`
+  builds one per image itself; emt skips validation.
+- neb pair with `interpolation == "linear"`: the band is the linear one from
+  `setup_neb()`, which drops `FixAtoms` from intermediate images (normally
+  restored by `interpolate_idpp`); the worker re-applies the endpoint
+  `FixAtoms` to every intermediate image so fixed atoms stay fixed.
 - neb, band mode: `CustomNEB(frames[0], frames[-1],
   num_images=len(frames)-2, fmax, ..., relax_atoms=None)`, then
   `neb.images = [neb.initial, *frames[1:-1], neb.final]`; no endpoint
@@ -881,7 +899,11 @@ param_sources=job.param_sources, extra_inputs={"source": "webapp", "job_id":
   `target.images` energies (try/except -> null), `calc_fmax(target.get_forces())`,
   positions, and emits `neb_iter` with a global iteration counter and
   `autoneb: {"sub_step": self.nsteps}`. `run_autoneb` `chdir`s inside the
-  worker process only (harmless there).
+  worker process only (harmless there). Result energies are read from the
+  last frame of each `autoneb???.traj` with
+  `get_potential_energy(allow_calculation=False)` (stored results, never a
+  recomputation); the worker also writes `autoneb_energy_profile.csv` into
+  run_dir.
 
 ObserverAdapter maps core observer payloads (section 9) to events: optimize
 -> `opt_step`; md -> `md_step` (keys from CSV column names: `time(fs)` ->
@@ -1015,7 +1037,9 @@ Rules:
 - Failed `reason` text: `"worker exited with code <rc>"` / `"worker killed by
   signal <n>"` / the `error` event message when present.
 - If the worker died without `summary.json`, Backend writes one with status
-  `failed` (or `cancelled`) and `error.message = reason`.
+  `failed` (or `cancelled`) and `error.message = reason`. A job cancelled while
+  `pending` never had a worker and gets **no** `summary.json` (its state is in
+  `state.json` and `events.jsonl`).
 - Startup recovery: for each `<runs-dir>/<job_id>/state.json`; if `running`
   and `pid` alive and `/proc/<pid>/cmdline` contains `mliprun.webapp.worker`
   and the run_dir: SIGTERM, wait grace, SIGKILL. Truncate a partial final
@@ -1062,10 +1086,13 @@ the rest of the UI MUST still work.
 - **Job detail** (`#/jobs/<id>`): header (status, calculator, params);
   live 3D viewer updated from `frame`/`band`; plots:
   - optimize: energy vs step and fmax vs step (log y), fmax target line.
-  - md: etot/epot vs time_fs, ekin on secondary axis; temperature vs time_fs;
-    NPT adds pressure and volume.
+  - md: etot/epot vs time_fs with ekin in a stacked subplot below (shared x;
+    two scales are never put on twin y-axes of one plot); temperature vs
+    time_fs with the target line; NPT adds a third plot (`plot-extra`) of
+    pressure and volume, also stacked.
   - neb/autoneb: current band rel_energies vs image index (updated per
-    iteration); fmax vs iteration (log y). Viewer can play the band.
+    iteration); fmax vs iteration (log y) with the barrier in a stacked
+    subplot. Viewer can play the band.
   - freq: progress bar (done/total); on result, stick plot of
     `frequency_cm1` per mode with imaginary modes in a distinct colour, and a
     table (index, cm⁻¹, meV, imaginary).
@@ -1075,6 +1102,14 @@ the rest of the UI MUST still work.
     files list with download links; zip link; reproduce status + notes + a
     link to `reproduce.sh` inline view.
 - Reconnect WS with backoff (1, 2, 5, 10 s) and resubscribe with `since`.
+- The job list also re-fetches `GET /api/jobs` every 2.5 s while any listed
+  job is `pending` or `running` (the `*` subscription carries no progress
+  events, so this keeps progress text and queue positions current).
+- Uploading files ticks them in the structure list (selected for the next
+  single-structure submission).
+- Routing to `#/jobs/<id>` scrolls the detail panel into view; panels carry
+  `scroll-margin-top` so the sticky top bar does not cover the job title.
+- No mock/offline-demo mode ships; the page always talks to the real server.
 
 ### 11.2 Stable selectors (Tester relies on these)
 
@@ -1090,7 +1125,13 @@ input/select), `advanced-toggle`, `neb-mode-pair`, `neb-mode-band`,
 `job-status`, `job-detail` (attr `data-job-id`, `data-status`),
 `cancel-button`, `viewer`, `plot-main`, `plot-secondary`, `result-panel`,
 `forces-table`, `freq-table`, `log-panel`, `files-list`, `zip-link`,
-`reproduce-panel`, `lib-error-banner`.
+`reproduce-panel`, `lib-error-banner`, plus `plot-extra` (NPT pressure and
+volume) and `structure-preview` (the upload preview viewer).
+
+`cancel-button` and `job-status` appear both in job rows and in the job
+detail header: tests MUST scope them, e.g.
+`[data-testid=job-detail] [data-testid=cancel-button]`, or inside one
+`job-row`.
 
 `data-status` always equals the job's current status string.
 
@@ -1157,7 +1198,7 @@ input/select), `advanced-toggle`, `neb-mode-pair`, `neb-mode-band`,
 - [ ] Works at 1280x800 and is usable at 390 px width (stacked panels).
 
 ### Phase 2D, Integration (orchestrator)
-- [ ] With real Backend + Bridge + Frontend: `mlip webapp --no-browser`,
+- [x] With real Backend + Bridge + Frontend: `mlip webapp --no-browser`,
       run all six calc types with EMT through the browser; fix contract
       mismatches by amending this file first.
 
@@ -1244,3 +1285,35 @@ input/select), `advanced-toggle`, `neb-mode-pair`, `neb-mode-band`,
 | - | CDN unavailable offline | Banner; rest of the UI works; documented. |
 | - | Orphan worker after server crash | `start_new_session=True` + startup recovery kills a matching live pid. |
 | - | CI diff-coverage gate (90 %) on core hook lines and webapp code | Hook tests with EMT; webapp tests run in CI (D10); worker subprocess coverage already handled by the repo's `COVERAGE_PROCESS_START` setup because the worker inherits the environment. |
+
+---
+
+## 14. Changes during implementation
+
+Recorded by the implementers (PROGRESS.md) and at integration; the sections
+above are already edited to match.
+
+- Frontend: stacked subplots instead of twin y-axes; NPT plot `plot-extra`;
+  preview viewer `structure-preview` (11.1, 11.2); only non-default visible
+  params are sent (4.4); duplicate `cancel-button`/`job-status` testids must
+  be scoped (11.2); job list polls every 2.5 s while jobs are active (11.1).
+- Frontend: the development mock (`static/js/mock.js`, `?mock=1`) was
+  removed at integration.
+- Backend: `ws_ack` is sent after the replay (6.5); a job cancelled while
+  pending gets no `summary.json` (10.1); rc 0 without a `done` summary is
+  `failed` (10.1).
+- Bridge: `typer.Exit` is a `RuntimeError` subclass and is caught first
+  (7.3); md field order puts `barostat` right after `thermostat` (3.2);
+  neb/autoneb `load_model` only validates (8.3); linear interpolation
+  re-applies `FixAtoms` (8.3); AutoNEB energies via
+  `allow_calculation=False` plus `autoneb_energy_profile.csv` (8.3).
+- Integration fixes: the job title was hidden under the sticky top bar after
+  routing (added `scroll-margin-top`; the "header mid-page" in full-page
+  screenshots is only a screenshot artifact of `position: sticky`); the
+  singlepoint result table no longer shows an empty "Stress unavailable
+  reason" row; `tests/webapp/conftest.py::cu_upload` writes into `tmp_path`
+  instead of a leaked `mkdtemp` directory.
+- Outside the webapp: `tests/test_neb_mace.py` wrote its NEB outputs
+  (`mliprun_run.json`, `neb.log`, `A2B*.traj`, `idpp.*`,
+  `neb_convergence.csv`) into the current directory, i.e. the repo root; it
+  now uses `output_dir=tmp_path` and absolute fixture paths.

@@ -66,9 +66,17 @@ dependencies = [
 neb = [
     "asetools @ git+https://github.com/manuelarcer/asetools.git",
 ]
+# Local web app (`mlip webapp`): pip install -e ".[webapp]"
+webapp = [
+    "fastapi",
+    "uvicorn[standard]",
+    "python-multipart",
+]
 dev = [
     "pytest",
     "pytest-cov",
+    # Test client of the web app tests (tests/webapp); needs the [webapp] extra too.
+    "httpx",
     # Named explicitly (pytest-cov would pull it in anyway) because the
     # [tool.coverage.*] config lives in this file: the [toml] extra adds the
     # tomli backport that coverage needs to read it on Python < 3.11.
@@ -102,6 +110,10 @@ zip-safe = false
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# The web app's front end (HTML/CSS/JS), served by `mlip webapp`.
+"mliprun.webapp" = ["static/*", "static/*/*", "static/**/*"]
 
 [tool.mutmut]
 paths_to_mutate = "src/mliprun/"

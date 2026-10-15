@@ -1,7 +1,7 @@
 """Geometry optimization engine using ASE."""
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -339,6 +339,7 @@ def run_optimization(
     committee=None,
     committee_config=None,
     uncertainty_threshold: Optional[float] = None,
+    observer: Optional[Callable[[dict], None]] = None,
 ) -> bool:
     """Run geometry optimization on an ASE Atoms object.
 
@@ -422,6 +423,15 @@ def run_optimization(
         threshold, sigma is still reported but no verdict is asserted
         (``threshold_source: "none"``, ``flagged: None``). The value applied
         and where it came from are both recorded.
+    observer : callable, optional
+        Called once per optimizer step (step 0 included), after the step has
+        been logged, with a dict ``{"step": int, "energy": float, "fmax":
+        float, "positions": ndarray (N, 3), "cell": ndarray (3, 3)}``. The
+        values are the ones just written to the convergence log; positions
+        and cell are copies taken from ``atoms`` (not the cell filter). It
+        reads only, so numerics are unchanged. An exception it raises
+        propagates: the run record is completed as ``failed`` and the
+        exception re-raised. ``None`` (default) disables it.
 
     Returns
     -------
@@ -556,6 +566,14 @@ def run_optimization(
             # `latest` is this step's evaluation. Flushed per row, so a run
             # that dies at step 300 keeps its first 300 steps.
             trace_writer.write_step(step, committee.latest, fmax_val)
+        if observer is not None:
+            observer({
+                "step": int(step),
+                "energy": float(energy),
+                "fmax": float(fmax_val),
+                "positions": atoms.get_positions(),
+                "cell": atoms.get_cell().array.copy(),
+            })
 
     try:
         if verbose:

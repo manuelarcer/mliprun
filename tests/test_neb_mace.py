@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from ase.io import read
 
@@ -10,9 +12,13 @@ except ImportError:
 from mliprun.core.neb import CustomNEB
 
 @pytest.mark.skipif(not mace_available, reason="MACE not installed")
-def test_neb_run_mace():
-    initial_path = "tests/fixtures/structures/fragment_initial.vasp"
-    final_path = "tests/fixtures/structures/fragment_final.vasp"
+def test_neb_run_mace(tmp_path):
+    # Absolute fixture paths, and outputs into tmp_path: CustomNEB writes into
+    # the current directory by default, which left neb.log, A2B.traj and
+    # mliprun_run.json in the repository root after a full-suite run.
+    structures = Path(__file__).parent / "fixtures" / "structures"
+    initial_path = structures / "fragment_initial.vasp"
+    final_path = structures / "fragment_final.vasp"
 
     initial = read(initial_path, format="vasp")
     final = read(final_path, format="vasp")
@@ -24,7 +30,8 @@ def test_neb_run_mace():
         interp_fmax=0.1,
         interp_steps=100,
         fmax=0.05,
-        mlip="mace"
+        mlip="mace",
+        output_dir=tmp_path,
     )
 
     assert len(neb.images) == 7  # num_images=5 means 5 intermediate + 1 initial + 1 final = 7 total
