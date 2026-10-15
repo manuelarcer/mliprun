@@ -140,7 +140,7 @@ Paths are repository-relative. `src/mliprun/` is the real package path
 | `tests/webapp/test_api_*.py`, `test_ws.py`, `test_launch.py` | Backend | Backend unit tests. |
 | `tests/webapp/test_schema.py`, `test_calculators.py`, `test_events.py`, `test_worker.py`, `test_core_hooks.py`, `test_reproduce.py` | Bridge | Bridge unit tests. |
 | `tests/webapp/test_tier1_emt.py`, `test_tier2_mace.py`, `test_robustness.py`, `test_browser.py` | Tester (Phase 3) | Integration tests. |
-| `docs/WEBAPP.md`, README section, `AGENTS.md` line | Phase 4 | Docs. |
+| `webapp/README.md` (+ `webapp/docs/screenshot.png`), README section, `AGENTS.md` line | Phase 4 | Docs. |
 
 No other file may be edited. In particular `tests/goldens/*` MUST NOT change.
 
@@ -1140,18 +1140,18 @@ detail header: tests MUST scope them, e.g.
 ## 12. Phases and acceptance criteria
 
 ### Phase 2A, Backend
-- [ ] Files of section 1.2 (Backend rows); `pip install -e ".[webapp]"`
+- [x] Files of section 1.2 (Backend rows); `pip install -e ".[webapp]"`
       installs fastapi, uvicorn[standard], python-multipart; `static/**`
       ships as package data (`pip install .` into a fresh venv serves `/`).
-- [ ] `mlip --help` works without the extra; `mlip webapp --help` lists the
+- [x] `mlip --help` works without the extra; `mlip webapp --help` lists the
       four options; without fastapi, `mlip webapp` exits 1 with the hint.
-- [ ] All endpoints of section 4 with the exact JSON shapes; error format of
+- [x] All endpoints of section 4 with the exact JSON shapes; error format of
       section 5 for every error including FastAPI's 422.
-- [ ] D5: POST without `X-Mliprun` -> 403; WS with foreign Origin closed
+- [x] D5: POST without `X-Mliprun` -> 403; WS with foreign Origin closed
       1008; Host check when `allowed_hosts` given.
-- [ ] Queue: never two workers alive; FIFO; state machine of 10.1; restart
+- [x] Queue: never two workers alive; FIFO; state machine of 10.1; restart
       recovery; cancel pending and running; SIGKILL after grace.
-- [ ] Tests (with `fake_worker.py`, no MLIP): uploads (POSCAR without
+- [x] Tests (with `fake_worker.py`, no MLIP): uploads (POSCAR without
       extension, extxyz multi-frame, garbage file), submit/validation 422
       passthrough, all-or-nothing multi-submit, events replay `since`, WS
       replay-then-live with no gap/duplicate, files traversal 400, zip
@@ -1165,37 +1165,37 @@ detail header: tests MUST scope them, e.g.
   inside fixtures.
 
 ### Phase 2B, Bridge
-- [ ] Core hooks of section 9 + their tests; `pytest tests/test_characterization_golden.py`
+- [x] Core hooks of section 9 + their tests; `pytest tests/test_characterization_golden.py`
       unchanged and green; full non-MLIP suite green.
-- [ ] `schema.py` data exactly as section 3; `test_schema.py`: every
+- [x] `schema.py` data exactly as section 3; `test_schema.py`: every
       calc type has fields; every `visible_if` references an earlier field;
       defaults pass their own validation; each rule of 3.3 has a failing case
       (hidden field present, out of range, wrong type, bad indices, NEB atom
       mismatch, EMT unsupported element, missing uma_task, task on
       single-task model).
-- [ ] `calculators.py` with emt always present; `detect_devices` never
+- [x] `calculators.py` with emt always present; `detect_devices` never
       imports torch in-process.
-- [ ] `events.py` with partial-line truncation test.
-- [ ] Worker: for each calc type, a test writes a `job.json` (EMT, Cu) and
+- [x] `events.py` with partial-line truncation test.
+- [x] Worker: for each calc type, a test writes a `job.json` (EMT, Cu) and
       runs `python -m mliprun.webapp.worker <dir>` as a subprocess; asserts
       exit 0, one `result` event, seq contiguous from the starting count,
       `summary.json` status done, `reproduce.sh` present; NEB in both pair
       and band mode; SIGTERM during md -> exit 3, record `failed`, summary
       `cancelled`.
-- [ ] `test_reproduce.py`: for every calc type, the generated argv parses
+- [x] `test_reproduce.py`: for every calc type, the generated argv parses
       with `typer.main.get_command(mliprun.cli.main.app).make_context("mlip",
       argv)` without error (MLIP tag e.g. `mace`, not run); emt -> status `no`.
 
 ### Phase 2C, Frontend
-- [ ] No build step; only the two CDN scripts; ES modules from
+- [x] No build step; only the two CDN scripts; ES modules from
       `/static/js/`.
-- [ ] Form generated purely from `/api/calc-types` + `/api/calculators` (no
+- [x] Form generated purely from `/api/calc-types` + `/api/calculators` (no
       field names hard-coded except `structure_every` and the calculator
       block); hidden fields not sent.
-- [ ] All `data-testid` of 11.2 present at the documented places.
-- [ ] Manual run with EMT: upload Cu POSCAR, run each calc type, see live
+- [x] All `data-testid` of 11.2 present at the documented places.
+- [x] Manual run with EMT: upload Cu POSCAR, run each calc type, see live
       plots and structure updates, cancel an md job, download zip.
-- [ ] Works at 1280x800 and is usable at 390 px width (stacked panels).
+- [x] Works at 1280x800 and is usable at 390 px width (stacked panels).
 
 ### Phase 2D, Integration (orchestrator)
 - [x] With real Backend + Bridge + Frontend: `mlip webapp --no-browser`,
@@ -1252,11 +1252,11 @@ detail header: tests MUST scope them, e.g.
   Python diff coverage >= 90 %.
 
 ### Phase 4, Docs
-- [ ] `docs/WEBAPP.md`: install (`pip install -e ".[webapp]"`), launch,
+- [x] `webapp/README.md`: install (`pip install -e ".[webapp]"`), launch,
       runs-dir layout, calc types and what is not offered (D1), EMT caveat,
       reproduce.sh meaning, security note (localhost, no auth), offline
       limitation (CDN), restart-after-install note.
-- [ ] README: short "Web app" section linking it. AGENTS.md: one line on
+- [x] README: short "Web app" section linking it. AGENTS.md: one line on
       `tests/webapp` and the `webapp` extra.
 
 ---

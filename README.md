@@ -479,6 +479,19 @@ A model that fails to load is recorded in the JSON summary with the exception me
 
 ---
 
+## Web app
+
+A local browser front end for singlepoint, optimize, freq, md, neb and autoneb, with live plots and a 3D structure viewer:
+
+```bash
+pip install -e ".[webapp]"
+mlip webapp            # opens http://127.0.0.1:8765/
+```
+
+Each job writes the normal mliprun outputs into its own run directory, plus a `reproduce.sh` with the equivalent CLI command. ASE's EMT is always offered for demos. The app has no authentication, so keep the default localhost binding. Details, limitations and how to add a calculation type: [`webapp/README.md`](webapp/README.md).
+
+---
+
 ## Testing
 
 Install the test dependencies first (`[dev]` brings pytest and the coverage tools; `[neb]` the optional asetools):

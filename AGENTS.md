@@ -70,6 +70,7 @@ MLIP is installed — script against its exit code.
   writes into the same directory); `neb`/`autoneb` write into the current
   working directory. Full file reference: `docs/OUTPUTS.md`.
 - Python API (for scripts/notebooks): `docs/PYTHON_API.md`.
+- Web app: `pip install -e ".[webapp]"`, then `mlip webapp` (localhost only, no auth; one job at a time); tests in `tests/webapp/`; guide: `webapp/README.md`.
 - `optimize run --committee committee.yaml` relaxes with several MLIPs at
   once, one per env, and reports their disagreement as an uncertainty;
   `singlepoint run --committee` evaluates one configuration with a
