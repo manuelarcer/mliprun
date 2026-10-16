@@ -2,34 +2,13 @@
 import json
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 from ase.build import bulk
-from remote_helpers import FAKE_SSH_CMD, read_jsonl
+from remote_helpers import FAKE_SSH_CMD
 
 H = {"X-Mliprun": "1"}
 GOOD = {"name": "cos", "host": "cos-host", "default_location": "/scratch/x"}
-
-
-@pytest.fixture
-def make_client(make_app):
-    """``make_client(**create_app_kw)`` -> started TestClient (fake ssh), closed on teardown."""
-    from fastapi.testclient import TestClient
-
-    opened = []
-
-    def factory(**kw):
-        kw.setdefault("ssh_command", FAKE_SSH_CMD)
-        kw.setdefault("start_runner", False)
-        c = TestClient(make_app(**kw))
-        c.__enter__()
-        opened.append(c)
-        return c
-
-    yield factory
-    for c in reversed(opened):
-        c.__exit__(None, None, None)
 
 
 @pytest.fixture

@@ -241,6 +241,9 @@ def cmd_launch(args) -> None:
         if pids is not None:
             _out(pids)
             return
+        failed = _read_json(run_dir / EXIT_FILE)
+        if failed is not None:                      # the supervisor could not start the worker
+            raise AgentError(f"the worker could not be started: {failed.get('error')}")
         time.sleep(0.05)
     raise AgentError(f"the worker did not start within {LAUNCH_WAIT_S:.0f} s "
                      f"(see {run_dir / 'supervisor.log'})", EXIT_TIMEOUT)
@@ -262,11 +265,16 @@ def cmd_supervise(args) -> None:
     env["PYTHONUNBUFFERED"] = "1"
     override = os.environ.get(WORKER_CMD_ENV)
     cmd = json.loads(override) if override else [sys.executable, "-m", WORKER_MODULE]
-    with open(run_dir / "worker.log", "ab") as log:
-        proc = subprocess.Popen(cmd + [str(run_dir)], cwd=str(run_dir),
-                                stdin=subprocess.DEVNULL, stdout=log,
-                                stderr=subprocess.STDOUT, env=env, start_new_session=True,
-                                close_fds=True)
+    try:
+        with open(run_dir / "worker.log", "ab") as log:
+            proc = subprocess.Popen(cmd + [str(run_dir)], cwd=str(run_dir),
+                                    stdin=subprocess.DEVNULL, stdout=log,
+                                    stderr=subprocess.STDOUT, env=env,
+                                    start_new_session=True, close_fds=True)
+    except OSError as exc:
+        _write_json_atomic(run_dir / EXIT_FILE, {"returncode": None, "error": str(exc),
+                                                 "finished_at": _now_iso()})
+        raise AgentError(f"cannot start the worker: {exc}")
     _write_json_atomic(run_dir / PIDS_FILE, {
         "supervisor_pid": os.getpid(), "worker_pid": proc.pid,
         "hostname": socket.gethostname(), "started_at": _now_iso()})

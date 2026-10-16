@@ -20,7 +20,6 @@ import shlex
 import subprocess
 import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath

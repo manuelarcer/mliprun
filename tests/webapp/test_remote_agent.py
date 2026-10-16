@@ -367,3 +367,43 @@ def test_supervise_survives_sigterm(tmp_path, fake_worker_env):
     run_agent("cancel", run_dir, env=env)
     wait_until(lambda: (run_dir / "worker_exit.json").exists(), 60, what="exit file")
     assert json.loads((run_dir / "worker_exit.json").read_text())["returncode"] == 3
+
+
+def test_supervise_reports_a_worker_that_cannot_start(tmp_path, capsysbinary, monkeypatch):
+    run_dir = tmp_path / "r"
+    write_job(run_dir)
+    monkeypatch.setenv(remote_agent.WORKER_CMD_ENV, json.dumps(["/nonexistent/worker"]))
+    rc, _, err = call(capsysbinary, "supervise", run_dir)
+    assert rc == remote_agent.EXIT_ERROR and "cannot start the worker" in err
+    exit_info = json.loads((run_dir / "worker_exit.json").read_text())
+    assert exit_info["returncode"] is None and "/nonexistent/worker" in exit_info["error"]
+    assert not (run_dir / "remote_pids.json").exists()
+    # launch sees the exit file and fails at once instead of waiting 15 s
+    t0 = time.monotonic()
+    rc, _, err = call(capsysbinary, "launch", run_dir)
+    assert rc == remote_agent.EXIT_ERROR and "could not be started" in err
+    assert time.monotonic() - t0 < 10
+
+
+def test_supervise_in_process_records_pids_and_exit(tmp_path, capsysbinary, monkeypatch):
+    import signal as _signal
+
+    run_dir = tmp_path / "r"
+    write_job(run_dir, "steps=2;sleep=0.01")
+    monkeypatch.setenv(remote_agent.WORKER_CMD_ENV,
+                       json.dumps([sys.executable, str(FAKE_WORKER)]))
+    old = (_signal.getsignal(_signal.SIGTERM), _signal.getsignal(_signal.SIGHUP))
+    try:
+        rc, _, err = call(capsysbinary, "supervise", run_dir)
+    finally:
+        _signal.signal(_signal.SIGTERM, old[0])
+        _signal.signal(_signal.SIGHUP, old[1])
+    assert rc == 0, err
+    pids = json.loads((run_dir / "remote_pids.json").read_text())
+    assert pids["supervisor_pid"] == os.getpid() and pids["worker_pid"] > 0
+    assert json.loads((run_dir / "worker_exit.json").read_text())["returncode"] == 0
+    # the exit file is there, the worker is gone: poll reports exit, not alive
+    rc, out, _ = call(capsysbinary, "poll", run_dir, 0, 0)
+    header = json.loads(out.split(b"\n", 1)[0])
+    assert header["alive"] is False and header["exit"]["returncode"] == 0
+    assert header["chunk_len"] == 0

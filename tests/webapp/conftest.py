@@ -184,3 +184,28 @@ def remote_setup(tmp_path, real_probe):
                 "location": location, "machine": machine, "env": env}
 
     return factory
+
+
+@pytest.fixture
+def make_client(make_app):
+    """``make_client(**create_app_kw)`` -> started TestClient (fake ssh), closed on teardown.
+
+    Defaults: fake ssh, queue runner off. Use ``start_runner=True`` for jobs.
+    """
+    from fastapi.testclient import TestClient
+    from remote_helpers import FAKE_SSH_CMD
+
+    opened = []
+
+    def factory(**kw):
+        kw.setdefault("ssh_command", FAKE_SSH_CMD)
+        kw.setdefault("start_runner", False)
+        kw.setdefault("remote_backoff_base", 0.05)
+        c = TestClient(make_app(**kw))
+        c.__enter__()
+        opened.append(c)
+        return c
+
+    yield factory
+    for c in reversed(opened):
+        c.__exit__(None, None, None)

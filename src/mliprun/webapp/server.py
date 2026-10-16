@@ -19,7 +19,6 @@ import threading
 import time
 import zipfile
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
@@ -59,7 +58,6 @@ from mliprun.webapp.uploads import (
     MAX_FILES_PER_REQUEST,
     UploadStore,
     describe_file,
-    iso_utc,
 )
 
 logger = logging.getLogger(__name__)
@@ -497,6 +495,7 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
                     logger.warning("could not remove the remote folder %s", remote_dir)
             raise
         for rec in created:
+            ensure_runner(rec.queue_key)         # a machine added later gets its runner now
             registry.enqueue(rec)
         return _json({"jobs": [registry.summary(r) for r in created]}, 201)
 

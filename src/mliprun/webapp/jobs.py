@@ -31,7 +31,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from mliprun.webapp import events as wevents
 from mliprun.webapp import paths as paths_mod
@@ -1150,7 +1150,7 @@ class RemoteQueueRunner(QueueRunner):
             remote = job.state.setdefault("remote", {})
             remote.update({"pids": pids, "launched": True, "error": None,
                            "last_ok_at": iso_utc()})
-            reg.write_state(job)
+            self.registry.write_state(job)
             return True
         return False
 
