@@ -16,3 +16,4 @@ One entry per subagent run.
 - 2026-10-16 tester subagent: tier1 unit 46, API 8, e2e 20 (all calc types x metals, energies match direct API runs), live stream, robustness 33, tier2 MACE 6 (40s), browser 2: all pass, 0 bugs. Full suite 1114 passed, 8 skipped, 1 known fail. Orchestrator re-ran the 4 tester files: 115 passed.
 - 2026-10-16 docs subagent: webapp/README.md, webapp/docs/screenshot.png (174 KB, real EMT Cu49 optimization), README.md "Web app" section, AGENTS.md line. Noted cosmetic: header shows "phase: postprocess" after done.
 - 2026-10-16 orchestrator: PLAN.md docs path corrected to webapp/README.md; checklist ticked (all items verified by integration + tester).
+- 2026-10-16 orchestrator: user requested revision 2 (job name/location/folder + batch suffix naming, NEB band-evolution plot + highest-image viewer title, opt.traj leak fix). Contract written as PLAN.md section 15.

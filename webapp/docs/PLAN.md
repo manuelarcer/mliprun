@@ -1317,3 +1317,91 @@ above are already edited to match.
   (`mliprun_run.json`, `neb.log`, `A2B*.traj`, `idpp.*`,
   `neb_convergence.csv`) into the current directory, i.e. the repo root; it
   now uses `output_dir=tmp_path` and absolute fixture paths.
+
+---
+
+## 15. Revision 2 (user requests, 2026-10-16)
+
+This section overrides earlier sections where they conflict.
+
+### 15.1 Job name, location and folder
+
+`POST /api/jobs` gains two optional top-level keys; `label` keeps its name in
+the API but is called **Job name** in the UI.
+
+```json
+{"label": "ch3-is-proposal", "location": "~/calcs/ch3", "folder": null, ...}
+```
+
+- `label` (<= 80 chars, optional). Single job: used as is; default unchanged
+  (filename, or `"<initial> -> <final>"`). Multi-structure submit with N >= 2
+  jobs: `label` is a common base; job k gets `"<label>-<kk>"` where `kk` is k
+  zero-padded to width `w = max(2, len(str(N-1)))`, k = 0..N-1 in
+  `structure_ids` order. If `label` is null, each job gets its default label
+  (no suffix).
+- `location` (optional str): parent directory of the run folder. `~` expanded,
+  must be absolute after expansion, resolved; created with parents if missing;
+  must be a writable directory. Default: the server's runs-dir. Errors -> 422,
+  field `location`, codes `location_invalid` / `location_not_writable`.
+- `folder` (optional str): run folder name. Slug rule (applied server side to
+  both given and derived names): every char outside `[A-Za-z0-9._+-]` -> `-`,
+  runs of `-` collapsed, leading `.`/`-` stripped, max 100 chars; result must be
+  non-empty and not `_uploads`. Default for a single job: slug(label) if the
+  user gave `label`, else `job_id`. Multi-structure: base =
+  `folder` if given, else slug(`label`) if given; job k folder = `"<base>-<kk>"`
+  (same `kk` as above); if neither given, each job's folder is its `job_id`.
+  NEB/autoneb are one job: no suffix.
+- `run_dir = <location>/<folder>`. **Never overwrite**: if the path exists (file
+  or dir, even empty) -> 422 code `folder_exists`, field `folder` (multi:
+  `structure_ids[k].folder`). Duplicate folders within one submission -> 422
+  `folder_duplicate`. All-or-nothing as before.
+- `POST /api/paths/check` (requires `X-Mliprun`): request
+  `{"location": str|null, "folders": [str]}`; response 200
+  `{"location": <resolved abs str>, "exists": bool, "writable": bool|null
+  (null if it does not exist yet but its nearest existing parent is
+  writable -> creatable), "error": str|null, "folders": [{"input": str,
+  "folder": <slugged>, "path": <abs>, "exists": bool}]}`. Never creates
+  anything. Used by the UI for live feedback.
+- `GET /api/health` already returns `runs_dir`: the UI's default location.
+- **Registry**: runs may now live outside runs-dir. The Backend keeps
+  `<runs-dir>/_jobs/<job_id>.json` = `{"job_id", "run_dir": <abs>}` written at
+  submission (atomic). Startup recovery iterates `_jobs/`; entries whose
+  run_dir or `state.json` is missing are skipped (logged). Old-layout runs
+  (`<runs-dir>/<job_id>/state.json` without an index entry) are still loaded.
+  `_jobs` and `_uploads` are reserved names.
+- JobSummary/JobDetail gain `"folder": str` and `"run_dir": <abs str>`
+  (JobDetail already had run_dir; keep it absolute). `job.json` gains
+  `"folder"` and `"location"`. Zip archive prefix = `<folder>/`; download name
+  `<folder>.zip`. All URLs stay keyed by `job_id`.
+- UI ("Job" fieldset): `job-name` input (placeholder = the default), `job-location`
+  input (default from health, last used remembered in localStorage, wrapped in
+  try/catch), `job-folder` input (placeholder = derived default). When >= 2
+  structures are selected the name label reads "Common name" and a
+  `name-preview` table lists, per structure: file, job name, full folder path,
+  with existing/duplicate paths flagged (from `/api/paths/check`, debounced
+  ~300 ms). Submit is disabled while any path conflicts or the location is
+  invalid; the reason is shown.
+
+### 15.2 NEB / AutoNEB live view
+
+- **Band evolution plot** (`data-testid="plot-neb-band"`): x = image index
+  labelled `00, 01, ...` (initial endpoint = 00), y = `rel_energies` (eV,
+  E - E_image00). One line per `neb_iter` event; past iterations drawn thin
+  with a sequential colour ramp (light = early, dark = late), current
+  iteration thick with markers. To bound cost keep at most ~40 past traces
+  (thin evenly, always keep the first). Colour legend/colorbar: "iteration".
+  For autoneb the number of images can grow; each line uses its own length.
+  Kept: fmax vs iteration (and barrier vs iteration) plot.
+- **Structure viewer** for neb/autoneb shows the highest-energy image
+  (`highest_image` from the latest `neb_iter` with frames; final result for
+  finished jobs). Title element `data-testid="viewer-title"` above the viewer
+  reads exactly `Image with highest energy - NN`, NN = highest_image index
+  zero-padded to 2 digits (3 if >= 100), initial endpoint = 00. Live for the
+  running job, final for done jobs.
+- Cosmetic: the job header hides "phase: ..." once the job is terminal.
+
+### 15.3 Core fix
+
+`run_optimization` closes the `opt.traj` Trajectory it opens (also on
+exception), with no numerical change; same check for other trajectory
+writers in core (md, neb). Goldens unchanged.
