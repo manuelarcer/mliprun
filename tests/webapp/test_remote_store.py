@@ -183,6 +183,7 @@ def test_ssh_argv_construction(tmp_path):
               "ServerAliveCountMax=3", "ControlMaster=auto", "ControlPersist=300",
               f"ControlPath={tmp_path / 'ctl'}/%C"):
         assert opts[opts.index(o) - 1] == "-o"
+    assert {"-x", "-a", "-T"} <= set(opts)
     assert opts[opts.index("-p") + 1] == "2222"
     assert opts[opts.index("-i") + 1] == "/k/id"
     assert opts[opts.index("-J") + 1] == "j@jh:22"

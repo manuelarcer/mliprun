@@ -519,7 +519,10 @@ class SSHTransport:
             "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
             "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3",
             "-o", "ControlMaster=auto", "-o", f"ControlPath={self.ctl_dir}/%C",
-            "-o", "ControlPersist=300"]
+            "-o", "ControlPersist=300",
+            # no X11/agent forwarding, no tty: a user's ~/.ssh/config may enable
+            # them (cos-cluster does), and every poll would pay for them
+            "-x", "-a", "-T"]
         if machine.get("port"):
             argv += ["-p", str(machine["port"])]
         if machine.get("identity_file"):
