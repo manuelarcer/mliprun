@@ -46,6 +46,13 @@ jobs:
           # which sets parallel = true so each worker writes its own data file.
           # pytest-cov runs `coverage combine` before writing the report.
           COVERAGE_PROCESS_START: ${{ github.workspace }}/pyproject.toml
+          # Absolute data-file path. coverage resolves a relative data file
+          # against the *current directory*, and the web-app worker
+          # (`python -m mliprun.webapp.worker`) is spawned with cwd set to its
+          # run directory (a pytest tmp dir). Without this its .coverage.*
+          # files land in that tmp dir, are never combined, and worker.py /
+          # runners.py measure 0% although every webapp job test runs them.
+          COVERAGE_FILE: ${{ github.workspace }}/.coverage
         run: pytest --cov=mliprun --cov-report=xml
 
       - name: Diff coverage gate (>= 90% on changed lines)
