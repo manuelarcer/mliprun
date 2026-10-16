@@ -818,7 +818,7 @@ export class JobDetail {
       for (const f of files) {
         const name = f.path;
         const remoteOnly = !!f.remote_only;
-        const where = remoteOnly ? el("span", { class: "muted small remote-only", testid: "file-remote-only" }, ` on ${this.detail.target ? this.detail.target.machine_name : "the remote machine"}, not copied`) : null;
+        const where = remoteOnly ? el("span", { class: "muted small remote-only", testid: "file-remote-only" }, ` on ${this.detail.target ? this.detail.target.machine_name : "the remote machine"}, not copied `) : null;
         const view = TEXT_EXT.test(name) ? el("a", { href: fileUrl(jobId, name, true), target: "_blank", rel: "noopener", class: "small" }, "view") : null;
         this.filesList.append(
           el(
