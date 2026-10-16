@@ -34,6 +34,16 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from mliprun.webapp import events as wevents
+from mliprun.webapp.paths import (  # noqa: F401 - re-exported for existing imports
+    MAX_FOLDER_LEN,
+    RESERVED_FOLDERS,
+    _writable_dir,
+    folder_problem,
+    inspect_location,
+    slugify_folder,
+    suffix_width,
+    suffixed_folder,
+)
 from mliprun.webapp.uploads import iso_utc
 
 logger = logging.getLogger(__name__)
@@ -48,10 +58,6 @@ CANCEL_REASON = "cancelled by user"
 SHUTDOWN_REASON = "server shut down while the job was running"
 WORKER_MODULE = "mliprun.webapp.worker"
 JOBS_INDEX_DIR = "_jobs"
-RESERVED_FOLDERS = frozenset({"_uploads", JOBS_INDEX_DIR})
-MAX_FOLDER_LEN = 100
-_SLUG_BAD = re.compile(r"[^A-Za-z0-9._+-]")
-_SLUG_DASHES = re.compile(r"-{2,}")
 
 # result_brief keys copied from the `result` event (PLAN 4.5).
 RESULT_BRIEF_KEYS = {
@@ -127,107 +133,6 @@ def _signal_group(pid: int, sig: int) -> None:
         os.kill(pid, sig)
     except (ProcessLookupError, PermissionError, OSError):
         pass
-
-
-# --------------------------------------------------------------------------- #
-# Run folder naming and locations (PLAN 15.1)
-# --------------------------------------------------------------------------- #
-def slugify_folder(name: Any) -> str:
-    """Folder slug: chars outside ``[A-Za-z0-9._+-]`` -> ``-``, dash runs collapsed,
-    leading ``.``/``-`` stripped, at most 100 chars. May return ``""``."""
-    text = _SLUG_DASHES.sub("-", _SLUG_BAD.sub("-", str(name or "")))
-    return text.lstrip(".-")[:MAX_FOLDER_LEN]
-
-
-def folder_problem(folder: str) -> Optional[str]:
-    """Why ``folder`` (already slugged) is not usable, or None."""
-    if not folder:
-        return "the folder name is empty after removing unsupported characters"
-    if folder in RESERVED_FOLDERS:
-        return f"{folder!r} is a reserved name"
-    return None
-
-
-def suffix_width(n_jobs: int) -> int:
-    """Zero-pad width of the ``-<kk>`` suffix for ``n_jobs`` jobs."""
-    return max(2, len(str(max(n_jobs, 1) - 1)))
-
-
-def suffixed_folder(base: str, k: int, width: int) -> str:
-    """``"<slug(base)>-<kk>"`` with the base shortened so the result fits 100 chars."""
-    suffix = f"-{k:0{width}d}"
-    return slugify_folder(slugify_folder(base)[:MAX_FOLDER_LEN - len(suffix)] + suffix)
-
-
-def _writable_dir(path: Path) -> bool:
-    return os.access(str(path), os.W_OK | os.X_OK)
-
-
-def inspect_location(raw: Optional[str], default: Path,
-                     reserved: Optional[List[Path]] = None) -> dict:
-    """Resolve and check a run location without creating anything.
-
-    Returns ``{"path": Path|None, "display": str, "exists": bool,
-    "writable": bool|None, "code": str|None, "error": str|None}``;
-    ``writable`` is None when the directory does not exist yet but can be
-    created (its nearest existing parent is a writable directory).
-    """
-    out: Dict[str, Any] = {"path": None, "display": "", "exists": False, "writable": None,
-                           "code": None, "error": None}
-
-    def fail(code: str, message: str) -> dict:
-        out["code"], out["error"] = code, message
-        return out
-
-    if raw is None or not str(raw).strip():
-        path = Path(default)
-    else:
-        text = str(raw).strip()
-        try:
-            expanded = os.path.expanduser(text)
-        except Exception:  # noqa: BLE001
-            expanded = text
-        out["display"] = expanded
-        if "\0" in expanded:
-            return fail("location_invalid", "the location contains a NUL character")
-        if not os.path.isabs(expanded):
-            return fail("location_invalid",
-                        "the location must be an absolute path (or start with ~)")
-        try:
-            path = Path(expanded).resolve()
-        except (OSError, RuntimeError, ValueError) as exc:
-            return fail("location_invalid", f"cannot resolve the location: {exc}")
-    out["path"] = path
-    out["display"] = str(path)
-    for r in reserved or ():
-        r = Path(r)
-        if path == r or r in path.parents:
-            return fail("location_invalid", f"{r.name} is reserved for the web app")
-    try:
-        if path.exists():
-            out["exists"] = True
-            if not path.is_dir():
-                out["writable"] = False
-                return fail("location_invalid", "the location exists but is not a directory")
-            out["writable"] = _writable_dir(path)
-            if not out["writable"]:
-                return fail("location_not_writable", "the location is not writable")
-            return out
-        parent = path.parent
-        while not parent.exists() and parent != parent.parent:
-            parent = parent.parent
-        if not parent.is_dir():
-            out["writable"] = False
-            return fail("location_invalid", f"{parent} is not a directory")
-        if not _writable_dir(parent):
-            out["writable"] = False
-            return fail("location_not_writable",
-                        f"the location does not exist and cannot be created "
-                        f"({parent} is not writable)")
-    except OSError as exc:
-        out["writable"] = False
-        return fail("location_invalid", f"cannot inspect the location: {exc}")
-    return out
 
 
 class FolderExists(Exception):
