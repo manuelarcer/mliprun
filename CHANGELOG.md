@@ -4,6 +4,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-16
+
 ### Added
 
 - **Web app: run jobs on another machine over SSH.** A Machines panel stores
@@ -645,7 +647,8 @@ Initial public iteration.
 
 The 0.1 series predates this CHANGELOG; entries are reconstructed from the git history. There was no formal 0.1.0 release tag; `setup.py` jumped from project inception to `0.2.0` during the 2026-03-13 refactor.
 
-[Unreleased]: https://github.com/manuelarcer/mliprun/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/manuelarcer/mliprun/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/manuelarcer/mliprun/releases/tag/v0.5.0
 [0.4.0]: https://github.com/manuelarcer/mliprun/releases/tag/v0.4.0
 [0.3.0]: https://github.com/manuelarcer/mliprun/releases/tag/v0.3.0
 [0.2.0]: https://github.com/manuelarcer/mliprun/releases/tag/v0.2.0
