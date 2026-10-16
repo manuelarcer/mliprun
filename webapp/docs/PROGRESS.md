@@ -25,3 +25,4 @@ One entry per subagent run.
 - 2026-10-16 rev2 integration subagent: clear name/folder after submit (form.js); batch upload order kept (structures.js); AutoNEB live events now describe full band via process-local wrapper of ASE AutoNEB._execute_one_neb (runners.py, +test_worker assertion); stale progress bar hidden on finished jobs (jobs.js). 422 field errors verified in browser. E2E 37/37. Full suite 1158 passed, 8 skipped, 1 known fail. PLAN 11.2/15, README, screenshot updated.
 - 2026-10-16 orchestrator: launched natural-sort fix for batch suffix order.
 - 2026-10-16 natsort subagent: batch suffix order = natural filename order (structures.js selectedIds), verified incl. reload; 333 webapp tests pass.
+- 2026-10-16 rev2 tester subagent: test_rev2_naming.py (62), test_rev2_browser.py (5), NEB/AutoNEB event + core-fix tests; 0 bugs. Full suite 1230 passed, 9 skipped, 1 known fail. Orchestrator re-ran new files: 77 passed.
