@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mliprun"
-version = "0.4.0"
+version = "0.5.0"
 description = "CLI platform for running MLIP-based MD, NEB, and Benchmarking"
 readme = "README.md"
 requires-python = ">=3.9"
