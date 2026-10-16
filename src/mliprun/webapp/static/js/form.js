@@ -169,6 +169,9 @@ function lsSet(key, value) {
 }
 
 const LOCATION_KEY = "mliprun.lastLocation";
+const TARGET_KEY = "mliprun.lastTarget";
+const REMOTE_LOCATION_KEY = "mliprun.lastRemoteLocation."; // + target id
+const LOCAL_COPY_KEY = "mliprun.lastLocalCopyLocation";
 
 // ---------------------------------------------------------------- widgets
 
@@ -253,6 +256,10 @@ export class CalcForm {
     this.root = root;
     this.calcTypes = calcTypes.calc_types;
     this.calcInfo = calculators;
+    this.localCalcInfo = calculators; // payload of GET /api/calculators (this computer)
+    this.machines = [];
+    this.target = "local"; // "local" or an environment id
+    this.targetSeq = 0;
     this.structures = structures;
     this.onSubmitted = onSubmitted;
     this.saved = {}; // calc_type -> {field: value} remembered across type switches
@@ -288,32 +295,22 @@ export class CalcForm {
     this.typeSelect.addEventListener("change", () => this._onTypeChange());
 
     // Calculator block (the only hard-coded part besides structure_every).
-    this.calcSelect = el(
-      "select",
-      { testid: "calculator-select", id: "calculator-select" },
-      this.calcInfo.calculators.map((c) => el("option", { value: c.name }, c.label || c.name)),
+    this.runOnSelect = el("select", { testid: "run-on-select", id: "run-on-select" });
+    this.runOnStatus = el("div", { class: "muted small", testid: "run-on-status" });
+    this.runOnWrap = el(
+      "div",
+      { class: "field hidden", testid: "field-run-on", title: "This computer, or a Python environment on a machine defined in the Machines panel." },
+      el("label", { for: "run-on-select" }, "Run on"),
+      this.runOnSelect,
+      this.runOnStatus,
     );
-    const def = this.calcInfo.default;
-    if (this.calcInfo.calculators.some((c) => c.name === def)) this.calcSelect.value = def;
+    this.runOnSelect.addEventListener("change", () => this._onTargetChange());
+    this.calcSelect = el("select", { testid: "calculator-select", id: "calculator-select" });
     this.calcNote = el("div", { class: "muted small" });
     this.taskSelect = el("select", { testid: "task-select", id: "task-select" });
     this.taskWrap = el("div", { class: "field hidden" }, el("label", { for: "task-select" }, "Task / head"), this.taskSelect);
-    const dev = this.calcInfo.devices || { choices: ["auto", "cpu", "cuda"], default: "auto" };
-    this.deviceSelect = el(
-      "select",
-      { testid: "device-select", id: "device-select" },
-      dev.choices.map((d) => {
-        let label = d;
-        let disabled = false;
-        if (d === "cuda" && dev.cuda_available === false) {
-          label = "cuda (not available)";
-          disabled = true;
-        } else if (d === "cuda" && dev.cuda_available === null) label = "cuda (detection pending)";
-        if (d === "auto") label = "auto (GPU if available)";
-        return el("option", { value: d, disabled }, label);
-      }),
-    );
-    this.deviceSelect.value = dev.default || "auto";
+    this.deviceSelect = el("select", { testid: "device-select", id: "device-select" });
+    this._fillCalculatorSelects();
     this.calcSelect.addEventListener("change", () => this._onCalculatorChange());
 
     this.inputsBox = el("div", { class: "inputs-box" });
@@ -336,18 +333,28 @@ export class CalcForm {
     });
     this.labelInput = el("input", { type: "text", maxlength: "80", id: "job-label", testid: "job-name", spellcheck: "false", placeholder: "default: file name" });
     this.locationInput = el("input", { type: "text", id: "job-location", testid: "job-location", spellcheck: "false", placeholder: "server runs directory" });
+    this.localCopyInput = el("input", { type: "text", id: "job-local-location", testid: "job-local-location", spellcheck: "false", placeholder: "server runs directory" });
     this.folderInput = el("input", { type: "text", maxlength: "100", id: "job-folder", testid: "job-folder", spellcheck: "false", placeholder: "job id (automatic)" });
     this.nameLabel = el("label", { for: "job-label" }, "Job name");
     this.nameWrap = el("div", { class: "field", testid: "field-job-name" }, this.nameLabel, this.labelInput);
-    this.locationStatus = el("div", { class: "muted small path-status" });
+    this.locationStatus = el("div", { class: "muted small path-status", testid: "location-status" });
+    this.locationLabel = el("label", { for: "job-location" }, "Location");
     this.locationWrap = el(
       "div",
       { class: "field", testid: "field-job-location", title: "Parent directory of the run folder (absolute, or starting with ~). Created if missing." },
-      el("label", { for: "job-location" }, "Location"),
+      this.locationLabel,
       this.locationInput,
       this.locationStatus,
     );
-    this.folderStatus = el("div", { class: "muted small path-status" });
+    this.localCopyStatus = el("div", { class: "muted small path-status", testid: "local-copy-status" });
+    this.localCopyWrap = el(
+      "div",
+      { class: "field hidden", testid: "field-job-local-location", title: "Where the copy of the results is kept on this computer. Live plots and small output files are mirrored here; one folder per job." },
+      el("label", { for: "job-local-location" }, "Local copy location"),
+      this.localCopyInput,
+      this.localCopyStatus,
+    );
+    this.folderStatus = el("div", { class: "muted small path-status", testid: "folder-status" });
     this.folderWrap = el(
       "div",
       { class: "field", testid: "field-job-folder", title: "Name of the run folder inside Location. Existing folders are never overwritten." },
@@ -358,9 +365,11 @@ export class CalcForm {
     this.namePreview = el("div", { class: "name-preview hidden", testid: "name-preview" });
     const storedLoc = lsGet(LOCATION_KEY);
     if (storedLoc) this.locationInput.value = storedLoc;
+    const storedCopy = lsGet(LOCAL_COPY_KEY);
+    if (storedCopy) this.localCopyInput.value = storedCopy;
     this.pathCheck = { seq: 0, data: null, key: null, unavailable: false };
     this.checkPathsSoon = debounce(() => this._checkPaths(), 300);
-    for (const i of [this.labelInput, this.locationInput, this.folderInput]) {
+    for (const i of [this.labelInput, this.locationInput, this.localCopyInput, this.folderInput]) {
       i.addEventListener("input", () => {
         this._setJobFieldError(i, null);
         this._updateNaming();
@@ -380,6 +389,7 @@ export class CalcForm {
         "fieldset",
         {},
         el("legend", {}, "Calculator"),
+        this.runOnWrap,
         el("div", { class: "field" }, el("label", { for: "calculator-select" }, "Model"), this.calcSelect, this.calcNote),
         this.taskWrap,
         el("div", { class: "field" }, el("label", { for: "device-select" }, "Device"), this.deviceSelect),
@@ -398,6 +408,7 @@ export class CalcForm {
         ),
         this.nameWrap,
         this.locationWrap,
+        this.localCopyWrap,
         this.folderWrap,
         this.namePreview,
       ),
@@ -412,6 +423,31 @@ export class CalcForm {
     this.root.append(el("h2", {}, "New calculation"), this.form);
     this._onCalculatorChange();
     this._onTypeChange(true);
+  }
+
+  /** (Re)build the Model and Device selects from this.calcInfo, keeping the model if it still exists. */
+  _fillCalculatorSelects() {
+    const prev = this.calcSelect.value;
+    clear(this.calcSelect);
+    for (const c of this.calcInfo.calculators) this.calcSelect.append(el("option", { value: c.name }, c.label || c.name));
+    const def = this.calcInfo.default;
+    if (prev && this.calcInfo.calculators.some((c) => c.name === prev)) this.calcSelect.value = prev;
+    else if (this.calcInfo.calculators.some((c) => c.name === def)) this.calcSelect.value = def;
+    const dev = this.calcInfo.devices || { choices: ["auto", "cpu", "cuda"], default: "auto" };
+    const prevDev = this.deviceSelect.value;
+    clear(this.deviceSelect);
+    for (const d of dev.choices) {
+      let label = d;
+      let disabled = false;
+      if (d === "cuda" && dev.cuda_available === false) {
+        label = "cuda (not available)";
+        disabled = true;
+      } else if (d === "cuda" && dev.cuda_available === null) label = "cuda (detection pending)";
+      if (d === "auto") label = "auto (GPU if available)";
+      this.deviceSelect.append(el("option", { value: d, disabled }, label));
+    }
+    const keep = prevDev && dev.choices.includes(prevDev) && !(prevDev === "cuda" && dev.cuda_available === false);
+    this.deviceSelect.value = keep ? prevDev : dev.default || "auto";
   }
 
   _onCalculatorChange() {
@@ -601,9 +637,109 @@ export class CalcForm {
   /** Default location from GET /api/health (used when nothing was remembered). */
   setDefaultLocation(runsDir) {
     this.runsDir = runsDir || null;
-    if (runsDir) this.locationInput.placeholder = runsDir;
-    if (runsDir && !this.locationInput.value.trim()) this.locationInput.value = runsDir;
+    if (runsDir) {
+      this.localCopyInput.placeholder = runsDir;
+      if (!this.localCopyInput.value.trim()) this.localCopyInput.value = runsDir;
+      if (!this.isRemote) {
+        this.locationInput.placeholder = runsDir;
+        if (!this.locationInput.value.trim()) this.locationInput.value = runsDir;
+      }
+    }
     this._updateNaming();
+  }
+
+  // ----------------------------------------------------------- run on (target)
+
+  get isRemote() {
+    return this.target !== "local";
+  }
+
+  /** {machine, env} of the selected remote target, or null. */
+  get remoteTarget() {
+    if (!this.isRemote) return null;
+    for (const m of this.machines) {
+      const env = m.envs.find((e) => e.id === this.target);
+      if (env) return { machine: m, env };
+    }
+    return null;
+  }
+
+  /** Called with GET /api/machines: refresh the "Run on" options without a page reload. */
+  setMachines(machines) {
+    const first = !this.machinesLoaded;
+    this.machinesLoaded = true;
+    this.machines = machines || [];
+    const sel = this.runOnSelect;
+    clear(sel);
+    sel.append(el("option", { value: "local" }, "This computer"));
+    let nEnvs = 0;
+    for (const m of this.machines) {
+      for (const e of m.envs) {
+        nEnvs++;
+        const ok = !!(e.probe && e.probe.ok);
+        const opt = el("option", { value: e.id, disabled: !ok }, `${e.name} (${m.name})${ok ? "" : " (probe failed)"}`);
+        sel.append(opt);
+      }
+    }
+    this.runOnWrap.classList.toggle("hidden", nEnvs === 0);
+    const usable = (id) => id === "local" || this.machines.some((m) => m.envs.some((e) => e.id === id && e.probe && e.probe.ok));
+    let want = this.target;
+    if (first) want = lsGet(TARGET_KEY) || "local";
+    if (!usable(want)) want = "local";
+    sel.value = want;
+    const changed = want !== this.target;
+    // A remote target is reloaded even when unchanged: the probe may have changed.
+    if (changed || this.isRemote) this._onTargetChange(true);
+  }
+
+  async _onTargetChange(fromMachines = false) {
+    const prevTarget = this.target;
+    const id = this.runOnSelect.value;
+    const seq = ++this.targetSeq;
+    this.runOnStatus.textContent = "";
+    this._setJobFieldError("target", null);
+    let info;
+    if (id === "local") info = this.localCalcInfo;
+    else {
+      try {
+        info = await api.calculators(id);
+      } catch (err) {
+        if (seq !== this.targetSeq) return;
+        // Stay on the previous target and say why.
+        this.runOnSelect.value = fromMachines ? "local" : prevTarget;
+        if (fromMachines) await this._onTargetChange(); // falls back to this computer
+        this.runOnStatus.textContent = `Cannot use that environment: ${err.message}`;
+        this.runOnStatus.classList.add("error-text");
+        return;
+      }
+    }
+    if (seq !== this.targetSeq) return;
+    this.runOnStatus.classList.remove("error-text");
+    this.target = id;
+    lsSet(TARGET_KEY, id);
+    this.calcInfo = info;
+    this._fillCalculatorSelects();
+    this._onCalculatorChange();
+    this._applyTargetLocations(prevTarget !== id);
+    this._refreshVisibility();
+    this._updateNaming();
+  }
+
+  /** Location label/default for the current target; Local copy field only for remote targets. */
+  _applyTargetLocations(switched) {
+    const rt = this.remoteTarget;
+    this.localCopyWrap.classList.toggle("hidden", !rt);
+    this.locationLabel.textContent = rt ? "Remote location" : "Location";
+    this.pathCheck.data = null;
+    if (!switched) return;
+    if (rt) {
+      this.locationInput.placeholder = rt.machine.default_location;
+      this.locationInput.value = lsGet(REMOTE_LOCATION_KEY + this.target) || rt.machine.default_location;
+      this.locationStatus.textContent = "";
+    } else {
+      this.locationInput.placeholder = this.runsDir || "server runs directory";
+      this.locationInput.value = lsGet(LOCATION_KEY) || this.runsDir || "";
+    }
   }
 
   /** Jobs this submission would create: [{file, defaultLabel}] and whether it is a multi submit. */
@@ -629,8 +765,23 @@ export class CalcForm {
 
   _clientLocationError() {
     const loc = this._locationValue();
-    if (loc && !/^(\/|~)/.test(loc)) return "Location must be an absolute path (start with / or ~).";
+    if (loc && !/^(\/|~)/.test(loc)) return `${this.isRemote ? "Remote location" : "Location"} must be an absolute path (start with / or ~).`;
     return null;
+  }
+
+  _localCopyValue() {
+    return this.localCopyInput.value.trim();
+  }
+
+  _clientLocalCopyError() {
+    const loc = this._localCopyValue();
+    if (this.isRemote && loc && !/^(\/|~)/.test(loc)) return "Local copy location must be an absolute path (start with / or ~).";
+    return null;
+  }
+
+  /** Inputs that identify one path check. */
+  _checkKey(folders) {
+    return JSON.stringify([this.target, this._locationValue() || null, this.isRemote ? this._localCopyValue() || null : null, folders]);
   }
 
   _updateNaming() {
@@ -655,16 +806,16 @@ export class CalcForm {
     const plan = (this.naming && this.naming.plan) || [];
     const folders = plan.map((p) => p.folder).filter((f) => f);
     const location = this._locationValue() || null;
-    if (this._clientLocationError()) {
+    if (this._clientLocationError() || this._clientLocalCopyError()) {
       this.pathCheck.data = null;
       this._renderNaming();
       return;
     }
     if (this.pathCheck.unavailable) return;
-    const key = JSON.stringify([location, folders]);
+    const key = this._checkKey(folders);
     const seq = ++this.pathCheck.seq;
     try {
-      const data = await api.checkPaths(location, folders);
+      const data = await api.checkPaths(location, folders, this.target, this._localCopyValue() || null);
       if (seq !== this.pathCheck.seq) return; // a newer check is on its way
       this.pathCheck.data = data;
       this.pathCheck.key = key;
@@ -682,8 +833,7 @@ export class CalcForm {
     const d = this.pathCheck.data;
     if (!d) return null;
     const plan = (this.naming && this.naming.plan) || [];
-    const key = JSON.stringify([this._locationValue() || null, plan.map((p) => p.folder).filter((f) => f)]);
-    return key === this.pathCheck.key ? d : null;
+    return this._checkKey(plan.map((p) => p.folder).filter((f) => f)) === this.pathCheck.key ? d : null;
   }
 
   _locationProblem(check) {
@@ -696,23 +846,43 @@ export class CalcForm {
     return null;
   }
 
+  _localCopyProblem(check) {
+    const client = this._clientLocalCopyError();
+    if (client) return client;
+    const lc = check && check.local_location;
+    if (!lc) return null;
+    if (lc.error) return lc.error;
+    if (lc.exists === true && lc.writable === false) return `${lc.location} is not writable.`;
+    if (lc.exists === false && lc.writable === false) return `${lc.location} does not exist and cannot be created.`;
+    return null;
+  }
+
   /** Rows with resolved paths and conflict flags. */
   _namingRows(check) {
     const plan = (this.naming && this.naming.plan) || [];
     const files = (this.naming && this.naming.files) || [];
-    const loc = check ? check.location : this._locationValue() || this.runsDir || "";
+    const rt = this.remoteTarget;
+    const loc = check ? check.location : this._locationValue() || (rt ? rt.machine.default_location : this.runsDir) || "";
+    const localLoc = check && check.local_location && check.local_location.location ? check.local_location.location : this._localCopyValue() || this.runsDir || "";
     let k = 0;
     const rows = plan.map((p, i) => {
-      const row = { file: files[i], label: p.label, folder: p.folder, path: null, exists: false, duplicate: false };
+      const row = { file: files[i], label: p.label, folder: p.folder, path: null, localPath: null, exists: false, duplicate: false };
       if (p.folder) {
         const info = check && Array.isArray(check.folders) ? check.folders[k] : null;
         k++;
         if (info) {
           row.folder = info.folder;
-          row.path = info.path;
+          row.path = info.path || joinPath(loc, info.folder);
+          row.localPath = info.local_path || joinPath(localLoc, info.folder);
           row.exists = !!info.exists;
-        } else row.path = joinPath(loc, p.folder);
-      } else row.path = joinPath(loc, "<job id>");
+        } else {
+          row.path = joinPath(loc, p.folder);
+          row.localPath = joinPath(localLoc, p.folder);
+        }
+      } else {
+        row.path = joinPath(loc, "<job id>");
+        row.localPath = joinPath(localLoc, "<job id>");
+      }
       return row;
     });
     const count = new Map();
@@ -740,13 +910,35 @@ export class CalcForm {
       this.locationStatus.textContent = "";
     }
 
+    // Local copy status line (remote targets only)
+    const copyProblem = this.isRemote ? this._localCopyProblem(check) : null;
+    this.localCopyWrap.classList.toggle("has-warning", !!copyProblem);
+    const lc = check && check.local_location;
+    if (copyProblem) {
+      this.localCopyStatus.className = "small path-status path-bad";
+      this.localCopyStatus.textContent = copyProblem;
+    } else if (lc && lc.location) {
+      this.localCopyStatus.className = "muted small path-status";
+      this.localCopyStatus.textContent = lc.exists ? `→ ${lc.location}` : `→ ${lc.location} (will be created)`;
+    } else {
+      this.localCopyStatus.className = "muted small path-status";
+      this.localCopyStatus.textContent = "";
+    }
+
     // Single job: one path line under the folder input.
     const multi = this.naming.multi;
+    const remote = this.isRemote;
     if (!multi && rows.length === 1) {
       const r = rows[0];
       const bad = r.exists;
       this.folderStatus.className = `small path-status${bad ? " path-bad" : " muted"}`;
-      this.folderStatus.textContent = bad ? `${r.path} already exists; choose another folder name (runs are never overwritten).` : `Run folder: ${r.path}`;
+      if (remote) {
+        this.folderStatus.textContent = bad
+          ? `${r.path} (remote) or ${r.localPath} (local copy) already exists; choose another folder name (runs are never overwritten).`
+          : `Remote folder: ${r.path} · Local copy: ${r.localPath}`;
+      } else {
+        this.folderStatus.textContent = bad ? `${r.path} already exists; choose another folder name (runs are never overwritten).` : `Run folder: ${r.path}`;
+      }
     } else {
       this.folderStatus.className = "muted small path-status";
       this.folderStatus.textContent = "";
@@ -764,6 +956,7 @@ export class CalcForm {
           el("td", { class: "np-file" }, r.file),
           el("td", { class: "np-label" }, r.label),
           el("td", { class: "np-path", title: r.path }, r.path, flag ? el("span", { class: "badge status-failed np-flag" }, flag === "exists" ? "already exists" : "duplicate") : null),
+          remote ? el("td", { class: "np-local-path", title: r.localPath }, r.localPath) : null,
         );
       });
       this.namePreview.append(
@@ -771,14 +964,15 @@ export class CalcForm {
         el(
           "div",
           { class: "table-scroll" },
-          el("table", { class: "data-table" }, el("thead", {}, el("tr", {}, el("th", {}, "File"), el("th", {}, "Job name"), el("th", {}, "Folder"))), el("tbody", {}, body)),
+          el("table", { class: "data-table" }, el("thead", {}, el("tr", {}, el("th", {}, "File"), el("th", {}, "Job name"), el("th", {}, remote ? "Remote folder" : "Folder"), remote ? el("th", {}, "Local copy") : null)), el("tbody", {}, body)),
         ),
       );
     }
 
     // Gate the submit button.
     const reasons = [];
-    if (locProblem) reasons.push(`Location: ${locProblem}`);
+    if (locProblem) reasons.push(`${remote ? "Remote location" : "Location"}: ${locProblem}`);
+    if (copyProblem) reasons.push(`Local copy location: ${copyProblem}`);
     const nExist = rows.filter((r) => r.exists).length;
     const nDup = rows.filter((r) => r.duplicate).length;
     if (nExist) reasons.push(nExist === 1 && !multi ? "The run folder already exists. Choose another folder name." : `${nExist} run folder${nExist > 1 ? "s" : ""} already exist${nExist > 1 ? "" : "s"}. Choose another name or folder.`);
@@ -794,11 +988,11 @@ export class CalcForm {
   }
 
   _jobFieldWrap(name) {
-    return { label: this.nameWrap, location: this.locationWrap, folder: this.folderWrap }[name] || null;
+    return { label: this.nameWrap, location: this.locationWrap, folder: this.folderWrap, local_location: this.localCopyWrap, target: this.runOnWrap }[name] || null;
   }
 
   _setJobFieldError(inputOrName, message) {
-    const name = typeof inputOrName === "string" ? inputOrName : inputOrName === this.labelInput ? "label" : inputOrName === this.locationInput ? "location" : "folder";
+    const name = typeof inputOrName === "string" ? inputOrName : inputOrName === this.labelInput ? "label" : inputOrName === this.locationInput ? "location" : inputOrName === this.localCopyInput ? "local_location" : "folder";
     const wrap = this._jobFieldWrap(name);
     if (!wrap) return false;
     const old = wrap.querySelector('[data-testid="field-error"]');
@@ -812,7 +1006,7 @@ export class CalcForm {
 
   _clearErrors() {
     for (const [name] of this.widgets) this._setFieldError(name, null);
-    if (this.nameWrap) for (const n of ["label", "location", "folder"]) this._setJobFieldError(n, null);
+    if (this.nameWrap) for (const n of ["label", "location", "folder", "local_location", "target"]) this._setJobFieldError(n, null);
     this.submitError.classList.add("hidden");
     clear(this.submitError);
   }
@@ -895,6 +1089,13 @@ export class CalcForm {
     if (label) payload.label = label;
     const location = this._locationValue();
     if (location) payload.location = location;
+    if (this.isRemote) {
+      payload.target = this.target; // local jobs never carry a target key
+      const copy = this._localCopyValue();
+      if (copy) payload.local_location = copy;
+      const copyErr = this._clientLocalCopyError();
+      if (copyErr) errors.push(copyErr);
+    }
     const folder = this.folderInput.value.trim();
     if (folder) payload.folder = folder;
     const locErr = this._clientLocationError();
@@ -958,7 +1159,10 @@ export class CalcForm {
     try {
       const { jobs } = await api.submitJob(payload);
       this.submitOk.textContent = `Submitted ${jobs.length} job${jobs.length > 1 ? "s" : ""}.`;
-      if (payload.location) lsSet(LOCATION_KEY, payload.location);
+      if (this.isRemote) {
+        if (payload.location) lsSet(REMOTE_LOCATION_KEY + this.target, payload.location);
+        if (payload.local_location) lsSet(LOCAL_COPY_KEY, payload.local_location);
+      } else if (payload.location) lsSet(LOCATION_KEY, payload.location);
       // The folders just created now exist on disk: clear Job name and Folder
       // name (Location is kept) so the next submission starts from fresh,
       // non-conflicting defaults instead of flagging its own folders.
@@ -980,7 +1184,7 @@ export class CalcForm {
 
   /** Place a 422 detail for label/location/folder next to its input. Returns true if handled. */
   _jobFieldError(d, payload) {
-    const m = String(d.field || "").match(/^(?:structure_ids\[(\d+)\]\.)?(label|location|folder)$/);
+    const m = String(d.field || "").match(/^(?:structure_ids\[(\d+)\]\.)?(label|location|folder|local_location|target)$/);
     if (!m) return false;
     let msg = d.message;
     if (m[1] !== undefined && payload.structure_ids) {

@@ -71,7 +71,16 @@ async function request(method, path, { json, form, query } = {}) {
 export const api = {
   health: () => request("GET", "/api/health"),
   calcTypes: () => request("GET", "/api/calc-types"),
-  calculators: () => request("GET", "/api/calculators"),
+  calculators: (target) => request("GET", "/api/calculators", { query: target && target !== "local" ? { target } : undefined }),
+  listMachines: () => request("GET", "/api/machines"),
+  addMachine: (body) => request("POST", "/api/machines", { json: body }),
+  updateMachine: (mid, body) => request("PUT", `/api/machines/${encodeURIComponent(mid)}`, { json: body }),
+  deleteMachine: (mid) => request("DELETE", `/api/machines/${encodeURIComponent(mid)}`),
+  testMachine: (mid) => request("POST", `/api/machines/${encodeURIComponent(mid)}/test`),
+  addEnv: (mid, body) => request("POST", `/api/machines/${encodeURIComponent(mid)}/envs`, { json: body }),
+  updateEnv: (mid, eid, body) => request("PUT", `/api/machines/${encodeURIComponent(mid)}/envs/${encodeURIComponent(eid)}`, { json: body }),
+  deleteEnv: (mid, eid) => request("DELETE", `/api/machines/${encodeURIComponent(mid)}/envs/${encodeURIComponent(eid)}`),
+  probeEnv: (mid, eid) => request("POST", `/api/machines/${encodeURIComponent(mid)}/envs/${encodeURIComponent(eid)}/probe`),
   listUploads: () => request("GET", "/api/uploads"),
   getUpload: (id) => request("GET", `/api/uploads/${encodeURIComponent(id)}`),
   upload(files, format) {
@@ -86,7 +95,14 @@ export const api = {
   cancelJob: (id) => request("POST", `/api/jobs/${encodeURIComponent(id)}/cancel`),
   events: (id, since = 0, limit = 1000) =>
     request("GET", `/api/jobs/${encodeURIComponent(id)}/events`, { query: { since, limit } }),
-  checkPaths: (location, folders) => request("POST", "/api/paths/check", { json: { location, folders } }),
+  checkPaths(location, folders, target, localLocation) {
+    const json = { location, folders };
+    if (target && target !== "local") {
+      json.target = target;
+      json.local_location = localLocation || null;
+    }
+    return request("POST", "/api/paths/check", { json });
+  },
   files: (id) => request("GET", `/api/jobs/${encodeURIComponent(id)}/files`),
 };
 

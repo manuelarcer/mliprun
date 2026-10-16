@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Web app: run jobs on another machine over SSH.** A Machines panel stores
+  SSH machines and their Python environments (one per MLIP venv) in
+  `~/.mliprun/webapp-machines.json`, with nothing preconfigured; each
+  submission picks "This computer" or one environment. A remote job runs in
+  a Remote location on that machine and keeps a Local copy on this one: live
+  events are polled over a shared SSH connection, files up to a per-machine
+  limit (default 50 MB) are copied back at the end, and larger ones stream
+  from the remote on request. The remote worker is detached, so it survives
+  network loss and server restarts (it is reattached, not failed). One queue
+  per machine. Uses the system `ssh` only; no new dependency. Verified on
+  cos-cluster with EMT and MACE on CUDA: the web app's final energy equals
+  its own `reproduce.sh` run through the CLI (-138.81341552734375 eV).
+
 - **`md run --compressibility` and `--pfactor`, the barostat response
   controls.** `--compressibility` (1/GPa, Berendsen NPT) and `--pfactor`
   (GPa·fs², `--barostat npt`) were reachable only through the Python API,

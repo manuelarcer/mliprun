@@ -55,6 +55,10 @@ async function cancelJob(jobId, button, onDone) {
 
 // ================================================================= job list
 
+function isRemote(job) {
+  return !!(job && job.target && job.target.kind === "remote");
+}
+
 export class JobList {
   constructor(root) {
     this.root = root;
@@ -155,7 +159,9 @@ export class JobList {
       el(
         "div",
         { class: "jr-main" },
-        el("div", {}, el("span", { class: "jr-type" }, job.calc_type), " ", el("span", { class: "jr-label" }, job.label || ""), " ", el("span", { class: "muted" }, job.formula ? `${job.formula}` : "")),
+        el("div", {}, el("span", { class: "jr-type" }, job.calc_type), " ", el("span", { class: "jr-label" }, job.label || ""), " ", el("span", { class: "muted" }, job.formula ? `${job.formula}` : ""),
+          isRemote(job) ? [" ", el("span", { class: "tag target-tag", testid: "job-target", title: `Runs on ${job.target.env_name} (${job.target.machine_name})` }, job.target.env_name || job.target.machine_name)] : null,
+        ),
         el("div", { class: "jr-extra muted small" + (job.status === "failed" ? " error-text" : "") }, extra || fmtTime(job.created_at)),
         job.folder || job.run_dir
           ? el("div", { class: "jr-folder muted small", title: job.run_dir || "" }, "folder ", job.folder || job.run_dir)
@@ -197,7 +203,32 @@ export class JobDetail {
     );
   }
 
+  _showRemoteError(msg) {
+    if (!this.remoteWarn) return;
+    clear(this.remoteWarn);
+    this.remoteWarn.classList.toggle("hidden", !msg);
+    if (msg) this.remoteWarn.append(`Connection problem: ${msg} — the job keeps running on the remote; retrying`);
+  }
+
+  async _pollRemoteError() {
+    const id = this.jobId;
+    if (!id || TERMINAL.has(this.status)) {
+      this._showRemoteError(null);
+      return;
+    }
+    try {
+      const fresh = await api.getJob(id);
+      if (this.jobId !== id) return;
+      this.detail.remote_error = fresh.remote_error;
+      this._showRemoteError(fresh.remote_error);
+    } catch {
+      /* the next tick will catch up */
+    }
+  }
+
   _teardown() {
+    if (this.remoteTimer) clearInterval(this.remoteTimer);
+    this.remoteTimer = null;
     if (this.jobId) ws.unsubscribe(this.jobId);
     if (this.unsub) this.unsub();
     this.unsub = null;
@@ -289,6 +320,12 @@ export class JobDetail {
     this.progressText = el("span", { class: "small" });
     this.progressBox = el("div", { class: "progress hidden" }, el("div", { class: "progress-track" }, this.progressBar), this.progressText);
     this.timesEl = el("div", { class: "muted small" });
+    this.remoteWarn = el("div", { class: "banner banner-warn small hidden", testid: "job-remote-error", role: "status" });
+    this._showRemoteError(d.remote_error);
+    if (isRemote(d)) {
+      // The connection state changes without any job event: poll the detail while the job is live.
+      this.remoteTimer = setInterval(() => this._pollRemoteError(), 3000);
+    }
 
     const c = d.calculator || {};
     const task = c.uma_task || c.mace_head || c.sevennet_task;
@@ -312,6 +349,15 @@ export class JobDetail {
       d.run_dir || d.folder
         ? el("div", { class: "muted small dh-folder", title: "Run folder" }, "Folder: ", el("code", {}, d.run_dir || d.folder))
         : null,
+      isRemote(d)
+        ? el(
+            "div",
+            { class: "muted small dh-remote", testid: "job-remote-info" },
+            el("div", { testid: "job-runs-on" }, "Runs on: ", el("strong", {}, `${d.target.env_name} (${d.target.machine_name})`)),
+            d.remote_run_dir ? el("div", { testid: "job-remote-folder" }, "Remote folder: ", el("code", {}, d.remote_run_dir)) : null,
+          )
+        : null,
+      this.remoteWarn,
       this.timesEl,
       this.progressBox,
       this.errorBox,
@@ -771,13 +817,16 @@ export class JobDetail {
       if (!files.length) this.filesList.append(el("li", { class: "muted" }, "No files yet."));
       for (const f of files) {
         const name = f.path;
+        const remoteOnly = !!f.remote_only;
+        const where = remoteOnly ? el("span", { class: "muted small remote-only", testid: "file-remote-only" }, ` on ${this.detail.target ? this.detail.target.machine_name : "the remote machine"}, not copied `) : null;
         const view = TEXT_EXT.test(name) ? el("a", { href: fileUrl(jobId, name, true), target: "_blank", rel: "noopener", class: "small" }, "view") : null;
         this.filesList.append(
           el(
             "li",
-            {},
+            { testid: "file-item", dataset: { path: name, remoteOnly: String(remoteOnly) } },
             el("a", { href: fileUrl(jobId, name), download: name.split("/").pop() }, name),
             el("span", { class: "muted small" }, ` ${fmtBytes(f.size)} `),
+            where,
             view,
           ),
         );

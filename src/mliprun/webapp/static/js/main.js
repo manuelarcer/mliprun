@@ -5,6 +5,7 @@ import { el, libsAvailable } from "./util.js";
 import { StructuresPanel } from "./structures.js";
 import { CalcForm } from "./form.js";
 import { JobList, JobDetail } from "./jobs.js";
+import { MachinesPanel } from "./machines.js";
 
 function libBanner() {
   const { mol, plotly } = libsAvailable();
@@ -67,6 +68,13 @@ async function boot() {
       if (jobs.length) location.hash = `#/jobs/${jobs[0].job_id}`;
     },
   });
+
+  const machinesPanel = new MachinesPanel({ onChange: (machines) => form.setMachines(machines) });
+  document.getElementById("machines-button").addEventListener("click", () => machinesPanel.open());
+  api
+    .listMachines()
+    .then(({ machines }) => form.setMachines(machines))
+    .catch(() => form.setMachines([])); // older server without machines: local only
 
   health.then((h) => form.setDefaultLocation(h ? h.runs_dir : null));
 

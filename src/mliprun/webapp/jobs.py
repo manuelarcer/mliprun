@@ -31,9 +31,21 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from mliprun.webapp import events as wevents
+from mliprun.webapp import paths as paths_mod
+from mliprun.webapp import remote as wremote
+from mliprun.webapp.paths import (  # noqa: F401 - re-exported for existing imports
+    MAX_FOLDER_LEN,
+    RESERVED_FOLDERS,
+    _writable_dir,
+    folder_problem,
+    inspect_location,
+    slugify_folder,
+    suffix_width,
+    suffixed_folder,
+)
 from mliprun.webapp.uploads import iso_utc
 
 logger = logging.getLogger(__name__)
@@ -48,10 +60,8 @@ CANCEL_REASON = "cancelled by user"
 SHUTDOWN_REASON = "server shut down while the job was running"
 WORKER_MODULE = "mliprun.webapp.worker"
 JOBS_INDEX_DIR = "_jobs"
-RESERVED_FOLDERS = frozenset({"_uploads", JOBS_INDEX_DIR})
-MAX_FOLDER_LEN = 100
-_SLUG_BAD = re.compile(r"[^A-Za-z0-9._+-]")
-_SLUG_DASHES = re.compile(r"-{2,}")
+LOCAL_KEY = "local"
+MAX_POLL_BYTES = 1 << 20
 
 # result_brief keys copied from the `result` event (PLAN 4.5).
 RESULT_BRIEF_KEYS = {
@@ -127,107 +137,6 @@ def _signal_group(pid: int, sig: int) -> None:
         os.kill(pid, sig)
     except (ProcessLookupError, PermissionError, OSError):
         pass
-
-
-# --------------------------------------------------------------------------- #
-# Run folder naming and locations (PLAN 15.1)
-# --------------------------------------------------------------------------- #
-def slugify_folder(name: Any) -> str:
-    """Folder slug: chars outside ``[A-Za-z0-9._+-]`` -> ``-``, dash runs collapsed,
-    leading ``.``/``-`` stripped, at most 100 chars. May return ``""``."""
-    text = _SLUG_DASHES.sub("-", _SLUG_BAD.sub("-", str(name or "")))
-    return text.lstrip(".-")[:MAX_FOLDER_LEN]
-
-
-def folder_problem(folder: str) -> Optional[str]:
-    """Why ``folder`` (already slugged) is not usable, or None."""
-    if not folder:
-        return "the folder name is empty after removing unsupported characters"
-    if folder in RESERVED_FOLDERS:
-        return f"{folder!r} is a reserved name"
-    return None
-
-
-def suffix_width(n_jobs: int) -> int:
-    """Zero-pad width of the ``-<kk>`` suffix for ``n_jobs`` jobs."""
-    return max(2, len(str(max(n_jobs, 1) - 1)))
-
-
-def suffixed_folder(base: str, k: int, width: int) -> str:
-    """``"<slug(base)>-<kk>"`` with the base shortened so the result fits 100 chars."""
-    suffix = f"-{k:0{width}d}"
-    return slugify_folder(slugify_folder(base)[:MAX_FOLDER_LEN - len(suffix)] + suffix)
-
-
-def _writable_dir(path: Path) -> bool:
-    return os.access(str(path), os.W_OK | os.X_OK)
-
-
-def inspect_location(raw: Optional[str], default: Path,
-                     reserved: Optional[List[Path]] = None) -> dict:
-    """Resolve and check a run location without creating anything.
-
-    Returns ``{"path": Path|None, "display": str, "exists": bool,
-    "writable": bool|None, "code": str|None, "error": str|None}``;
-    ``writable`` is None when the directory does not exist yet but can be
-    created (its nearest existing parent is a writable directory).
-    """
-    out: Dict[str, Any] = {"path": None, "display": "", "exists": False, "writable": None,
-                           "code": None, "error": None}
-
-    def fail(code: str, message: str) -> dict:
-        out["code"], out["error"] = code, message
-        return out
-
-    if raw is None or not str(raw).strip():
-        path = Path(default)
-    else:
-        text = str(raw).strip()
-        try:
-            expanded = os.path.expanduser(text)
-        except Exception:  # noqa: BLE001
-            expanded = text
-        out["display"] = expanded
-        if "\0" in expanded:
-            return fail("location_invalid", "the location contains a NUL character")
-        if not os.path.isabs(expanded):
-            return fail("location_invalid",
-                        "the location must be an absolute path (or start with ~)")
-        try:
-            path = Path(expanded).resolve()
-        except (OSError, RuntimeError, ValueError) as exc:
-            return fail("location_invalid", f"cannot resolve the location: {exc}")
-    out["path"] = path
-    out["display"] = str(path)
-    for r in reserved or ():
-        r = Path(r)
-        if path == r or r in path.parents:
-            return fail("location_invalid", f"{r.name} is reserved for the web app")
-    try:
-        if path.exists():
-            out["exists"] = True
-            if not path.is_dir():
-                out["writable"] = False
-                return fail("location_invalid", "the location exists but is not a directory")
-            out["writable"] = _writable_dir(path)
-            if not out["writable"]:
-                return fail("location_not_writable", "the location is not writable")
-            return out
-        parent = path.parent
-        while not parent.exists() and parent != parent.parent:
-            parent = parent.parent
-        if not parent.is_dir():
-            out["writable"] = False
-            return fail("location_invalid", f"{parent} is not a directory")
-        if not _writable_dir(parent):
-            out["writable"] = False
-            return fail("location_not_writable",
-                        f"the location does not exist and cannot be created "
-                        f"({parent} is not writable)")
-    except OSError as exc:
-        out["writable"] = False
-        return fail("location_invalid", f"cannot inspect the location: {exc}")
-    return out
 
 
 class FolderExists(Exception):
@@ -312,6 +221,10 @@ class JobRecord:
         self.cancel_reason: Optional[str] = None
         self.kill_deadline: Optional[float] = None
         self.killed = False
+        # remote jobs: a worker is active on another machine (the server must not
+        # write events.jsonl); cancel delivery state
+        self.remote_active = False
+        self.cancel_sent = False
         # cached for JobSummary / JobDetail
         self.formula: Optional[str] = None
         self.natoms: Optional[int] = None
@@ -336,6 +249,22 @@ class JobRecord:
     @property
     def terminal(self) -> bool:
         return self.status in TERMINAL
+
+    @property
+    def target(self) -> dict:
+        """``{"kind": "local"}`` or the remote target block of ``job.json``."""
+        t = self.job.get("target")
+        return t if isinstance(t, dict) and t.get("kind") == "remote" else {"kind": "local"}
+
+    @property
+    def queue_key(self) -> str:
+        """``"local"`` or the machine id: jobs with the same key share one serial queue."""
+        t = self.target
+        return t.get("machine_id") or LOCAL_KEY if t["kind"] == "remote" else LOCAL_KEY
+
+    @property
+    def is_remote(self) -> bool:
+        return self.queue_key != LOCAL_KEY
 
     # ------------------------------------------------------------- derived
     def progress(self) -> Optional[dict]:
@@ -391,6 +320,11 @@ class JobRecord:
             "calculator": {"name": calc.get("name"), "device": calc.get("device")},
             "formula": self.formula,
             "natoms": self.natoms,
+            "target": {"kind": self.target["kind"],
+                       "machine_name": self.target.get("machine_name"),
+                       "env_name": self.target.get("env_name")},
+            "remote_run_dir": self.job.get("remote_run_dir"),
+            "remote_error": (st.get("remote") or {}).get("error"),
             "queue_position": queue_position,
             "cancel_requested": bool(st.get("cancel_requested")),
             "progress": self.progress(),
@@ -425,7 +359,10 @@ class JobRegistry:
         self.describe_inputs = describe_inputs
         self.cancel_grace_s = float(cancel_grace_s)
         self.jobs: Dict[str, JobRecord] = {}
-        self.pending: List[str] = []           # FIFO of pending job ids
+        self.pending: List[str] = []           # FIFO of pending job ids (all queues)
+        self.reattach: List[str] = []          # running remote jobs found at startup
+        # ``machine_exists(machine_id) -> bool``; set by the server
+        self.machine_exists: Optional[Callable[[str], bool]] = None
         self._order = 0
         self._last_created: Optional[datetime] = None
         self.on_enqueue: Optional[Callable[[], None]] = None
@@ -439,13 +376,24 @@ class JobRegistry:
     def queue_position(self, job: JobRecord) -> Optional[int]:
         if job.status != "pending":
             return None
-        try:
-            return self.pending.index(job.job_id) + 1
-        except ValueError:
-            return None
+        key = job.queue_key
+        ahead = 0
+        for job_id in self.pending:
+            rec = self.jobs.get(job_id)
+            if rec is None or rec.queue_key != key:
+                continue
+            ahead += 1
+            if job_id == job.job_id:
+                return ahead
+        return None
 
     def summary(self, job: JobRecord) -> dict:
-        return job.summary(self.queue_position(job))
+        out = job.summary(self.queue_position(job))
+        if (job.is_remote and not job.terminal and self.machine_exists is not None
+                and not self.machine_exists(job.queue_key)):
+            name = job.target.get("machine_name") or job.queue_key
+            out["remote_error"] = f"machine {name} no longer configured"
+        return out
 
     def list(self, statuses: Optional[set] = None, limit: int = 500) -> List[JobRecord]:
         recs = sorted(self.jobs.values(), key=lambda r: r.order, reverse=True)
@@ -454,10 +402,24 @@ class JobRegistry:
         return recs[:limit]
 
     def running_job(self) -> Optional[JobRecord]:
+        """The running local job (compatibility); see :meth:`running_jobs`."""
         for rec in self.jobs.values():
-            if rec.status == "running":
+            if rec.status == "running" and not rec.is_remote:
                 return rec
         return None
+
+    def running_jobs(self) -> List[JobRecord]:
+        """Every running job, local and remote."""
+        return [r for r in self.jobs.values() if r.status == "running"]
+
+    def has_pending(self, queue_key: str) -> bool:
+        return any((rec := self.jobs.get(j)) is not None and rec.status == "pending"
+                   and rec.queue_key == queue_key for j in self.pending)
+
+    def queue_keys(self) -> set:
+        """Queue keys that have a pending or reattachable job."""
+        keys = {self.jobs[j].queue_key for j in self.pending + self.reattach if j in self.jobs}
+        return keys
 
     # ------------------------------------------------------------- ids/time
     def _next_created(self) -> datetime:
@@ -495,7 +457,7 @@ class JobRegistry:
 
     def _emit_status(self, job: JobRecord) -> None:
         """Append a job_status line (only when no worker is alive) and broadcast it."""
-        if job.proc is not None:
+        if job.proc is not None or job.remote_active:
             return
         writer = wevents.EventWriter(job.events_path, job.job_id)
         try:
@@ -600,13 +562,17 @@ class JobRegistry:
     def create_job(self, calc_type: str, label: str, calculator: dict, params: dict,
                    param_sources: dict, structure_every: int,
                    inputs: Dict[str, dict], folder: Optional[str] = None,
-                   location: Optional[Path] = None) -> JobRecord:
+                   location: Optional[Path] = None, target: Optional[dict] = None,
+                   remote_location: Optional[str] = None) -> JobRecord:
         """Create a pending job: run_dir, input copies, job.json, state.json, seq 0.
 
         ``inputs`` maps role -> ``{"upload_id", "filename", "format", "source"}``
         where ``source`` is the stored upload path to copy. ``run_dir`` is
         ``<location>/<folder>`` (defaults: the runs dir and the job id); it
         must not exist (:class:`FolderExists`), it is never overwritten.
+        For a remote ``target`` (``{"kind": "remote", ...}``) ``run_dir`` is
+        the local copy; ``remote_location`` is where the remote run dir goes
+        (job.json then has schema_version 2 and the remote keys).
         Raises :class:`LocationUnusable` if the location cannot be created.
         """
         created = self._next_created()
@@ -636,8 +602,9 @@ class JobRegistry:
                 job_inputs[role] = {"upload_id": spec["upload_id"],
                                     "filename": spec["filename"],
                                     "path": rel, "format": spec.get("format")}
+            remote = isinstance(target, dict) and target.get("kind") == "remote"
             job = {
-                "schema_version": 1,
+                "schema_version": 2 if remote else 1,
                 "job_id": job_id,
                 "calc_type": calc_type,
                 "label": label,
@@ -650,6 +617,11 @@ class JobRegistry:
                 "structure_every": structure_every,
                 "inputs": job_inputs,
             }
+            if remote:
+                job["target"] = target
+                job["location"] = remote_location
+                job["local_location"] = str(location)
+                job["remote_run_dir"] = None
             write_json_atomic(run_dir / "job.json", job)
             state = {"job_id": job_id, "status": "pending", "created_at": created_at,
                      "started_at": None, "finished_at": None, "pid": None,
@@ -682,16 +654,35 @@ class JobRegistry:
         except OSError:
             pass
 
+    def set_remote_run_dir(self, job: JobRecord, remote_run_dir: str) -> None:
+        """Record where the remote run dir really is (after the agent created it)."""
+        job.job["remote_run_dir"] = remote_run_dir
+        write_json_atomic(job.run_dir / "job.json", job.job)
+
     def enqueue(self, job: JobRecord) -> None:
         self.pending.append(job.job_id)
         if self.on_enqueue is not None:
             self.on_enqueue()
 
-    def pop_next_pending(self) -> Optional[JobRecord]:
-        while self.pending:
-            job_id = self.pending.pop(0)
+    def pop_next_pending(self, queue_key: str = LOCAL_KEY) -> Optional[JobRecord]:
+        """Remove and return the first pending job of ``queue_key`` (FIFO within the key)."""
+        for i, job_id in enumerate(self.pending):
             rec = self.jobs.get(job_id)
-            if rec is not None and rec.status == "pending":
+            if rec is None or rec.status != "pending":
+                continue
+            if rec.queue_key == queue_key:
+                del self.pending[i]
+                return rec
+        self.pending = [j for j in self.pending
+                        if (r := self.jobs.get(j)) is not None and r.status == "pending"]
+        return None
+
+    def take_reattach(self, queue_key: str) -> Optional[JobRecord]:
+        """A running remote job of ``queue_key`` left by a previous server, or None."""
+        for i, job_id in enumerate(self.reattach):
+            rec = self.jobs.get(job_id)
+            if rec is not None and rec.queue_key == queue_key and rec.status == "running":
+                del self.reattach[i]
                 return rec
         return None
 
@@ -755,7 +746,11 @@ class JobRegistry:
             if ts is not None and (self._last_created is None or ts > self._last_created):
                 self._last_created = ts
         for rec in sorted(self.jobs.values(), key=lambda r: r.order):
-            if rec.status == "running":
+            if rec.status == "running" and rec.is_remote:
+                # the remote worker keeps running; its runner resumes polling
+                rec.remote_active = True
+                self.reattach.append(rec.job_id)
+            elif rec.status == "running":
                 self._kill_orphan(rec)
                 write_backend_summary(rec, "failed", RESTART_REASON)
                 self.transition(rec, "failed", reason=RESTART_REASON,
@@ -829,8 +824,10 @@ class QueueRunner:
     """
 
     def __init__(self, registry: JobRegistry, worker_cmd: List[str],
-                 cancel_grace_s: float = 10.0, poll_interval_s: float = 0.2):
+                 cancel_grace_s: float = 10.0, poll_interval_s: float = 0.2,
+                 queue_key: str = LOCAL_KEY):
         self.registry = registry
+        self.queue_key = queue_key
         self.worker_cmd = list(worker_cmd)
         self.cancel_grace_s = float(cancel_grace_s)
         self.poll_interval_s = float(poll_interval_s)
@@ -872,10 +869,11 @@ class QueueRunner:
 
     async def _run(self) -> None:
         while not self.stopping:
-            job = self.registry.pop_next_pending()
+            job = (self.registry.take_reattach(self.queue_key)
+                   or self.registry.pop_next_pending(self.queue_key))
             if job is None:
                 self._wakeup.clear()
-                if self.registry.pending:
+                if self.registry.has_pending(self.queue_key):
                     continue
                 await self._wakeup.wait()
                 continue
@@ -887,6 +885,7 @@ class QueueRunner:
                 logger.exception("unexpected error while running job %s", job.job_id)
                 if not job.terminal:
                     job.proc = None
+                    job.remote_active = False
                     self.registry.transition(job, "failed", reason="internal server error")
 
     # ------------------------------------------------------------- cancel
@@ -988,3 +987,257 @@ class QueueRunner:
         if summary is None:
             write_backend_summary(job, status, reason if status != "done" else None)
         reg.transition(job, status, reason=reason, returncode=rc)
+
+
+# --------------------------------------------------------------------------- #
+# Remote queue runner
+# --------------------------------------------------------------------------- #
+class RemoteQueueRunner(QueueRunner):
+    """The serial queue of one remote machine (REMOTE_PLAN section 6).
+
+    A job's worker runs on the machine through the remote agent; this runner
+    mirrors the remote ``events.jsonl`` into the local run dir by polling, so
+    every reader (WebSocket, files, summary) keeps working on local files.
+    An unreachable machine never fails a running job: polling backs off and
+    resumes. Stopping the runner (server shutdown) leaves the remote job
+    running; the next server reattaches to it.
+
+    Parameters
+    ----------
+    registry : JobRegistry
+    machine_id : str
+        The queue key.
+    store : MachineStore
+    transport : SSHTransport
+    cancel_grace_s : float
+        Seconds between the remote SIGTERM and SIGKILL on cancel.
+    backoff_base, backoff_cap : float
+        Reconnect back-off: ``base``, ``2*base``, ... up to ``cap`` seconds.
+    """
+
+    def __init__(self, registry: JobRegistry, machine_id: str, store: "wremote.MachineStore",
+                 transport: "wremote.SSHTransport", cancel_grace_s: float = 10.0,
+                 backoff_base: float = 2.0, backoff_cap: float = 60.0):
+        super().__init__(registry, [], cancel_grace_s=cancel_grace_s, queue_key=machine_id)
+        self.store = store
+        self.transport = transport
+        self.backoff_base = float(backoff_base)
+        self.backoff_cap = float(backoff_cap)
+
+    async def stop(self) -> None:
+        """Stop the runner task only; remote jobs are not cancelled."""
+        self.stopping = True
+        self.notify()
+        if self._task is None:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+    # ------------------------------------------------------------- helpers
+    def _poll_interval(self, target) -> float:
+        try:
+            return float(target.machine.get("poll_interval_s") or 2.0)
+        except (TypeError, ValueError):
+            return 2.0
+
+    async def _sleep(self, job: JobRecord, delay: float) -> None:
+        """Sleep ``delay`` s in short slices; wake early to deliver a cancel or stop."""
+        end = time.monotonic() + delay
+        while not self.stopping:
+            now = time.monotonic()
+            if now >= end:
+                return
+            if job.state.get("cancel_requested") and (
+                    not job.cancel_sent
+                    or (not job.killed and job.kill_deadline is not None
+                        and now >= job.kill_deadline)):
+                return
+            await asyncio.sleep(min(0.1, end - now))
+
+    def _set_error(self, job: JobRecord, message: str) -> None:
+        remote = job.state.setdefault("remote", {})
+        if remote.get("error") is None or remote.get("_msg") != message:
+            since = remote.get("_since") or iso_utc()
+            remote.update({"error": f"{message} (since {since})", "_msg": message,
+                           "_since": since})
+            self.registry.write_state(job)
+
+    def _clear_error(self, job: JobRecord) -> None:
+        remote = job.state.setdefault("remote", {})
+        remote["last_ok_at"] = iso_utc()
+        if remote.get("error") is not None:
+            remote.update({"error": None, "_msg": None, "_since": None})
+            self.registry.write_state(job)
+
+    async def _deliver_cancel(self, job: JobRecord, target, run_dir: str) -> None:
+        if not job.state.get("cancel_requested"):
+            return
+        try:
+            if not job.cancel_sent:
+                await asyncio.to_thread(self.transport.run_json, target, "cancel", [run_dir])
+                job.cancel_sent = True
+                job.kill_deadline = time.monotonic() + self.cancel_grace_s
+            elif (not job.killed and job.kill_deadline is not None
+                  and time.monotonic() >= job.kill_deadline):
+                await asyncio.to_thread(self.transport.run_json, target, "cancel",
+                                        [run_dir, "--kill"])
+                job.killed = True
+        except wremote.RemoteError as exc:
+            self._set_error(job, exc.message)      # remembered; retried on the next pass
+
+    # ------------------------------------------------------------- one job
+    async def _run_job(self, job: JobRecord) -> None:
+        reg = self.registry
+        self.current = job
+        resumed = job.status == "running"
+        try:
+            info = job.target
+            try:
+                target = self.store.get_env(info["env_id"])
+            except (wremote.MachineNotFound, KeyError):
+                reason = (f"environment {info.get('env_name')} of machine "
+                          f"{info.get('machine_name')} is no longer configured")
+                write_backend_summary(job, "failed", reason)
+                job.remote_active = False
+                if job.status == "pending":
+                    reg.transition(job, "running")
+                reg.transition(job, "failed", reason=reason)
+                return
+            run_dir = job.job.get("remote_run_dir")
+            if not resumed:
+                reg.transition(job, "running")       # no remote worker yet: server writes it
+            if not (job.state.get("remote") or {}).get("launched"):
+                if not await self._launch(job, target, run_dir, resumed):
+                    return
+            job.remote_active = True
+            rc, reason = await self._mirror(job, target, run_dir)
+            if rc is _STOPPED:
+                return
+            await asyncio.to_thread(self._copy_back, job, target, run_dir)
+            self._finish_remote(job, rc, reason)
+        finally:
+            self.current = None
+
+    def _fail_launch(self, job: JobRecord, message: str) -> None:
+        reason = f"could not start the remote worker: {message}"
+        job.remote_active = False
+        write_backend_summary(job, "failed", reason)
+        self.registry.transition(job, "failed", reason=reason)
+
+    async def _launch(self, job: JobRecord, target, run_dir: str, resumed: bool) -> bool:
+        """Start the remote worker; False when the job failed (or the runner stopped)."""
+        failures = 0
+        while not self.stopping:
+            events = job.events_path.read_bytes()
+            try:
+                pids = await asyncio.to_thread(self.transport.run_json, target, "launch",
+                                               [run_dir], events, 90.0)
+            except wremote.RemoteUnreachable as exc:
+                if not resumed:
+                    self._fail_launch(job, exc.message)
+                    return False
+                failures += 1
+                self._set_error(job, exc.message)
+                await self._sleep(job, wremote.backoff_delay(failures, self.backoff_base,
+                                                             self.backoff_cap))
+                continue
+            except wremote.RemoteError as exc:
+                self._fail_launch(job, exc.message)
+                return False
+            remote = job.state.setdefault("remote", {})
+            remote.update({"pids": pids, "launched": True, "error": None,
+                           "last_ok_at": iso_utc()})
+            self.registry.write_state(job)
+            return True
+        return False
+
+    async def _mirror(self, job: JobRecord, target, run_dir: str) -> tuple:
+        """Poll until the remote worker has exited and the mirror is complete.
+
+        Returns ``(returncode or None, reason)``; ``(_STOPPED, None)`` when the
+        runner was stopped first.
+        """
+        reg = self.registry
+        failures = 0
+        while True:
+            if self.stopping:
+                return _STOPPED, None
+            await self._deliver_cancel(job, target, run_dir)
+            offset = job.events_path.stat().st_size if job.events_path.exists() else 0
+            try:
+                header, chunk = await asyncio.to_thread(
+                    self.transport.poll, target, run_dir, offset, MAX_POLL_BYTES)
+            except wremote.RemoteError as exc:
+                failures += 1
+                self._set_error(job, exc.message)
+                await self._sleep(job, wremote.backoff_delay(failures, self.backoff_base,
+                                                             self.backoff_cap))
+                continue
+            failures = 0
+            self._clear_error(job)
+            if chunk:
+                with open(job.events_path, "ab") as fh:
+                    fh.write(chunk)
+                reg.drain(job)
+            caught_up = offset + len(chunk) >= header["size"]
+            exit_info = header.get("exit")
+            if exit_info is not None and caught_up:
+                return exit_info.get("returncode"), None
+            if not header.get("alive") and exit_info is None and caught_up:
+                return None, "remote worker disappeared"
+            if chunk and not caught_up:
+                continue                               # more is waiting: poll again at once
+            await self._sleep(job, self._poll_interval(target))
+
+    def _copy_back(self, job: JobRecord, target, run_dir: str) -> None:
+        """Copy small files back and write ``remote_files.json`` (never raises)."""
+        max_bytes = int(float(target.machine.get("copy_back_max_mb") or 0) * 1024 * 1024)
+        try:
+            if max_bytes > 0:
+                stream = self.transport.stream(target, "pack", [run_dir, max_bytes])
+                try:
+                    paths_mod.safe_extract_tar(stream.stdout, job.run_dir)
+                    stream.finish()
+                finally:
+                    stream.close()
+            listing = self.transport.run_json(target, "list", [run_dir], timeout=120.0)
+            files = [{"path": f["path"], "size": f["size"],
+                      "copied": (job.run_dir / f["path"]).is_file()} for f in listing]
+            write_json_atomic(job.run_dir / "remote_files.json", {
+                "remote_host": target.machine["host"], "remote_run_dir": run_dir,
+                "files": files})
+        except Exception as exc:  # noqa: BLE001 - a log line, not a job failure
+            logger.warning("copy-back of job %s failed: %s", job.job_id, exc)
+            job.state.setdefault("remote", {})["copy_back_error"] = str(exc)
+
+    def _finish_remote(self, job: JobRecord, rc: Optional[int], reason: Optional[str]) -> None:
+        reg = self.registry
+        reg.drain(job)
+        job.remote_active = False
+        summary = _read_json(job.run_dir / "summary.json")
+        if job.state.get("cancel_requested"):
+            status, reason = "cancelled", job.cancel_reason or CANCEL_REASON
+        elif rc == 0 and ((summary is not None and summary.get("status") == "done")
+                          or (summary is None and job.result is not None)):
+            status, reason = "done", None
+        else:
+            status = "failed"
+            if reason:
+                pass
+            elif job.last_error:
+                reason = job.last_error
+            elif rc is not None and rc < 0:
+                reason = f"worker killed by signal {-rc}"
+            elif rc == 0:
+                reason = "worker exited with code 0 without reporting a result"
+            else:
+                reason = f"worker exited with code {rc}"
+        if summary is None:
+            write_backend_summary(job, status, reason if status != "done" else None)
+        reg.transition(job, status, reason=reason, returncode=rc)
+
+
+_STOPPED = object()

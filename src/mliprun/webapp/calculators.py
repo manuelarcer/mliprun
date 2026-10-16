@@ -208,7 +208,8 @@ def _known_family_label(name: str) -> Optional[str]:
     return None
 
 
-def validate_calculator(calculator, symbols: Optional[set] = None):
+def validate_calculator(calculator, symbols: Optional[set] = None,
+                        catalog: Optional[dict] = None):
     """Check a submitted calculator block (plan section 7.2).
 
     Parameters
@@ -217,6 +218,11 @@ def validate_calculator(calculator, symbols: Optional[set] = None):
         ``{"name", "device"?, "uma_task"?, "mace_head"?, "sevennet_task"?}``.
     symbols : set of str, optional
         Every element in the job's inputs, for the EMT element check.
+    catalog : dict, optional
+        A :func:`list_calculators`-shaped payload (a remote environment's
+        probe result, plus optional ``"env_name"`` for messages). When given,
+        the offered entries and the CUDA fact come from it instead of this
+        process; ``None`` keeps the local behaviour exactly.
 
     Returns
     -------
@@ -238,10 +244,20 @@ def validate_calculator(calculator, symbols: Optional[set] = None):
         errors.append({"field": "calculator.name", "message": "required"})
         return norm, errors
     norm["name"] = name
-    entry = get_calculator_entry(name)
+    if catalog is not None:
+        entries = list(catalog.get("calculators") or [])
+        entry = next((e for e in entries if e.get("name") == name), None)
+        cuda_available = (catalog.get("devices") or {}).get("cuda_available")
+    else:
+        entry = get_calculator_entry(name)
+        cuda_available = None
     if entry is None:
-        family = _known_family_label(name)
-        if family is not None:
+        family = _known_family_label(name) if catalog is None else None
+        if catalog is not None:
+            env_name = catalog.get("env_name") or "this environment"
+            offered = ", ".join(str(e.get("name")) for e in entries)
+            msg = f"{name} is not installed in environment {env_name}; offered there: {offered}"
+        elif family is not None:
             msg = _utils()._install_message(family, name)
         else:
             offered = ", ".join(e["name"] for e in _calculator_entries())
@@ -257,7 +273,9 @@ def validate_calculator(calculator, symbols: Optional[set] = None):
                        "message": f"must be one of {', '.join(DEVICE_CHOICES)}"})
     else:
         norm["device"] = device
-        if device == "cuda" and name != "emt" and device_status()["cuda_available"] is False:
+        if catalog is None:
+            cuda_available = device_status()["cuda_available"]
+        if device == "cuda" and name != "emt" and cuda_available is False:
             errors.append({"field": "calculator.device",
                            "message": "CUDA is not available on this machine"})
 

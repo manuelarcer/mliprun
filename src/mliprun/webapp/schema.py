@@ -461,7 +461,7 @@ def _check_structures(mode: str, inputs: dict, errors: list) -> None:
 
 
 def validate_submission(calc_type: str, calculator: dict, params: dict,
-                        inputs: dict) -> dict:
+                        inputs: dict, catalog: Optional[dict] = None) -> dict:
     """Validate and normalize one job submission (plan section 3.3).
 
     Parameters
@@ -475,6 +475,10 @@ def validate_submission(calc_type: str, calculator: dict, params: dict,
     inputs : dict
         Role -> ``{"natoms", "symbols", "n_frames", "pbc"}`` (plus
         ``"frames_same_symbols"`` for ``band``).
+    catalog : dict, optional
+        Calculator catalog of the target environment (see
+        ``calculators.validate_calculator``); ``None`` checks against this
+        process's own install.
 
     Returns
     -------
@@ -540,7 +544,7 @@ def validate_submission(calc_type: str, calculator: dict, params: dict,
 
     from mliprun.webapp.calculators import validate_calculator
 
-    norm_calc, calc_errors = validate_calculator(calculator, symbols)
+    norm_calc, calc_errors = validate_calculator(calculator, symbols, catalog)
     errors.extend(calc_errors)
 
     if errors:
