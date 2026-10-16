@@ -1,9 +1,17 @@
 """`mlip webapp` / `python -m mliprun.webapp`: options, lazy imports, install hint."""
+import re
 import subprocess
 import sys
 
 import pytest
 from typer.testing import CliRunner
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text):
+    """Strip ANSI styling; rich colours help output on CI (GITHUB_ACTIONS)."""
+    return _ANSI.sub("", text)
 
 
 def test_cli_main_does_not_import_fastapi():
@@ -22,16 +30,18 @@ def test_mlip_help_lists_webapp_with_four_options():
     assert r.exit_code == 0 and "webapp" in r.output
     r = runner.invoke(app, ["webapp", "--help"])
     assert r.exit_code == 0
+    out = _plain(r.output)
     for opt in ("--host", "--port", "--runs-dir", "--no-browser"):
-        assert opt in r.output
-    assert "127.0.0.1" in r.output and "8765" in r.output
+        assert opt in out
+    assert "127.0.0.1" in out and "8765" in out
 
 
 def test_python_m_mliprun_webapp_help():
     r = subprocess.run([sys.executable, "-m", "mliprun.webapp", "--help"],
                        capture_output=True, text=True)
     assert r.returncode == 0
-    assert "--no-browser" in r.stdout and "--runs-dir" in r.stdout
+    out = _plain(r.stdout)
+    assert "--no-browser" in out and "--runs-dir" in out
 
 
 def test_missing_extra_exits_1_with_hint(monkeypatch):
