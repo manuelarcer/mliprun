@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mliprun web app</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/static/css/app.css" />
+    <script src="https://cdn.jsdelivr.net/npm/3dmol@2.4.2/build/3Dmol-min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js"></script>
+    <script type="module" src="/static/js/main.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">mliprun <span class="muted">web app</span></div>
+      <div class="topbar-info muted small">
+        <span id="version"></span>
+        <span title="Where job directories are written" id="runs-dir"></span>
+        <span class="conn" id="conn-state" data-state="closed">offline</span>
+      </div>
+    </header>
+    <div id="banners"></div>
+    <main class="layout">
+      <aside class="sidebar">
+        <section class="panel" id="structures-panel"></section>
+        <section class="panel" id="form-panel"></section>
+      </aside>
+      <div class="content">
+        <section class="panel" id="queue-panel"></section>
+        <section class="panel" id="detail-panel"></section>
+      </div>
+    </main>
+  </body>
+</html>

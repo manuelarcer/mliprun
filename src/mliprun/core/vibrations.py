@@ -392,6 +392,14 @@ class CountingVibrations(Vibrations):
     ``len(indices)`` would report work that never happened.
     """
 
+    #: Optional progress callback, called after every force call actually
+    #: made with ``{"done": n_force_calls, "total": expected_force_calls}``.
+    #: Set by :func:`run_frequencies`; ``None`` disables it.
+    observer = None
+    #: Force calls a sweep with an empty cache makes (``1 + 6n`` or
+    #: ``1 + 12n``); reported as ``total`` to the observer.
+    expected_force_calls = None
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.n_force_calls = 0
@@ -399,6 +407,9 @@ class CountingVibrations(Vibrations):
     def calculate(self, atoms, disp):
         results = super().calculate(atoms, disp)
         self.n_force_calls += 1
+        if self.observer is not None:
+            self.observer({"done": self.n_force_calls,
+                           "total": self.expected_force_calls})
         return results
 
 
@@ -922,6 +933,7 @@ def run_frequencies(
     committee=None,
     committee_config=None,
     uncertainty_threshold=None,
+    observer=None,
 ) -> dict:
     """Vibrational frequencies by finite differences.
 
@@ -949,6 +961,14 @@ def run_frequencies(
     structure_dir : str or Path, optional
         Where to look for a run record supplying the expectation when
         ``expect_fmax`` is None. Defaults to ``output_dir``.
+    observer : callable, optional
+        Progress callback, called after every force call actually computed
+        (cached displacements are skipped and not reported) with ``{"done":
+        int, "total": int}``; ``total`` is the cost of a sweep with an empty
+        cache (``1 + 6n`` for nfree 2, ``1 + 12n`` for nfree 4). An
+        exception it raises propagates: the run record is completed as
+        ``failed`` and the exception re-raised. ``None`` (default) disables
+        it.
 
     Returns
     -------
@@ -1042,6 +1062,8 @@ def run_frequencies(
         vib = _vibrations_class(committee)(
             atoms, indices=list(chosen), name=vibration_name,
             delta=delta, nfree=nfree)
+        vib.observer = observer
+        vib.expected_force_calls = _expected_force_calls(len(chosen), nfree)
         vib.run()
         vib.read(method=method, direction=direction)
         # The backstop to the identity check above: it catches a calculator

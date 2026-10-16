@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -474,12 +474,12 @@ class CustomNEB:
             atoms.calc = self.setup_calculator()
             energy_before = atoms.get_potential_energy()
 
-            opt = opt_class(
+            with opt_class(
                 atoms,
                 trajectory=str(self.output_dir / traj_name),
                 logfile=str(self.output_dir / log_name),
-            )
-            opt.run(fmax=endpoint_fmax, steps=max_steps)
+            ) as opt:
+                opt.run(fmax=endpoint_fmax, steps=max_steps)
 
             energy_after = atoms.get_potential_energy()
             fmax_val = calc_fmax(atoms.get_forces())
@@ -675,6 +675,7 @@ class CustomNEB:
         plot: bool = False,
         run_context: Optional[RunContext] = None,
         append: bool = False,
+        observer: Optional[Callable[[dict], None]] = None,
     ) -> list:
         """Run NEB optimization.
 
@@ -715,6 +716,17 @@ class CustomNEB:
             ``mliprun_run.json`` in ``output_dir`` instead of starting a new
             record -- a plain-then-CI-NEB workflow is two invocations in the
             same directory, and each is one stage.
+        observer : callable, optional
+            Called once per NEB iteration (step 0 included), after the
+            iteration has been logged, with a dict ``{"step": int, "fmax":
+            float, "barrier": float, "energies": list[float], "positions":
+            list[ndarray (N, 3)], "cell": ndarray (3, 3)}``: the values just
+            written to ``neb.log``, the per-image energies (endpoints
+            included), and copies of each image's positions plus the first
+            image's cell. It reads only, so numerics are unchanged. An
+            exception it raises propagates: the run record is completed as
+            ``failed`` and the exception re-raised. ``None`` (default)
+            disables it.
 
         Returns
         -------
@@ -800,6 +812,16 @@ class CustomNEB:
 
                 for img in neb.images:
                     traj_writer.write(img)
+
+                if observer is not None:
+                    observer({
+                        "step": int(step),
+                        "fmax": float(fmax_val),
+                        "barrier": float(barrier),
+                        "energies": [float(e) for e in energies],
+                        "positions": [img.get_positions() for img in neb.images],
+                        "cell": neb.images[0].get_cell().array.copy(),
+                    })
 
             opt = optimizer(neb, logfile=log_file)
             opt.attach(log_iteration, interval=1)

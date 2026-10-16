@@ -11,6 +11,8 @@ from mliprun.cli.commands import (
     optimize,
     singlepoint,
 )
+# Only typer is imported by this module; fastapi/uvicorn load inside the command.
+from mliprun.webapp.cli import webapp_command
 
 app = typer.Typer(help="mliprun: optimization, MD, NEB, AutoNEB, and benchmarking with MLIP models.")
 
@@ -25,6 +27,7 @@ app.add_typer(singlepoint.app, name="singlepoint",
 app.add_typer(freq.app, name="freq",
               help="Vibrational frequencies by finite differences")
 app.command("doctor")(doctor.doctor)
+app.command("webapp", help="Start the local web app (needs the 'webapp' extra)")(webapp_command)
 
 
 if __name__ == "__main__":
