@@ -222,21 +222,65 @@ class MdPlots extends PlotSet {
 
 // --------------------------------------------------------------- neb / autoneb
 
+// Sequential blue ramp for band history: light = early, dark = late (one hue).
+const RAMP = [
+  [0, "#cfe0f6"],
+  [0.5, "#5b97df"],
+  [1, "#0f3f80"],
+];
+const MAX_PAST = 40;
+
+function hexToRgb(h) {
+  const n = parseInt(h.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rampColor(t) {
+  const x = Math.max(0, Math.min(1, t));
+  let i = 0;
+  while (i < RAMP.length - 2 && x > RAMP[i + 1][0]) i++;
+  const [t0, c0] = RAMP[i];
+  const [t1, c1] = RAMP[i + 1];
+  const a = hexToRgb(c0);
+  const b = hexToRgb(c1);
+  const f = (x - t0) / (t1 - t0 || 1);
+  const c = a.map((v, k) => Math.round(v + f * (b[k] - v)));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+/** Image label 00, 01, ... (3 digits from 100 on). */
+export function imageLabel(i) {
+  return String(i).padStart(2, "0");
+}
+
+/** Evenly thinned indices into [0, n) with at most m entries, always keeping 0. */
+export function thinIndices(n, m) {
+  if (n <= m) return Array.from({ length: n }, (_, i) => i);
+  const out = new Set();
+  for (let k = 0; k < m; k++) out.add(Math.round((k * (n - 1)) / (m - 1)));
+  return [...out].sort((a, b) => a - b);
+}
+
 class NebPlots extends PlotSet {
   constructor(divs, ctx) {
     super(divs, ctx);
     this.iter = [];
     this.fmax = [];
     this.barrier = [];
-    this.first = null;
-    this.current = null;
+    this.history = []; // one profile per neb_iter event
     this.final = null;
+    // The band plot lives in its own div inside plot-main (PLAN 15.2).
+    this.bandDiv = document.createElement("div");
+    this.bandDiv.className = "plot-inner";
+    this.bandDiv.dataset.testid = "plot-neb-band";
+    if (divs.main) divs.main.append(this.bandDiv);
   }
   ingest(ev) {
     if (ev.type !== "neb_iter") return;
-    const prof = { rel: ev.rel_energies, highest: ev.highest_image, iteration: ev.iteration, sub: ev.autoneb };
-    if (!this.first) this.first = prof;
-    this.current = prof;
+    const n = this.history.length;
+    // AutoNEB restarts its counter per sub-band: colour by event order there.
+    const it = this.ctx.autoneb || !Number.isFinite(ev.iteration) ? n : ev.iteration;
+    this.history.push({ rel: ev.rel_energies || [], highest: ev.highest_image, iteration: it, rawIteration: ev.iteration, sub: ev.autoneb });
     this.iter.push(ev.iteration);
     this.fmax.push(ev.fmax);
     this.barrier.push(ev.barrier);
@@ -248,53 +292,98 @@ class NebPlots extends PlotSet {
       this.redraw();
     }
   }
+  _bandTraces() {
+    const traces = [];
+    const H = this.history;
+    const current = this.final || H[H.length - 1];
+    if (!current) return { traces, maxLen: 0 };
+    const pastAll = this.final ? H : H.slice(0, -1);
+    const lo = H.length ? H[0].iteration : 0;
+    const hi = H.length ? H[H.length - 1].iteration : 1;
+    const span = hi - lo || 1;
+    let maxLen = current.rel.length;
+    for (const k of thinIndices(pastAll.length, MAX_PAST)) {
+      const p = pastAll[k];
+      maxLen = Math.max(maxLen, p.rel.length);
+      const label = `iteration ${p.iteration}${p.sub ? ` (sub-step ${p.sub.sub_step})` : ""}`;
+      traces.push({
+        type: "scatter",
+        mode: "lines",
+        x: p.rel.map((_, i) => i),
+        y: p.rel,
+        name: label,
+        showlegend: false,
+        connectgaps: true,
+        line: { color: rampColor((p.iteration - lo) / span), width: 1.2 },
+        hovertemplate: `${label}<br>image %{x}: %{y:.4f} eV<extra></extra>`,
+      });
+    }
+    const curColor = rampColor(1);
+    const name = this.final ? "final band" : this.ctx.autoneb ? `latest (sub-step ${current.sub ? current.sub.sub_step : "?"})` : `iteration ${current.iteration} (current)`;
+    traces.push({
+      type: "scatter",
+      mode: "lines+markers",
+      x: current.rel.map((_, i) => i),
+      y: current.rel,
+      name,
+      connectgaps: true,
+      line: { color: curColor, width: 3 },
+      marker: { size: 8, color: curColor, line: { color: "#fcfcfb", width: 2 } },
+      hovertemplate: `${name}<br>image %{x}: %{y:.4f} eV<extra></extra>`,
+    });
+    const h = current.highest;
+    if (Number.isInteger(h) && current.rel[h] !== null && current.rel[h] !== undefined) {
+      traces.push({
+        type: "scatter",
+        mode: "markers+text",
+        x: [h],
+        y: [current.rel[h]],
+        name: `highest image (${imageLabel(h)})`,
+        marker: { size: 13, color: C.s2, symbol: "diamond", line: { color: "#fcfcfb", width: 2 } },
+        text: [`${current.rel[h].toFixed(3)} eV`],
+        textposition: "top center",
+        textfont: { color: C.text },
+        hoverinfo: "skip",
+      });
+    }
+    // Colour bar for the iteration ramp (invisible carrier trace).
+    if (H.length > 1) {
+      traces.push({
+        type: "scatter",
+        mode: "markers",
+        x: [current.rel.length ? 0 : null],
+        y: [current.rel.length ? current.rel[0] : null],
+        showlegend: false,
+        hoverinfo: "skip",
+        marker: {
+          size: 0.1,
+          opacity: 0,
+          color: [lo, hi],
+          cmin: lo,
+          cmax: hi,
+          colorscale: RAMP,
+          showscale: true,
+          colorbar: { title: { text: "iteration", side: "right" }, thickness: 10, len: 0.8, outlinewidth: 0, tickfont: { size: 10 } },
+        },
+      });
+    }
+    return { traces, maxLen };
+  }
   draw() {
     const L = baseLayout();
-    const traces = [];
-    const idx = (arr) => arr.map((_, i) => i);
-    if (this.first && this.first !== this.current && !this.ctx.autoneb) {
-      traces.push(
-        line(idx(this.first.rel), this.first.rel, `iteration ${this.first.iteration}`, C.ghost, {
-          mode: "lines+markers",
-          line: { color: C.ghost, width: 2, dash: "dot" },
-          marker: { size: 6 },
-        }),
-      );
-    }
-    const prof = this.final || this.current;
-    if (prof) {
-      const name = this.final ? "final band" : `iteration ${prof.iteration}${prof.sub ? ` (sub-step ${prof.sub.sub_step})` : ""}`;
-      traces.push(
-        line(idx(prof.rel), prof.rel, name, C.s1, {
-          mode: "lines+markers",
-          marker: { size: 8, line: { color: "#fcfcfb", width: 2 } },
-          connectgaps: true,
-        }),
-      );
-      const h = prof.highest;
-      if (h !== null && h !== undefined && prof.rel[h] !== null && prof.rel[h] !== undefined) {
-        traces.push({
-          type: "scatter",
-          mode: "markers+text",
-          x: [h],
-          y: [prof.rel[h]],
-          name: "highest image",
-          marker: { size: 13, color: C.s2, symbol: "diamond", line: { color: "#fcfcfb", width: 2 } },
-          text: [`${prof.rel[h].toFixed(3)} eV`],
-          textposition: "top center",
-          textfont: { color: C.text },
-          hoverinfo: "skip",
-        });
-      }
-    }
+    const { traces, maxLen } = this._bandTraces();
+    const ticks = Array.from({ length: maxLen }, (_, i) => i);
+    const step = maxLen > 26 ? Math.ceil(maxLen / 13) : 1;
+    const shown = ticks.filter((i) => i % step === 0);
     this.react(
-      this.divs.main,
+      this.bandDiv,
       traces,
       baseLayout({
-        title: { text: "Energy profile along the band", font: { size: 13 }, x: 0, xref: "paper", yref: "container", y: 0.985, yanchor: "top" },
+        title: { text: "Band energy profile by iteration", font: { size: 13 }, x: 0, xref: "paper", yref: "container", y: 0.985, yanchor: "top" },
         hovermode: "closest",
-        xaxis: { ...L.xaxis, title: { text: "Image index (0 = initial)" }, dtick: 1 },
-        yaxis: { ...L.yaxis, title: { text: "E − E(initial) (eV)" } },
+        margin: { l: 64, r: 24, t: 54, b: 46 },
+        xaxis: { ...L.xaxis, title: { text: "Image (00 = initial)" }, tickmode: "array", tickvals: shown, ticktext: shown.map(imageLabel) },
+        yaxis: { ...L.yaxis, title: { text: "E − E(image 00) (eV)" } },
       }),
     );
     const target = this.ctx.params && this.ctx.params.fmax;

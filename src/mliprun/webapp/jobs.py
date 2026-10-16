@@ -47,6 +47,11 @@ RESTART_REASON = "server restarted while the job was running"
 CANCEL_REASON = "cancelled by user"
 SHUTDOWN_REASON = "server shut down while the job was running"
 WORKER_MODULE = "mliprun.webapp.worker"
+JOBS_INDEX_DIR = "_jobs"
+RESERVED_FOLDERS = frozenset({"_uploads", JOBS_INDEX_DIR})
+MAX_FOLDER_LEN = 100
+_SLUG_BAD = re.compile(r"[^A-Za-z0-9._+-]")
+_SLUG_DASHES = re.compile(r"-{2,}")
 
 # result_brief keys copied from the `result` event (PLAN 4.5).
 RESULT_BRIEF_KEYS = {
@@ -122,6 +127,115 @@ def _signal_group(pid: int, sig: int) -> None:
         os.kill(pid, sig)
     except (ProcessLookupError, PermissionError, OSError):
         pass
+
+
+# --------------------------------------------------------------------------- #
+# Run folder naming and locations (PLAN 15.1)
+# --------------------------------------------------------------------------- #
+def slugify_folder(name: Any) -> str:
+    """Folder slug: chars outside ``[A-Za-z0-9._+-]`` -> ``-``, dash runs collapsed,
+    leading ``.``/``-`` stripped, at most 100 chars. May return ``""``."""
+    text = _SLUG_DASHES.sub("-", _SLUG_BAD.sub("-", str(name or "")))
+    return text.lstrip(".-")[:MAX_FOLDER_LEN]
+
+
+def folder_problem(folder: str) -> Optional[str]:
+    """Why ``folder`` (already slugged) is not usable, or None."""
+    if not folder:
+        return "the folder name is empty after removing unsupported characters"
+    if folder in RESERVED_FOLDERS:
+        return f"{folder!r} is a reserved name"
+    return None
+
+
+def suffix_width(n_jobs: int) -> int:
+    """Zero-pad width of the ``-<kk>`` suffix for ``n_jobs`` jobs."""
+    return max(2, len(str(max(n_jobs, 1) - 1)))
+
+
+def suffixed_folder(base: str, k: int, width: int) -> str:
+    """``"<slug(base)>-<kk>"`` with the base shortened so the result fits 100 chars."""
+    suffix = f"-{k:0{width}d}"
+    return slugify_folder(slugify_folder(base)[:MAX_FOLDER_LEN - len(suffix)] + suffix)
+
+
+def _writable_dir(path: Path) -> bool:
+    return os.access(str(path), os.W_OK | os.X_OK)
+
+
+def inspect_location(raw: Optional[str], default: Path,
+                     reserved: Optional[List[Path]] = None) -> dict:
+    """Resolve and check a run location without creating anything.
+
+    Returns ``{"path": Path|None, "display": str, "exists": bool,
+    "writable": bool|None, "code": str|None, "error": str|None}``;
+    ``writable`` is None when the directory does not exist yet but can be
+    created (its nearest existing parent is a writable directory).
+    """
+    out: Dict[str, Any] = {"path": None, "display": "", "exists": False, "writable": None,
+                           "code": None, "error": None}
+
+    def fail(code: str, message: str) -> dict:
+        out["code"], out["error"] = code, message
+        return out
+
+    if raw is None or not str(raw).strip():
+        path = Path(default)
+    else:
+        text = str(raw).strip()
+        try:
+            expanded = os.path.expanduser(text)
+        except Exception:  # noqa: BLE001
+            expanded = text
+        out["display"] = expanded
+        if "\0" in expanded:
+            return fail("location_invalid", "the location contains a NUL character")
+        if not os.path.isabs(expanded):
+            return fail("location_invalid",
+                        "the location must be an absolute path (or start with ~)")
+        try:
+            path = Path(expanded).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            return fail("location_invalid", f"cannot resolve the location: {exc}")
+    out["path"] = path
+    out["display"] = str(path)
+    for r in reserved or ():
+        r = Path(r)
+        if path == r or r in path.parents:
+            return fail("location_invalid", f"{r.name} is reserved for the web app")
+    try:
+        if path.exists():
+            out["exists"] = True
+            if not path.is_dir():
+                out["writable"] = False
+                return fail("location_invalid", "the location exists but is not a directory")
+            out["writable"] = _writable_dir(path)
+            if not out["writable"]:
+                return fail("location_not_writable", "the location is not writable")
+            return out
+        parent = path.parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        if not parent.is_dir():
+            out["writable"] = False
+            return fail("location_invalid", f"{parent} is not a directory")
+        if not _writable_dir(parent):
+            out["writable"] = False
+            return fail("location_not_writable",
+                        f"the location does not exist and cannot be created "
+                        f"({parent} is not writable)")
+    except OSError as exc:
+        out["writable"] = False
+        return fail("location_invalid", f"cannot inspect the location: {exc}")
+    return out
+
+
+class FolderExists(Exception):
+    """The run folder of a job being created already exists."""
+
+
+class LocationUnusable(Exception):
+    """The location of a job being created cannot be created or written."""
 
 
 # --------------------------------------------------------------------------- #
@@ -212,6 +326,10 @@ class JobRecord:
         return self.state["status"]
 
     @property
+    def folder(self) -> str:
+        return self.job.get("folder") or self.run_dir.name
+
+    @property
     def events_path(self) -> Path:
         return self.run_dir / "events.jsonl"
 
@@ -264,6 +382,8 @@ class JobRecord:
             "job_id": self.job_id,
             "calc_type": self.job.get("calc_type"),
             "label": self.job.get("label"),
+            "folder": self.folder,
+            "run_dir": str(self.run_dir),
             "status": st["status"],
             "created_at": st.get("created_at") or self.job.get("created_at"),
             "started_at": st.get("started_at"),
@@ -353,8 +473,21 @@ class JobRegistry:
         stamp = created.strftime("%Y%m%d-%H%M%S")
         while True:
             job_id = f"{stamp}-{calc_type}-{secrets.token_hex(3)}"
-            if job_id not in self.jobs and not (self.runs_dir / job_id).exists():
+            if (job_id not in self.jobs and not (self.runs_dir / job_id).exists()
+                    and not self._index_path(job_id).exists()):
                 return job_id
+
+    # ------------------------------------------------------------- index
+    @property
+    def index_dir(self) -> Path:
+        return self.runs_dir / JOBS_INDEX_DIR
+
+    def _index_path(self, job_id: str) -> Path:
+        return self.index_dir / f"{job_id}.json"
+
+    def _write_index(self, job_id: str, run_dir: Path) -> None:
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(self._index_path(job_id), {"job_id": job_id, "run_dir": str(run_dir)})
 
     # ------------------------------------------------------------- persistence
     def write_state(self, job: JobRecord) -> None:
@@ -466,17 +599,34 @@ class JobRegistry:
     # ------------------------------------------------------------- creation
     def create_job(self, calc_type: str, label: str, calculator: dict, params: dict,
                    param_sources: dict, structure_every: int,
-                   inputs: Dict[str, dict]) -> JobRecord:
+                   inputs: Dict[str, dict], folder: Optional[str] = None,
+                   location: Optional[Path] = None) -> JobRecord:
         """Create a pending job: run_dir, input copies, job.json, state.json, seq 0.
 
         ``inputs`` maps role -> ``{"upload_id", "filename", "format", "source"}``
-        where ``source`` is the stored upload path to copy.
+        where ``source`` is the stored upload path to copy. ``run_dir`` is
+        ``<location>/<folder>`` (defaults: the runs dir and the job id); it
+        must not exist (:class:`FolderExists`), it is never overwritten.
+        Raises :class:`LocationUnusable` if the location cannot be created.
         """
         created = self._next_created()
         created_at = iso_utc(created)
         job_id = self.new_job_id(calc_type, created)
-        run_dir = self.runs_dir / job_id
-        run_dir.mkdir(parents=True)
+        location = Path(location) if location is not None else self.runs_dir
+        folder = folder or job_id
+        try:
+            location.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise LocationUnusable(f"cannot create the location {location}: {exc}") from exc
+        if not location.is_dir() or not _writable_dir(location):
+            raise LocationUnusable(f"the location {location} is not a writable directory")
+        run_dir = location / folder
+        try:
+            run_dir.mkdir()
+        except FileExistsError as exc:
+            raise FolderExists(f"{run_dir} already exists") from exc
+        except OSError as exc:
+            raise LocationUnusable(f"cannot create {run_dir}: {exc}") from exc
         try:
             job_inputs = {}
             for role, spec in inputs.items():
@@ -491,6 +641,8 @@ class JobRegistry:
                 "job_id": job_id,
                 "calc_type": calc_type,
                 "label": label,
+                "folder": folder,
+                "location": str(location),
                 "created_at": created_at,
                 "calculator": calculator,
                 "params": params,
@@ -507,8 +659,13 @@ class JobRegistry:
             rec = JobRecord(run_dir, job, state, self._order)
             rec.formula, rec.natoms = self.describe_inputs(job)
             self.write_state(rec)
+            self._write_index(job_id, run_dir)
         except Exception:
             shutil.rmtree(run_dir, ignore_errors=True)
+            try:
+                self._index_path(job_id).unlink()
+            except OSError:
+                pass
             raise
         self.jobs[job_id] = rec
         self._emit_status(rec)
@@ -520,6 +677,10 @@ class JobRegistry:
         if job.job_id in self.pending:
             self.pending.remove(job.job_id)
         shutil.rmtree(job.run_dir, ignore_errors=True)
+        try:
+            self._index_path(job.job_id).unlink()
+        except OSError:
+            pass
 
     def enqueue(self, job: JobRecord) -> None:
         self.pending.append(job.job_id)
@@ -536,19 +697,50 @@ class JobRegistry:
 
     # ------------------------------------------------------------- startup
     def load(self) -> None:
-        """Load every job of the runs dir and apply restart recovery (PLAN 10.1, D6)."""
+        """Load every job and apply restart recovery (PLAN 10.1, D6, 15.1).
+
+        Jobs come from the index ``<runs-dir>/_jobs/<job_id>.json`` (their
+        run_dir may be anywhere) plus old-layout ``<runs-dir>/<job_id>/`` dirs
+        that have no index entry.
+        """
         found = []
-        for d in sorted(self.runs_dir.iterdir()):
-            if not d.is_dir() or not JOB_ID_RE.match(d.name):
-                continue
+        seen: set = set()
+
+        def consider(job_id: str, d: Path, strict: bool = True) -> None:
             state = _read_json(d / "state.json")
             job = _read_json(d / "job.json")
             if state is None or job is None or state.get("status") not in STATUSES:
                 logger.warning("ignoring %s: missing or unreadable state.json/job.json", d)
-                continue
-            job.setdefault("job_id", d.name)
-            found.append((state.get("created_at") or job.get("created_at") or "", d.name,
+                return
+            job.setdefault("job_id", job_id)
+            if not strict:
+                job_id = job["job_id"]
+            if job["job_id"] != job_id or job_id in seen:
+                logger.warning("ignoring %s: job id mismatch or duplicate (%s)", d, job_id)
+                return
+            seen.add(job_id)
+            found.append((state.get("created_at") or job.get("created_at") or "", job_id,
                           d, job, state))
+
+        if self.index_dir.is_dir():
+            for entry_path in sorted(self.index_dir.glob("*.json")):
+                entry = _read_json(entry_path)
+                job_id = (entry or {}).get("job_id") or entry_path.stem
+                run_dir = (entry or {}).get("run_dir")
+                if not isinstance(job_id, str) or not JOB_ID_RE.match(job_id) \
+                        or not isinstance(run_dir, str) or not run_dir:
+                    logger.warning("ignoring unreadable index entry %s", entry_path)
+                    continue
+                d = Path(run_dir)
+                if not d.is_dir() or not (d / "state.json").is_file():
+                    logger.warning("skipping job %s: %s or its state.json is missing",
+                                   job_id, d)
+                    continue
+                consider(job_id, d)
+        for d in sorted(self.runs_dir.iterdir()):
+            if not d.is_dir() or not JOB_ID_RE.match(d.name) or d.name in seen:
+                continue
+            consider(d.name, d, strict=False)
         found.sort(key=lambda t: (t[0], t[1]))
         for created_at, _, d, job, state in found:
             self._order += 1

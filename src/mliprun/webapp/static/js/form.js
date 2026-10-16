@@ -2,7 +2,7 @@
 // GET /api/calculators (PLAN 7.1). No calc parameter names are hard-coded:
 // everything below `fields` comes from the FieldSpec list.
 import { api, ApiError } from "./api.js";
-import { el, clear } from "./util.js";
+import { el, clear, debounce } from "./util.js";
 
 // ---------------------------------------------------------------- FieldSpec logic
 
@@ -102,6 +102,73 @@ export function computeVisibility(fields, readValue, mode) {
   }
   return visible;
 }
+
+// ---------------------------------------------------------------- run naming (PLAN 15.1)
+
+/** Server slug rule for run folder names (PLAN 15.1). */
+export function slugify(text) {
+  return String(text ?? "")
+    .replace(/[^A-Za-z0-9._+-]/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[.-]+/, "")
+    .slice(0, 100);
+}
+
+/** Zero-padded suffix for job k of n (width max(2, len(str(n-1)))). */
+export function jobSuffix(k, n) {
+  return String(k).padStart(Math.max(2, String(n - 1).length), "0");
+}
+
+/**
+ * Per-job names for one submission (PLAN 15.1).
+ * files: list of default labels (one per job; NEB is one job).
+ * multi: true for a multi-structure submit (N >= 2 single-input jobs).
+ * Returns [{defaultLabel, label, folder}] where folder null = job_id (assigned by the server).
+ */
+export function planNames(files, { label = "", folder = "", multi = false } = {}) {
+  const lab = String(label || "").trim();
+  const fol = String(folder || "").trim();
+  const n = files.length;
+  if (!multi || n < 2) {
+    return files.map((f) => ({
+      defaultLabel: f,
+      label: lab || f,
+      folder: fol ? slugify(fol) : lab ? slugify(lab) : null,
+    }));
+  }
+  const base = fol || (lab ? slugify(lab) : "");
+  return files.map((f, k) => {
+    const kk = jobSuffix(k, n);
+    return {
+      defaultLabel: f,
+      label: lab ? `${lab}-${kk}` : f,
+      folder: base ? slugify(`${base}-${kk}`) : null,
+    };
+  });
+}
+
+function joinPath(dir, name) {
+  if (!dir) return name;
+  return dir.endsWith("/") ? dir + name : `${dir}/${name}`;
+}
+
+function lsGet(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function lsSet(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable (private window, blocked site data) */
+  }
+}
+
+const LOCATION_KEY = "mliprun.lastLocation";
 
 // ---------------------------------------------------------------- widgets
 
@@ -267,9 +334,41 @@ export class CalcForm {
       id: "structure-every",
       testid: "structure-every",
     });
-    this.labelInput = el("input", { type: "text", maxlength: "80", id: "job-label", placeholder: "default: file name" });
+    this.labelInput = el("input", { type: "text", maxlength: "80", id: "job-label", testid: "job-name", spellcheck: "false", placeholder: "default: file name" });
+    this.locationInput = el("input", { type: "text", id: "job-location", testid: "job-location", spellcheck: "false", placeholder: "server runs directory" });
+    this.folderInput = el("input", { type: "text", maxlength: "100", id: "job-folder", testid: "job-folder", spellcheck: "false", placeholder: "job id (automatic)" });
+    this.nameLabel = el("label", { for: "job-label" }, "Job name");
+    this.nameWrap = el("div", { class: "field", testid: "field-job-name" }, this.nameLabel, this.labelInput);
+    this.locationStatus = el("div", { class: "muted small path-status" });
+    this.locationWrap = el(
+      "div",
+      { class: "field", testid: "field-job-location", title: "Parent directory of the run folder (absolute, or starting with ~). Created if missing." },
+      el("label", { for: "job-location" }, "Location"),
+      this.locationInput,
+      this.locationStatus,
+    );
+    this.folderStatus = el("div", { class: "muted small path-status" });
+    this.folderWrap = el(
+      "div",
+      { class: "field", testid: "field-job-folder", title: "Name of the run folder inside Location. Existing folders are never overwritten." },
+      el("label", { for: "job-folder" }, "Folder name"),
+      this.folderInput,
+      this.folderStatus,
+    );
+    this.namePreview = el("div", { class: "name-preview hidden", testid: "name-preview" });
+    const storedLoc = lsGet(LOCATION_KEY);
+    if (storedLoc) this.locationInput.value = storedLoc;
+    this.pathCheck = { seq: 0, data: null, key: null, unavailable: false };
+    this.checkPathsSoon = debounce(() => this._checkPaths(), 300);
+    for (const i of [this.labelInput, this.locationInput, this.folderInput]) {
+      i.addEventListener("input", () => {
+        this._setJobFieldError(i, null);
+        this._updateNaming();
+      });
+    }
 
     this.submitBtn = el("button", { type: "submit", class: "btn btn-primary", testid: "submit-button" }, "Submit");
+    this.submitReason = el("div", { class: "submit-reason small hidden", testid: "submit-blocked-reason", role: "status" });
     this.submitError = el("div", { class: "submit-error hidden", testid: "submit-error", role: "alert" });
     this.submitOk = el("div", { class: "submit-ok muted small", "aria-live": "polite" });
 
@@ -297,9 +396,13 @@ export class CalcForm {
           el("label", { for: "structure-every" }, "Live structure every"),
           el("div", { class: "input-unit" }, this.everyInput, el("span", { class: "unit" }, "events")),
         ),
-        el("div", { class: "field" }, el("label", { for: "job-label" }, "Label (optional)"), this.labelInput),
+        this.nameWrap,
+        this.locationWrap,
+        this.folderWrap,
+        this.namePreview,
       ),
       this.submitError,
+      this.submitReason,
       el("div", { class: "submit-row" }, this.submitBtn, this.submitOk),
     );
     this.form.addEventListener("submit", (e) => {
@@ -416,6 +519,11 @@ export class CalcForm {
   // ----------------------------------------------------------- input structures
 
   _renderInputs() {
+    this._renderInputsInner();
+    this._updateNaming();
+  }
+
+  _renderInputsInner() {
     const calc = this.calc;
     if (!calc) return;
     const prev = {
@@ -441,7 +549,7 @@ export class CalcForm {
     }
     const opt = (u) => el("option", { value: u.id }, `${u.formula} — ${u.filename}${u.n_frames > 1 ? ` (${u.n_frames} frames)` : ""}`);
     const mkSelect = (testid, list, placeholder) =>
-      el("select", { testid, id: testid }, el("option", { value: "" }, placeholder), list.map(opt));
+      el("select", { testid, id: testid, onchange: () => this._updateNaming() }, el("option", { value: "" }, placeholder), list.map(opt));
     if (calc.inputs === "pair_or_band") {
       const mkRadio = (mode, testid, text) => {
         const r = el("input", { type: "radio", name: "neb-mode", value: mode, testid, id: testid });
@@ -487,10 +595,224 @@ export class CalcForm {
     }
   }
 
+
+  // ----------------------------------------------------------- job name / location / folder
+
+  /** Default location from GET /api/health (used when nothing was remembered). */
+  setDefaultLocation(runsDir) {
+    this.runsDir = runsDir || null;
+    if (runsDir) this.locationInput.placeholder = runsDir;
+    if (runsDir && !this.locationInput.value.trim()) this.locationInput.value = runsDir;
+    this._updateNaming();
+  }
+
+  /** Jobs this submission would create: [{file, defaultLabel}] and whether it is a multi submit. */
+  _namingJobs() {
+    const mode = this.inputMode;
+    const ctx = this._structureContext();
+    if (mode === "single") {
+      const files = ctx.ups.filter(Boolean).map((u) => u.filename);
+      return { files, defaults: files, multi: files.length >= 2 };
+    }
+    if (mode === "band") {
+      return ctx.band ? { files: [ctx.band.filename], defaults: [ctx.band.filename], multi: false } : { files: [], defaults: [], multi: false };
+    }
+    if (ctx.initial && ctx.final) {
+      return { files: [`${ctx.initial.filename} → ${ctx.final.filename}`], defaults: [`${ctx.initial.filename} -> ${ctx.final.filename}`], multi: false };
+    }
+    return { files: [], defaults: [], multi: false };
+  }
+
+  _locationValue() {
+    return this.locationInput.value.trim();
+  }
+
+  _clientLocationError() {
+    const loc = this._locationValue();
+    if (loc && !/^(\/|~)/.test(loc)) return "Location must be an absolute path (start with / or ~).";
+    return null;
+  }
+
+  _updateNaming() {
+    if (!this.labelInput || !this.calc) return;
+    const jobs = this._namingJobs();
+    this.naming = { ...jobs, plan: planNames(jobs.defaults, { label: this.labelInput.value, folder: this.folderInput.value, multi: jobs.multi }) };
+    const label = this.labelInput.value.trim();
+    // Labels and placeholders
+    this.nameLabel.textContent = jobs.multi ? "Common name" : "Job name";
+    if (jobs.multi) {
+      this.labelInput.placeholder = "none: each job is named after its file";
+      this.folderInput.placeholder = label ? `${slugify(label)}-${jobSuffix(0, jobs.files.length)}, -${jobSuffix(1, jobs.files.length)}, …` : "job id of each job (automatic)";
+    } else {
+      this.labelInput.placeholder = jobs.defaults.length ? jobs.defaults[0] : "default: file name";
+      this.folderInput.placeholder = label ? slugify(label) || "job id (automatic)" : "job id (automatic)";
+    }
+    this._renderNaming();
+    this.checkPathsSoon();
+  }
+
+  async _checkPaths() {
+    const plan = (this.naming && this.naming.plan) || [];
+    const folders = plan.map((p) => p.folder).filter((f) => f);
+    const location = this._locationValue() || null;
+    if (this._clientLocationError()) {
+      this.pathCheck.data = null;
+      this._renderNaming();
+      return;
+    }
+    if (this.pathCheck.unavailable) return;
+    const key = JSON.stringify([location, folders]);
+    const seq = ++this.pathCheck.seq;
+    try {
+      const data = await api.checkPaths(location, folders);
+      if (seq !== this.pathCheck.seq) return; // a newer check is on its way
+      this.pathCheck.data = data;
+      this.pathCheck.key = key;
+    } catch (err) {
+      if (seq !== this.pathCheck.seq) return;
+      this.pathCheck.data = null;
+      // Older server without /api/paths/check: no live feedback, submit still works.
+      if (err instanceof ApiError && (err.status === 404 || err.status === 405)) this.pathCheck.unavailable = true;
+    }
+    this._renderNaming();
+  }
+
+  /** Current check data if it matches the inputs on screen, else null. */
+  _freshCheck() {
+    const d = this.pathCheck.data;
+    if (!d) return null;
+    const plan = (this.naming && this.naming.plan) || [];
+    const key = JSON.stringify([this._locationValue() || null, plan.map((p) => p.folder).filter((f) => f)]);
+    return key === this.pathCheck.key ? d : null;
+  }
+
+  _locationProblem(check) {
+    const client = this._clientLocationError();
+    if (client) return client;
+    if (!check) return null;
+    if (check.error) return check.error;
+    if (check.exists === true && check.writable === false) return `${check.location} is not writable.`;
+    if (check.exists === false && check.writable === false) return `${check.location} does not exist and cannot be created.`;
+    return null;
+  }
+
+  /** Rows with resolved paths and conflict flags. */
+  _namingRows(check) {
+    const plan = (this.naming && this.naming.plan) || [];
+    const files = (this.naming && this.naming.files) || [];
+    const loc = check ? check.location : this._locationValue() || this.runsDir || "";
+    let k = 0;
+    const rows = plan.map((p, i) => {
+      const row = { file: files[i], label: p.label, folder: p.folder, path: null, exists: false, duplicate: false };
+      if (p.folder) {
+        const info = check && Array.isArray(check.folders) ? check.folders[k] : null;
+        k++;
+        if (info) {
+          row.folder = info.folder;
+          row.path = info.path;
+          row.exists = !!info.exists;
+        } else row.path = joinPath(loc, p.folder);
+      } else row.path = joinPath(loc, "<job id>");
+      return row;
+    });
+    const count = new Map();
+    for (const r of rows) if (r.folder) count.set(r.folder, (count.get(r.folder) || 0) + 1);
+    for (const r of rows) if (r.folder && count.get(r.folder) > 1) r.duplicate = true;
+    return rows;
+  }
+
+  _renderNaming() {
+    if (!this.naming) return;
+    const check = this._freshCheck();
+    const locProblem = this._locationProblem(check);
+    const rows = this._namingRows(check);
+
+    // Location status line
+    this.locationWrap.classList.toggle("has-warning", !!locProblem);
+    if (locProblem) {
+      this.locationStatus.className = "small path-status path-bad";
+      this.locationStatus.textContent = locProblem;
+    } else if (check) {
+      this.locationStatus.className = "muted small path-status";
+      this.locationStatus.textContent = check.exists ? `→ ${check.location}` : `→ ${check.location} (will be created)`;
+    } else {
+      this.locationStatus.className = "muted small path-status";
+      this.locationStatus.textContent = "";
+    }
+
+    // Single job: one path line under the folder input.
+    const multi = this.naming.multi;
+    if (!multi && rows.length === 1) {
+      const r = rows[0];
+      const bad = r.exists;
+      this.folderStatus.className = `small path-status${bad ? " path-bad" : " muted"}`;
+      this.folderStatus.textContent = bad ? `${r.path} already exists; choose another folder name (runs are never overwritten).` : `Run folder: ${r.path}`;
+    } else {
+      this.folderStatus.className = "muted small path-status";
+      this.folderStatus.textContent = "";
+    }
+
+    // Multi: preview table
+    clear(this.namePreview);
+    this.namePreview.classList.toggle("hidden", !multi);
+    if (multi) {
+      const body = rows.map((r) => {
+        const flag = r.exists ? "exists" : r.duplicate ? "duplicate" : "";
+        return el(
+          "tr",
+          { class: flag ? "conflict-row" : "", dataset: { conflict: flag || "none" } },
+          el("td", { class: "np-file" }, r.file),
+          el("td", { class: "np-label" }, r.label),
+          el("td", { class: "np-path", title: r.path }, r.path, flag ? el("span", { class: "badge status-failed np-flag" }, flag === "exists" ? "already exists" : "duplicate") : null),
+        );
+      });
+      this.namePreview.append(
+        el("div", { class: "muted small" }, `${rows.length} jobs will be created:`),
+        el(
+          "div",
+          { class: "table-scroll" },
+          el("table", { class: "data-table" }, el("thead", {}, el("tr", {}, el("th", {}, "File"), el("th", {}, "Job name"), el("th", {}, "Folder"))), el("tbody", {}, body)),
+        ),
+      );
+    }
+
+    // Gate the submit button.
+    const reasons = [];
+    if (locProblem) reasons.push(`Location: ${locProblem}`);
+    const nExist = rows.filter((r) => r.exists).length;
+    const nDup = rows.filter((r) => r.duplicate).length;
+    if (nExist) reasons.push(nExist === 1 && !multi ? "The run folder already exists. Choose another folder name." : `${nExist} run folder${nExist > 1 ? "s" : ""} already exist${nExist > 1 ? "" : "s"}. Choose another name or folder.`);
+    if (nDup) reasons.push(`${nDup} jobs would share a folder name.`);
+    this.blockReason = reasons.length ? reasons.join(" ") : null;
+    this._applyGate();
+  }
+
+  _applyGate() {
+    this.submitReason.textContent = this.blockReason ? `Cannot submit: ${this.blockReason}` : "";
+    this.submitReason.classList.toggle("hidden", !this.blockReason);
+    if (!this.submitting) this.submitBtn.disabled = !!this.blockReason;
+  }
+
+  _jobFieldWrap(name) {
+    return { label: this.nameWrap, location: this.locationWrap, folder: this.folderWrap }[name] || null;
+  }
+
+  _setJobFieldError(inputOrName, message) {
+    const name = typeof inputOrName === "string" ? inputOrName : inputOrName === this.labelInput ? "label" : inputOrName === this.locationInput ? "location" : "folder";
+    const wrap = this._jobFieldWrap(name);
+    if (!wrap) return false;
+    const old = wrap.querySelector('[data-testid="field-error"]');
+    if (old) old.remove();
+    wrap.classList.toggle("has-error", !!message);
+    if (message) wrap.append(el("div", { class: "field-error", testid: "field-error" }, message));
+    return true;
+  }
+
   // ----------------------------------------------------------- errors
 
   _clearErrors() {
     for (const [name] of this.widgets) this._setFieldError(name, null);
+    if (this.nameWrap) for (const n of ["label", "location", "folder"]) this._setJobFieldError(n, null);
     this.submitError.classList.add("hidden");
     clear(this.submitError);
   }
@@ -571,6 +893,12 @@ export class CalcForm {
     const payload = { calc_type: calc.name, calculator, params, structure_every: every };
     const label = this.labelInput.value.trim();
     if (label) payload.label = label;
+    const location = this._locationValue();
+    if (location) payload.location = location;
+    const folder = this.folderInput.value.trim();
+    if (folder) payload.folder = folder;
+    const locErr = this._clientLocationError();
+    if (locErr) errors.push(locErr);
 
     const mode = this.inputMode;
     if (mode === "single") {
@@ -623,18 +951,47 @@ export class CalcForm {
       );
       return;
     }
+    if (this.blockReason) return;
+    this.submitting = true;
     this.submitBtn.disabled = true;
     this.submitBtn.textContent = "Submitting…";
     try {
       const { jobs } = await api.submitJob(payload);
       this.submitOk.textContent = `Submitted ${jobs.length} job${jobs.length > 1 ? "s" : ""}.`;
+      if (payload.location) lsSet(LOCATION_KEY, payload.location);
+      // The folders just created now exist on disk: clear Job name and Folder
+      // name (Location is kept) so the next submission starts from fresh,
+      // non-conflicting defaults instead of flagging its own folders.
+      this.labelInput.value = "";
+      this.folderInput.value = "";
+      this._updateNaming();
       if (this.onSubmitted) this.onSubmitted(jobs);
     } catch (err) {
       this._handleSubmitError(err, payload);
     } finally {
-      this.submitBtn.disabled = false;
+      this.submitting = false;
       this.submitBtn.textContent = "Submit";
+      this._applyGate();
+      // The folders just used now exist: refresh the live check.
+      this.checkPathsSoon();
+      setTimeout(() => this.checkPathsSoon(), 1500);
     }
+  }
+
+  /** Place a 422 detail for label/location/folder next to its input. Returns true if handled. */
+  _jobFieldError(d, payload) {
+    const m = String(d.field || "").match(/^(?:structure_ids\[(\d+)\]\.)?(label|location|folder)$/);
+    if (!m) return false;
+    let msg = d.message;
+    if (m[1] !== undefined && payload.structure_ids) {
+      const u = this.structures.get(payload.structure_ids[parseInt(m[1], 10)]);
+      if (u) msg = `${u.filename}: ${msg}`;
+    }
+    const wrap = this._jobFieldWrap(m[2]);
+    const prev = wrap && wrap.querySelector('[data-testid="field-error"]');
+    if (prev) msg = `${prev.textContent}; ${msg}`;
+    this._setJobFieldError(m[2], msg);
+    return true;
   }
 
   _handleSubmitError(err, payload) {
@@ -656,6 +1013,8 @@ export class CalcForm {
           this.showAdvanced = true;
           this._applyAdvanced();
         }
+      } else if (this._jobFieldError(d, payload)) {
+        /* shown next to the Job name / Location / Folder input */
       } else {
         other.push(d.field ? `${d.field}: ${d.message}` : d.message);
       }

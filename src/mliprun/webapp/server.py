@@ -35,14 +35,22 @@ from mliprun.webapp import events as wevents
 from mliprun.webapp import schema as wschema
 from mliprun.webapp.errors import ApiError, code_for_status, error_body, validation_error
 from mliprun.webapp.jobs import (
+    JOBS_INDEX_DIR,
     TERMINAL,
     STATUSES,
     Broadcaster,
     Connection,
+    FolderExists,
     JobRecord,
     JobRegistry,
+    LocationUnusable,
     QueueRunner,
     default_worker_cmd,
+    folder_problem,
+    inspect_location,
+    slugify_folder,
+    suffix_width,
+    suffixed_folder,
 )
 from mliprun.webapp.uploads import (
     MAX_FILES_PER_REQUEST,
@@ -60,10 +68,13 @@ MAX_LISTED_FILES = 10000
 WS_PING_INTERVAL_S = 20.0
 
 JOB_KEYS = frozenset({"calc_type", "calculator", "params", "structure_every", "label",
+                      "location", "folder",
                       "structure_ids", "initial_id", "final_id", "band_id"})
 ID_KEYS = ("structure_ids", "initial_id", "final_id", "band_id")
 MAX_STRUCTURES_PER_SUBMIT = 200
 MAX_LABEL_LEN = 80
+MAX_PATH_LEN = 4096
+MAX_CHECK_FOLDERS = 1000
 
 _TEXT_TYPES = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css",
                ".html": "text/html", ".json": "application/json", ".svg": "image/svg+xml"}
@@ -310,11 +321,20 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
             raise ApiError(400, "request body must be a JSON object")
         if not isinstance(body, dict):
             raise ApiError(400, "request body must be a JSON object")
-        plans = _plan_submission(body, uploads)
+        plans = _plan_submission(body, uploads, runs_dir)
         created: List[JobRecord] = []
         try:
             for plan in plans:
-                created.append(registry.create_job(**plan))
+                field = plan.pop("folder_field")
+                try:
+                    created.append(registry.create_job(**plan))
+                except FolderExists as exc:
+                    raise validation_error([{"field": field, "code": "folder_exists",
+                                             "message": str(exc)}])
+                except LocationUnusable as exc:
+                    raise validation_error([{"field": "location",
+                                             "code": "location_not_writable",
+                                             "message": str(exc)}])
         except Exception:
             for rec in created:
                 registry.discard_job(rec)
@@ -322,6 +342,34 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         for rec in created:
             registry.enqueue(rec)
         return _json({"jobs": [registry.summary(r) for r in created]}, 201)
+
+    @app.post("/api/paths/check")
+    async def paths_check(request: Request):
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise ApiError(400, "request body must be a JSON object")
+        if not isinstance(body, dict):
+            raise ApiError(400, "request body must be a JSON object")
+        errors = [{"field": k, "message": "unknown key"}
+                  for k in sorted(set(body) - {"location", "folders"})]
+        location = body.get("location")
+        if location is not None and (not isinstance(location, str)
+                                     or len(location) > MAX_PATH_LEN):
+            errors.append({"field": "location",
+                           "message": f"must be a string of at most {MAX_PATH_LEN} characters "
+                                      "or null"})
+        folders = body.get("folders", [])
+        if folders is None:
+            folders = []
+        if (not isinstance(folders, list) or len(folders) > MAX_CHECK_FOLDERS
+                or not all(isinstance(f, str) and len(f) <= MAX_PATH_LEN for f in folders)):
+            errors.append({"field": "folders",
+                           "message": f"must be a list of at most {MAX_CHECK_FOLDERS} strings"})
+        if errors:
+            raise validation_error(errors, f"{len(errors)} problem"
+                                           f"{'s' if len(errors) != 1 else ''} with the request")
+        return await run_in_threadpool(_check_paths, location, folders, runs_dir)
 
     @app.get("/api/jobs")
     async def list_jobs(status: Optional[str] = None,
@@ -420,7 +468,7 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
     @app.get("/api/jobs/{job_id}/zip")
     async def job_zip(job_id: str):
         rec = get_job(job_id)
-        spooled = await run_in_threadpool(_build_zip, rec.run_dir, rec.job_id)
+        spooled = await run_in_threadpool(_build_zip, rec.run_dir, rec.folder)
 
         def _stream():
             try:
@@ -434,7 +482,7 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
 
         return StreamingResponse(
             _stream(), media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{rec.job_id}.zip"'})
+            headers={"Content-Disposition": f'attachment; filename="{rec.folder}.zip"'})
 
     # ------------------------------------------------------------------ websocket
     @app.websocket("/ws")
@@ -553,7 +601,40 @@ def _calc_type_spec(name: Any) -> Optional[dict]:
     return None
 
 
-def _plan_submission(body: dict, uploads: UploadStore) -> List[dict]:
+def _reserved_dirs(runs_dir: Path) -> List[Path]:
+    return [runs_dir / "_uploads", runs_dir / JOBS_INDEX_DIR]
+
+
+def _check_paths(location: Optional[str], folders: List[str], runs_dir: Path) -> dict:
+    """``POST /api/paths/check`` (blocking; creates nothing)."""
+    info = inspect_location(location, runs_dir, _reserved_dirs(runs_dir))
+    out_folders = []
+    for raw in folders:
+        slug = slugify_folder(raw)
+        problem = folder_problem(slug)
+        entry = {"input": raw, "folder": slug, "path": None, "exists": False, "error": problem}
+        if info["path"] is not None and problem is None:
+            path = info["path"] / slug
+            entry["path"] = str(path)
+            entry["exists"] = os.path.lexists(str(path))
+        out_folders.append(entry)
+    return {"location": info["display"], "exists": info["exists"],
+            "writable": info["writable"], "error": info["error"], "folders": out_folders}
+
+
+def _optional_text(body: dict, key: str, max_len: int, errors: List[dict]) -> Optional[str]:
+    value = body.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str) or len(value) > max_len:
+        errors.append({"field": key,
+                       "message": f"must be a string of at most {max_len} characters"})
+        return None
+    return value.strip() or None
+
+
+def _plan_submission(body: dict, uploads: UploadStore,
+                     runs_dir: Optional[Path] = None) -> List[dict]:
     """Validate a POST /api/jobs body; return ``create_job`` kwargs per job.
 
     Raises :class:`ApiError` (422 / 404). All-or-nothing: nothing is created
@@ -591,6 +672,24 @@ def _plan_submission(body: dict, uploads: UploadStore) -> List[dict]:
                        "message": f"must be a string of at most {MAX_LABEL_LEN} characters"})
     if isinstance(label, str):
         label = label.strip() or None
+    location_raw = _optional_text(body, "location", MAX_PATH_LEN, errors)
+    folder_raw = _optional_text(body, "folder", MAX_PATH_LEN, errors)
+    runs_dir = Path(runs_dir) if runs_dir is not None else uploads.root.parent
+    loc_info = inspect_location(location_raw, runs_dir, _reserved_dirs(runs_dir))
+    if loc_info["code"] is not None:
+        errors.append({"field": "location", "code": loc_info["code"],
+                       "message": loc_info["error"]})
+    folder_base: Optional[str] = None
+    if folder_raw is not None:
+        given = slugify_folder(folder_raw)
+        problem = folder_problem(given)
+        if problem is not None:
+            errors.append({"field": "folder", "code": "folder_invalid", "message": problem})
+        folder_base = given
+    elif label is not None:
+        # derived from the job name; an unusable slug falls back to job ids
+        derived = slugify_folder(label)
+        folder_base = derived if derived and folder_problem(derived) is None else None
 
     # Which id keys does this calc type take?
     groups: List[Dict[str, str]] = []   # one {role: id-field} per job, with field paths
@@ -647,6 +746,8 @@ def _plan_submission(body: dict, uploads: UploadStore) -> List[dict]:
         raise ApiError(404, "unknown upload id", "not_found", missing)
 
     multi = len(groups) > 1
+    n_jobs = len(groups)
+    width = suffix_width(n_jobs)
     plans: List[dict] = []
     all_errors: List[dict] = []
     for k, group in enumerate(groups):
@@ -665,7 +766,7 @@ def _plan_submission(body: dict, uploads: UploadStore) -> List[dict]:
             inputs[role] = {"upload_id": uid, "filename": meta["filename"],
                             "format": meta.get("format"), "source": uploads.path_of(uid)}
         if label is not None:
-            job_label = label
+            job_label = f"{label}-{k:0{width}d}" if multi else label
         elif "structure" in inputs:
             job_label = inputs["structure"]["filename"]
         elif "band" in inputs:
@@ -678,7 +779,45 @@ def _plan_submission(body: dict, uploads: UploadStore) -> List[dict]:
                       "structure_every": structure_every, "inputs": inputs})
     if all_errors:
         raise validation_error(all_errors)
+    plan_folders(plans, loc_info["path"], folder_base, multi, width)
     return plans
+
+
+def plan_folders(plans: List[dict], location: Path, base: Optional[str], multi: bool,
+                 width: int) -> None:
+    """Add ``location``/``folder``/``folder_field`` to each plan (PLAN 15.1).
+
+    ``base`` is the slugged folder (single job) or common base (multi), or
+    None for "use the job id". Raises a 422 ``validation_error`` whose details
+    carry ``code`` ``folder_exists`` / ``folder_duplicate``.
+    """
+    errors: List[dict] = []
+    seen: Dict[str, int] = {}
+    for k, plan in enumerate(plans):
+        field = f"structure_ids[{k}].folder" if multi else "folder"
+        if base is None:
+            folder = None
+        elif multi:
+            folder = suffixed_folder(base, k, width)
+        else:
+            folder = base
+        plan["location"] = location
+        plan["folder"] = folder
+        plan["folder_field"] = field
+        if folder is None:
+            continue
+        path = location / folder
+        if folder in seen:
+            errors.append({"field": field, "code": "folder_duplicate",
+                           "message": f"folder {folder!r} is used by more than one job "
+                                      f"of this submission"})
+            continue
+        seen[folder] = k
+        if os.path.lexists(str(path)):
+            errors.append({"field": field, "code": "folder_exists",
+                           "message": f"{path} already exists; choose another name"})
+    if errors:
+        raise validation_error(errors)
 
 
 def _inputs_detail(rec: JobRecord) -> dict:
@@ -702,12 +841,24 @@ def _iso_mtime(ts: float) -> str:
     return iso_utc(datetime.fromtimestamp(ts, tz=timezone.utc))
 
 
+def _inside(root: Path, p: Path) -> bool:
+    """True if ``p`` resolves (symlinks followed) to a path inside ``root``."""
+    try:
+        target = p.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return target == root or root in target.parents
+
+
 def _list_files(run_dir: Path) -> List[dict]:
     files = []
+    root = run_dir.resolve()
     for dirpath, dirnames, filenames in os.walk(run_dir):
         dirnames.sort()
         for name in sorted(filenames):
             p = Path(dirpath) / name
+            if not _inside(root, p):
+                continue
             try:
                 st = p.stat()
             except OSError:
@@ -722,15 +873,20 @@ def _list_files(run_dir: Path) -> List[dict]:
     return files
 
 
-def _build_zip(run_dir: Path, job_id: str):
+def _build_zip(run_dir: Path, prefix: str):
+    """Zip every file under ``run_dir`` as ``<prefix>/<relpath>``; files whose
+    real path is outside ``run_dir`` (symlinks) are left out."""
     spooled = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+    root = run_dir.resolve()
     with zipfile.ZipFile(spooled, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for dirpath, dirnames, filenames in os.walk(run_dir):
             dirnames.sort()
             for name in sorted(filenames):
                 p = Path(dirpath) / name
+                if not _inside(root, p) or not p.is_file():
+                    continue
                 try:
-                    zf.write(p, f"{job_id}/{p.relative_to(run_dir).as_posix()}")
+                    zf.write(p, f"{prefix}/{p.relative_to(run_dir).as_posix()}")
                 except OSError:
                     continue
     spooled.seek(0)

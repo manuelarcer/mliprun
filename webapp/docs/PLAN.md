@@ -1128,6 +1128,15 @@ input/select), `advanced-toggle`, `neb-mode-pair`, `neb-mode-band`,
 `reproduce-panel`, `lib-error-banner`, plus `plot-extra` (NPT pressure and
 volume) and `structure-preview` (the upload preview viewer).
 
+Revision 2 (section 15) adds: `job-name`, `job-location`, `job-folder`
+(the inputs) inside the wrappers `field-job-name`, `field-job-location`,
+`field-job-folder` (server 422 messages for label/location/folder appear as a
+`field-error` inside these wrappers); `name-preview` (multi-structure table,
+rows carry `data-conflict` = `none`/`exists`/`duplicate`);
+`submit-blocked-reason` (why Submit is disabled); `plot-neb-band` (a div
+inside `plot-main`, the band-evolution Plotly chart); `viewer-title`
+(neb/autoneb only).
+
 `cancel-button` and `job-status` appear both in job rows and in the job
 detail header: tests MUST scope them, e.g.
 `[data-testid=job-detail] [data-testid=cancel-button]`, or inside one
@@ -1333,12 +1342,23 @@ the API but is called **Job name** in the UI.
 {"label": "ch3-is-proposal", "location": "~/calcs/ch3", "folder": null, ...}
 ```
 
+As built (backend, frontend and integration reports, 2026-10-16); the bullets
+below are the contract, the "Decisions" list after them records what was
+settled during implementation.
+
 - `label` (<= 80 chars, optional). Single job: used as is; default unchanged
   (filename, or `"<initial> -> <final>"`). Multi-structure submit with N >= 2
   jobs: `label` is a common base; job k gets `"<label>-<kk>"` where `kk` is k
   zero-padded to width `w = max(2, len(str(N-1)))`, k = 0..N-1 in
   `structure_ids` order. If `label` is null, each job gets its default label
   (no suffix).
+- Suffix order = **natural filename order**, applied client-side: when >= 2
+  structures are selected the UI sends `structure_ids` sorted by filename,
+  case-insensitive, digit runs compared numerically (`cu_2` < `cu_10`), ties
+  broken by upload time (oldest first); the `name-preview` table shows the
+  same order. Independent of the upload list's display order, so the same
+  files get the same suffixes after a page reload. The server keeps using
+  `structure_ids` as given.
 - `location` (optional str): parent directory of the run folder. `~` expanded,
   must be absolute after expansion, resolved; created with parents if missing;
   must be a writable directory. Default: the server's runs-dir. Errors -> 422,
@@ -1382,6 +1402,40 @@ the API but is called **Job name** in the UI.
   ~300 ms). Submit is disabled while any path conflicts or the location is
   invalid; the reason is shown.
 
+Decisions made during implementation:
+
+- **422 format.** All naming errors are top-level `validation_error`; each
+  `details[]` entry carries its own `code`: `folder_exists`,
+  `folder_duplicate`, `location_invalid`, `location_not_writable`,
+  `folder_invalid`. `field` is `label`, `location`, `folder`, or for a
+  multi-structure submit `structure_ids[k].folder`. The frontend routes by
+  `field` (regex `^(structure_ids\[k\]\.)?(label|location|folder)$`) and
+  shows the message as a `field-error` in `field-job-name` /
+  `field-job-location` / `field-job-folder`; multi entries are prefixed with
+  the structure's filename and joined with `; `. `params.*` entries keep going
+  to their parameter widget; anything else is listed in `submit-error`.
+- **Unusable folders.** A user-typed `folder` that slugs to empty, or to
+  `_uploads` / `_jobs`, -> 422 `folder_invalid`. A label-derived folder that is
+  unusable silently falls back to the job_id. Trailing dashes are kept by the
+  slug. Suffixed names are re-slugged, and the base is truncated so
+  `<base>-<kk>` fits in 100 chars.
+- **Locations** at or inside `<runs-dir>/_uploads` or `<runs-dir>/_jobs` ->
+  `location_invalid`. An empty string for `label`/`location`/`folder` means
+  "default" (same as null/absent).
+- **`/api/paths/check`** folder entries have an extra `error` key (str|null);
+  `path` is null when the folder is unusable.
+- **Zip** download name `<folder>.zip` (archive prefix `<folder>/`).
+- **Order of `structure_ids`** = order of the structure list. Files uploaded
+  together are listed in their upload order (newest batch on top), so a drop
+  of `cu_00..cu_09` maps to suffixes `-00..-09`. After a page reload the list
+  comes from `GET /api/uploads` (newest first by time), which can reverse a
+  batch; the preview table always shows the actual mapping.
+- **After a successful submit** the Job name and Folder name inputs are
+  cleared (Location kept and remembered), so the live check does not flag the
+  folders just created as conflicts.
+- Live check: debounced 300 ms; a 404/405 from an older server disables it
+  (submit still works and the server still enforces never-overwrite).
+
 ### 15.2 NEB / AutoNEB live view
 
 - **Band evolution plot** (`data-testid="plot-neb-band"`): x = image index
@@ -1392,12 +1446,25 @@ the API but is called **Job name** in the UI.
   (thin evenly, always keep the first). Colour legend/colorbar: "iteration".
   For autoneb the number of images can grow; each line uses its own length.
   Kept: fmax vs iteration (and barrier vs iteration) plot.
+  As built: `plot-neb-band` is its own div inside `plot-main`; when the result
+  arrives the final band (`relative_energies_eV`) becomes the thick trace.
+  AutoNEB colours by event order (its optimizer counter restarts per
+  sub-band); missing energies (`null`, images not yet relaxed) are bridged.
+- **AutoNEB events describe the full band** (integration fix): the worker
+  wraps `ase.mep.autoneb.AutoNEB._execute_one_neb` (process-local, restored
+  afterwards) to know the running instance and the sub-band indices. Each
+  `neb_iter` then carries `energies`/`rel_energies`/`band`/`n_images` for
+  `all_images` (E relative to image 00), `highest_image` as a full-band
+  index, `fmax` of the sub-band NEB (the convergence criterion), and
+  `autoneb = {"sub_step": int, "sub_band": [first, last]}`. Without the
+  private method (other ASE versions) events fall back to the sub-band.
 - **Structure viewer** for neb/autoneb shows the highest-energy image
   (`highest_image` from the latest `neb_iter` with frames; final result for
   finished jobs). Title element `data-testid="viewer-title"` above the viewer
   reads exactly `Image with highest energy - NN`, NN = highest_image index
   zero-padded to 2 digits (3 if >= 100), initial endpoint = 00. Live for the
-  running job, final for done jobs.
+  running job, final for done jobs (`result.ts_image_index`). The viewer keeps
+  its band slider (all images) but jumps to the highest image on each update.
 - Cosmetic: the job header hides "phase: ..." once the job is terminal.
 
 ### 15.3 Core fix

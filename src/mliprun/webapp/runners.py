@@ -8,6 +8,7 @@ optimizer.
 """
 from __future__ import annotations
 
+import contextlib
 import csv
 import glob
 import json
@@ -114,13 +115,21 @@ class ObserverAdapter:
         self.writer.emit("neb_iter", **event)
 
 
-def make_observed_fire(adapter: ObserverAdapter):
+def make_observed_fire(adapter: ObserverAdapter, tracker: Optional[dict] = None):
     """A FIRE subclass whose instances report every step to ``adapter``.
 
     ASE's AutoNEB builds a fresh optimizer per sub-band relaxation, so the
     callback is attached in ``__init__``. Energies are read from each
     image's calculator cache only (never triggering a new calculation); a
     missing one is reported as ``None``.
+
+    ``tracker`` (filled by :func:`_track_autoneb`) holds the running AutoNEB
+    instance and the image indices of the sub-band being relaxed. When set,
+    each event describes the **full** band (``all_images``: energies,
+    positions, ``highest_image`` as a full-band index) so the UI's band plot
+    and "Image with highest energy - NN" title refer to the whole path; the
+    sub-band is reported as ``autoneb.sub_band = [first, last]`` and ``fmax``
+    stays the sub-band NEB force (the convergence criterion).
     """
     from ase.optimize import FIRE
 
@@ -136,8 +145,15 @@ def make_observed_fire(adapter: ObserverAdapter):
 
         def _report(self):
             target = self._observed_target
+            images, sub_band = list(target.images), None
+            auto = tracker.get("autoneb") if tracker else None
+            to_run = tracker.get("to_run") if tracker else None
+            if (auto is not None and to_run
+                    and all(a is b for a, b in zip(target.images,
+                                                   (auto.all_images[i] for i in to_run)))):
+                images, sub_band = list(auto.all_images), [int(to_run[0]), int(to_run[-1])]
             energies = []
-            for img in target.images:
+            for img in images:
                 try:
                     value = img.calc.get_property("energy", img,
                                                   allow_calculation=False)
@@ -150,12 +166,46 @@ def make_observed_fire(adapter: ObserverAdapter):
                 fmax = None
             payload = {"step": counter["iteration"], "fmax": fmax, "barrier": None,
                        "energies": energies,
-                       "positions": [img.get_positions() for img in target.images],
-                       "cell": target.images[0].get_cell().array}
+                       "positions": [img.get_positions() for img in images],
+                       "cell": images[0].get_cell().array}
             counter["iteration"] += 1
-            adapter.neb(payload, autoneb={"sub_step": int(self.nsteps)})
+            info = {"sub_step": int(self.nsteps)}
+            if sub_band is not None:
+                info["sub_band"] = sub_band
+            adapter.neb(payload, autoneb=info)
 
     return ObservedFIRE
+
+
+@contextlib.contextmanager
+def _track_autoneb(tracker: dict):
+    """Record the running ``AutoNEB`` instance and its current sub-band.
+
+    Wraps ``AutoNEB._execute_one_neb`` for the duration of the block (the
+    worker runs one job per process, so the class-level patch is local to
+    this job). If the private method is missing (other ASE versions) nothing
+    is patched and events fall back to describing the sub-band only.
+    """
+    try:
+        from ase.mep.autoneb import AutoNEB
+    except ImportError:  # pragma: no cover - older ASE layout
+        yield
+        return
+    orig = getattr(AutoNEB, "_execute_one_neb", None)
+    if orig is None:  # pragma: no cover
+        yield
+        return
+
+    def wrapped(self, exitstack, n_cur, to_run, *args, **kwargs):
+        tracker["autoneb"], tracker["to_run"] = self, list(to_run)
+        return orig(self, exitstack, n_cur, to_run, *args, **kwargs)
+
+    AutoNEB._execute_one_neb = wrapped
+    try:
+        yield
+    finally:
+        AutoNEB._execute_one_neb = orig
+        tracker.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -481,12 +531,14 @@ def run_autoneb_job(ri: RunInputs) -> dict:
     if p["optimize_endpoints"]:
         _endpoints(ri, neb)
     ri.phase("run", "AutoNEB")
-    neb.run_autoneb(n_simul=1, n_max=p["n_max"], k=p["k"], climb=p["climb"],
-                    optimizer=make_observed_fire(ri.adapter),
-                    space_energy_ratio=p["space_energy_ratio"],
-                    interpolate_method=p["interpolate_method"],
-                    maxsteps=p["maxsteps"], prefix="autoneb",
-                    run_context=ri.run_context("autoneb"))
+    tracker: dict = {}
+    with _track_autoneb(tracker):
+        neb.run_autoneb(n_simul=1, n_max=p["n_max"], k=p["k"], climb=p["climb"],
+                        optimizer=make_observed_fire(ri.adapter, tracker),
+                        space_energy_ratio=p["space_energy_ratio"],
+                        interpolate_method=p["interpolate_method"],
+                        maxsteps=p["maxsteps"], prefix="autoneb",
+                        run_context=ri.run_context("autoneb"))
     ri.phase("postprocess", "collecting the AutoNEB images")
     files = sorted(glob.glob(str(ri.run_dir / "autoneb[0-9][0-9][0-9].traj")))
     images = [read(f, index=-1) for f in files]

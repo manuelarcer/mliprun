@@ -86,6 +86,7 @@ export const api = {
   cancelJob: (id) => request("POST", `/api/jobs/${encodeURIComponent(id)}/cancel`),
   events: (id, since = 0, limit = 1000) =>
     request("GET", `/api/jobs/${encodeURIComponent(id)}/events`, { query: { since, limit } }),
+  checkPaths: (location, folders) => request("POST", "/api/paths/check", { json: { location, folders } }),
   files: (id) => request("GET", `/api/jobs/${encodeURIComponent(id)}/files`),
 };
 

@@ -95,7 +95,8 @@ def test_multi_submit_is_all_or_nothing(idle_client, upload_atoms, submit, runs_
     assert r.status_code == 201
     jobs = r.json()["jobs"]
     assert [j["queue_position"] for j in jobs] == [1, 2]
-    assert all(j["label"] == "two" for j in jobs)
+    assert [j["label"] for j in jobs] == ["two-00", "two-01"]       # PLAN 15.1
+    assert [j["folder"] for j in jobs] == ["two-00", "two-01"]
     listed = idle_client.get("/api/jobs").json()["jobs"]
     assert [j["job_id"] for j in listed] == [jobs[1]["job_id"], jobs[0]["job_id"]]
 

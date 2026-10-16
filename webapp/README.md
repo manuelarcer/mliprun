@@ -10,11 +10,13 @@ The app is a *server* (a Python program that listens on a network port) plus a
 *front end* (the HTML/JavaScript page your browser loads from that server). By
 default the server only accepts connections from your own computer.
 
-![Job detail view: a Cu(111) slab with an adatom relaxed with EMT](docs/screenshot.png)
+![Job detail view: an EMT NEB of an Au adatom hopping on Al(100)](docs/screenshot.png)
 
-*A finished EMT optimization of a 49-atom Cu(111) slab with an adatom: final
-structure on the left, energy and fmax per optimizer step on the right, result
-table below.*
+*A finished EMT NEB (Au adatom hopping between hollow sites on Al(100)): the
+viewer on the left shows the image with the highest energy (its title names
+the image), the band-evolution plot on the right draws the energy profile of
+every iteration (light = early, dark = late) with the final band on top, and
+fmax / barrier per iteration below it.*
 
 Contents: [Install](#install) · [Launch](#launch) ·
 [Run directories](#run-directories) · [Calculation types](#calculation-types) ·
@@ -91,12 +93,58 @@ is checked (protection against "DNS rebinding").
 **Installed a new MLIP?** Restart the server. The list of available MLIPs is
 detected once, when the server starts.
 
+**Upgraded mliprun (or pulled new code)?** Restart the server too. A running
+server keeps the Python code it started with, so new features and fixes only
+appear after Ctrl+C and `mlip webapp` again; then reload the browser page
+(Ctrl+Shift+R forces it to fetch the new JavaScript).
+
 ## Run directories
 
-Each job gets its own folder `<runs-dir>/<job_id>/`, where `job_id` looks like
-`20261016-091502-optimize-a1b2c3` (UTC creation time, calc type, random
-suffix), so jobs sort by time. Uploaded files are kept in
-`<runs-dir>/_uploads/<upload_id>/`.
+Every job has a `job_id` such as `20261016-091502-optimize-a1b2c3` (UTC
+creation time, calc type, random suffix). Its files go into a *run folder*
+`<Location>/<Folder name>/`, set in the **Job** part of the form:
+
+| Field | Default | Meaning |
+|---|---|---|
+| **Job name** | the file name (NEB: `initial -> final`) | Shown in the job list and job page. |
+| **Location** | the server's `--runs-dir` (the last one you used is remembered by the browser) | Parent directory of the run folder. Absolute or starting with `~`; created if missing; must be writable. |
+| **Folder name** | the Job name if you typed one, else the `job_id` | Name of the run folder inside Location. |
+
+Folder names are cleaned to be safe on any file system: every character other
+than letters, digits, `.`, `_`, `+` and `-` becomes `-`, repeated dashes are
+merged, leading dots/dashes are dropped, and the name is cut to 100
+characters. `_uploads` and `_jobs` are reserved, and a Location inside them is
+refused.
+
+**Several structures at once.** Ticking N >= 2 structures submits N jobs.
+The name field then reads **Common name**, and each job gets the common name
+plus a zero-padded index (at least two digits; three from 101 jobs on). The
+index follows natural filename order, not the order of the list: names are
+compared case-insensitively and numbers by value, so `cu_1`, `cu_2`, `Cu_3`,
+`cu_10` get `-00`, `-01`, `-02`, `-03` (files with the same name: oldest
+upload first). The same files always get the same indices, also after a page
+reload. Example: ten structures with
+common name `ch3-is-proposal` give jobs and folders `ch3-is-proposal-00`,
+`ch3-is-proposal-01`, ..., `ch3-is-proposal-09`. If you type a Folder name
+too, it is the base of the folders instead (`<folder>-00`, ...). With neither,
+each job keeps its file name and its `job_id` folder. A preview table under
+the fields lists every job's name and full folder path before you submit.
+A NEB/AutoNEB is one job, so it never gets a suffix.
+
+**Runs are never overwritten.** If a run folder already exists (even an empty
+one, or a file of that name), the job is refused. The form checks this live
+while you type: conflicting folders are marked in the preview, the Submit
+button is disabled and the reason is shown under it. If the folder appears
+between that check and your click, the server refuses the submission and the
+message appears next to the Folder field; nothing is created (a
+multi-structure submission is all or nothing). After a successful submit the
+Job name and Folder name fields are cleared (Location is kept), so the next
+submission starts from fresh defaults.
+
+The server keeps a small index file `<runs-dir>/_jobs/<job_id>.json` pointing
+at each run folder, so jobs in other locations still show up after a server
+restart. Uploaded files are kept in `<runs-dir>/_uploads/<upload_id>/`. The
+"Download all" archive is named `<folder>.zip`.
 
 | File | Written by | Content |
 |---|---|---|
@@ -121,8 +169,8 @@ has a "Download all (.zip)" button.
 |---|---|---|---|
 | `optimize` | one structure | energy vs step, fmax vs step (log scale, with the target line), structure in the 3D viewer | converged flag, final energy and fmax, final structure |
 | `md` | one structure | total/potential energy and kinetic energy vs time, temperature vs time (with the target); NPT adds pressure and volume; moving structure | mean temperature, mean total energy and the other run-record results |
-| `neb` | initial + final structure, or an uploaded band (≥ 3 frames) | relative energy of every image along the band (redrawn each iteration), fmax and barrier vs iteration, the whole band in the viewer (playable) | forward/reverse barrier, reaction energy, TS image, final band |
-| `autoneb` | initial + final structure | as `neb`, for the sub-band currently being relaxed | as `neb`, from the final `autoneb???.traj` files |
+| `neb` | initial + final structure, or an uploaded band (≥ 3 frames) | band-evolution plot: the energy profile (E - E of image 00) of every iteration, older ones thin and light, the current one thick; fmax and barrier vs iteration; the viewer jumps to the highest-energy image, titled `Image with highest energy - NN` (00 = initial endpoint), and its slider plays the whole band | forward/reverse barrier, reaction energy, TS image, final band (the title then names the final TS image) |
+| `autoneb` | initial + final structure | as `neb`, for the full band (it grows as AutoNEB inserts images; the progress line names the sub-band being relaxed) | as `neb`, from the final `autoneb???.traj` files |
 | `singlepoint` | one structure | (nothing to plot) | energy, fmax, stress, forces table and per-atom force plot, atoms coloured by force magnitude |
 | `freq` | one structure | progress bar (force calls done / total) | frequency stick plot (imaginary modes highlighted), mode table, ZPE |
 
@@ -134,7 +182,8 @@ Parameters, defaults and help texts in the form are the same as the CLI's
 (`mlip <command> run --help`). Advanced parameters are in a collapsed
 "Advanced" section; parameters that do not apply (for example the thermostat in
 NVE) are hidden and not sent. Ticking several structures for a single-structure
-type submits one job per structure. Non-NEB jobs use the **last** frame of a
+type submits one job per structure (named as described in
+[Run directories](#run-directories)). Non-NEB jobs use the **last** frame of a
 multi-frame file, as the CLI does.
 
 Jobs run strictly one at a time, first in, first out. Pending and running jobs
@@ -198,12 +247,13 @@ the same status, the notes, and the argument list):
 - **Restarting the server** marks a job that was running as failed ("server
   restarted while the job was running"); pending jobs are re-queued.
 
-Pre-existing issues in the core package (not caused by the web app, not fixed
+- **Code upgrades need a server restart** (see [Launch](#launch)).
+- **Moving or deleting a run folder** by hand removes that job from the list
+  at the next server start (its index entry is skipped).
+
+Pre-existing issue in the core package (not caused by the web app, not fixed
 on this branch):
 
-- `run_optimization` leaves `opt.traj` unclosed. This can produce a flaky
-  `ResourceWarning`-related failure in `tests/test_committee_plot.py`
-  (`test_all_zero_sigma`) depending on test order.
 - `tests/test_md_mace.py::test_mace_md` fails: it passes a stale
   `temperature_K` keyword (the function takes `temperature`).
 

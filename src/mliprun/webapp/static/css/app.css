@@ -752,3 +752,79 @@ pre.json {
 .params-card[open] summary {
   margin-bottom: 0.4rem;
 }
+
+/* ------------------------------------------------------------ revision 2: run naming, NEB view */
+.path-status {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+}
+.path-bad {
+  color: var(--danger);
+}
+.field.has-warning input {
+  border-color: var(--danger);
+}
+.name-preview {
+  margin-top: 6px;
+}
+.name-preview .table-scroll {
+  max-height: 260px;
+  overflow: auto;
+}
+.name-preview table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 0.82em;
+}
+.name-preview th:nth-child(1) {
+  width: 26%;
+}
+.name-preview th:nth-child(2) {
+  width: 26%;
+}
+.name-preview .data-table td,
+.name-preview .data-table th {
+  overflow-wrap: anywhere;
+  white-space: normal;
+  text-align: left;
+  padding: 0.2rem 0.35rem;
+}
+.name-preview td {
+  vertical-align: top;
+}
+.name-preview .np-path {
+  font-family: var(--mono);
+  word-break: break-all;
+}
+.name-preview .conflict-row td {
+  background: var(--error-bg);
+}
+.np-flag {
+  display: inline-block;
+  margin-left: 4px;
+  word-break: normal;
+  font-family: inherit;
+}
+.submit-reason {
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px solid var(--warn-border);
+  background: var(--warn-bg);
+  border-radius: var(--radius);
+}
+.viewer-title {
+  font-weight: 600;
+  font-size: 0.95em;
+  margin: 0 0 6px;
+}
+.plot-inner {
+  width: 100%;
+  min-height: 260px;
+}
+.jr-folder {
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.dh-folder code {
+  overflow-wrap: anywhere;
+}

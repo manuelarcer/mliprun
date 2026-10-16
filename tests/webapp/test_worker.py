@@ -221,6 +221,17 @@ def test_autoneb(tmp_path):
     assert r["steps"] is None and r["final_fmax_eV_per_A"] is None
     assert len(r["energies_eV"]) == len(r["band"]) == 4
     assert r["forward_barrier_eV"] > 0
+    # Live events describe the full AutoNEB band (PLAN 15.2): highest_image
+    # is a full-band index, the relaxed sub-band is given as [first, last].
+    for e in iters:
+        lo, hi = e["autoneb"]["sub_band"]
+        assert 0 <= lo < hi < e["n_images"] == len(e["energies"]) == len(e["rel_energies"])
+        assert e["rel_energies"][0] == 0.0
+        if e.get("band"):
+            assert len(e["band"]) == e["n_images"]
+    assert iters[-1]["n_images"] == 4
+    last = iters[-1]["energies"]
+    assert iters[-1]["highest_image"] == last.index(max(x for x in last if x is not None))
 
 
 def test_sigterm_during_md_cancels(tmp_path):

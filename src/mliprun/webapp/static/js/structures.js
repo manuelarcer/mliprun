@@ -12,6 +12,32 @@ const FORMATS = [
   ["vasp-out", "vasp-out (OUTCAR)"],
 ];
 
+/**
+ * Natural, case-insensitive string comparison: digit runs compare as numbers
+ * ("cu_2" < "cu_10"), letters ignore case ("Cu_3" between "cu_2" and "cu_10").
+ */
+export function naturalCompare(a, b) {
+  const re = /(\d+)|(\D+)/g;
+  const ta = String(a).toLowerCase().match(re) || [];
+  const tb = String(b).toLowerCase().match(re) || [];
+  for (let i = 0; i < Math.min(ta.length, tb.length); i++) {
+    const x = ta[i];
+    const y = tb[i];
+    const dx = /^\d/.test(x);
+    const dy = /^\d/.test(y);
+    if (dx && dy) {
+      const nx = x.replace(/^0+(?=\d)/, "");
+      const ny = y.replace(/^0+(?=\d)/, "");
+      if (nx.length !== ny.length) return nx.length - ny.length;
+      if (nx !== ny) return nx < ny ? -1 : 1;
+      if (x.length !== y.length) return x.length - y.length;
+    } else if (x !== y) {
+      return x < y ? -1 : 1;
+    }
+  }
+  return ta.length - tb.length;
+}
+
 export class StructuresPanel {
   constructor(root) {
     this.root = root;
@@ -115,13 +141,16 @@ export class StructuresPanel {
         if (u.ok && u.id) {
           this.uploads.set(u.id, u);
           this.fullCache.set(u.id, u); // POST returns the full UploadInfo
-          this.order = [u.id, ...this.order.filter((x) => x !== u.id)];
           this.selected.add(u.id);
           newIds.push(u.id);
         } else {
           this.failed.unshift({ ...u, _key: `${Date.now()}-${Math.random()}` });
         }
       }
+      // Newest upload batch on top (display only: the submission order and
+      // the -00, -01, ... suffixes come from selectedIds(), PLAN 15.1).
+      const fresh = new Set(newIds);
+      this.order = [...newIds, ...this.order.filter((x) => !fresh.has(x))];
       const nFail = uploads.length - ok.length;
       this.status.textContent =
         `${ok.length} structure${ok.length === 1 ? "" : "s"} uploaded` + (nFail ? `, ${nFail} failed (see below)` : "") + ".";
@@ -139,8 +168,24 @@ export class StructuresPanel {
     return this.order.map((id) => this.uploads.get(id)).filter(Boolean);
   }
 
+  /**
+   * Ticked uploads in submission order (PLAN 15.1): natural filename order
+   * (case-insensitive, digit runs numeric, so cu_2 < cu_10), ties broken by
+   * upload time, oldest first. Independent of the list's display order, so
+   * the -00, -01, ... suffixes do not change after a page reload.
+   */
   selectedIds() {
-    return this.order.filter((id) => this.selected.has(id));
+    const ids = this.order.filter((id) => this.selected.has(id));
+    const key = (id) => this.uploads.get(id) || {};
+    return ids.sort((a, b) => {
+      const ua = key(a);
+      const ub = key(b);
+      return (
+        naturalCompare(ua.filename || "", ub.filename || "") ||
+        String(ua.created_at || "").localeCompare(String(ub.created_at || "")) ||
+        String(a).localeCompare(String(b))
+      );
+    });
   }
 
   get(id) {

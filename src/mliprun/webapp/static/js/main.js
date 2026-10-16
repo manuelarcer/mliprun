@@ -40,13 +40,12 @@ async function boot() {
     fatal(`Could not load the calculation schema from the server: ${err.message}`);
     return;
   }
-  api
-    .health()
-    .then((h) => {
-      document.getElementById("version").textContent = `mliprun ${h.mliprun_version}`;
-      document.getElementById("runs-dir").textContent = h.runs_dir;
-    })
-    .catch(() => {});
+  const health = api.health().catch(() => null);
+  health.then((h) => {
+    if (!h) return;
+    document.getElementById("version").textContent = `mliprun ${h.mliprun_version}`;
+    document.getElementById("runs-dir").textContent = h.runs_dir;
+  });
 
   const structures = new StructuresPanel(document.getElementById("structures-panel"));
   const jobList = new JobList(document.getElementById("queue-panel"));
@@ -59,7 +58,7 @@ async function boot() {
       }
     },
   });
-  new CalcForm(document.getElementById("form-panel"), {
+  const form = new CalcForm(document.getElementById("form-panel"), {
     calcTypes,
     calculators,
     structures,
@@ -68,6 +67,8 @@ async function boot() {
       if (jobs.length) location.hash = `#/jobs/${jobs[0].job_id}`;
     },
   });
+
+  health.then((h) => form.setDefaultLocation(h ? h.runs_dir : null));
 
   // PLAN 6.5: subscribe "*" first, then list jobs.
   ws.connect();

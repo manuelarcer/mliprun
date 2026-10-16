@@ -18,7 +18,7 @@ import {
   TERMINAL,
 } from "./util.js";
 import { viewerWithSlider } from "./viewer.js";
-import { createPlots } from "./plots.js";
+import { createPlots, imageLabel } from "./plots.js";
 
 const CANCELLABLE = new Set(["pending", "running"]);
 const PROGRESS_TYPES = new Set(["opt_step", "md_step", "neb_iter", "freq_progress"]);
@@ -157,6 +157,9 @@ export class JobList {
         { class: "jr-main" },
         el("div", {}, el("span", { class: "jr-type" }, job.calc_type), " ", el("span", { class: "jr-label" }, job.label || ""), " ", el("span", { class: "muted" }, job.formula ? `${job.formula}` : "")),
         el("div", { class: "jr-extra muted small" + (job.status === "failed" ? " error-text" : "") }, extra || fmtTime(job.created_at)),
+        job.folder || job.run_dir
+          ? el("div", { class: "jr-folder muted small", title: job.run_dir || "" }, "folder ", job.folder || job.run_dir)
+          : null,
       ),
       el("div", { class: "jr-calc muted small" }, job.calculator ? job.calculator.name : ""),
       el("div", { class: "jr-actions" }, cancel),
@@ -306,6 +309,9 @@ export class JobDetail {
         " ",
         this.phaseEl,
       ),
+      d.run_dir || d.folder
+        ? el("div", { class: "muted small dh-folder", title: "Run folder" }, "Folder: ", el("code", {}, d.run_dir || d.folder))
+        : null,
       this.timesEl,
       this.progressBox,
       this.errorBox,
@@ -314,7 +320,8 @@ export class JobDetail {
     // Viewer
     const vhost = el("div");
     this.viewerNote = el("div", { class: "muted small viewer-note" });
-    const viewerCard = el("section", { class: "card viewer-card" }, el("h3", {}, isNeb ? "Band" : "Structure"), vhost, this.viewerNote);
+    this.viewerTitle = isNeb ? el("div", { class: "viewer-title hidden", testid: "viewer-title" }) : null;
+    const viewerCard = el("section", { class: "card viewer-card" }, el("h3", {}, isNeb ? "Band" : "Structure"), this.viewerTitle, vhost, this.viewerNote);
     this.view = viewerWithSlider(vhost, { height: 340, testid: "viewer", label: isNeb ? "Image" : "Frame" });
     this._initialStructure();
 
@@ -342,7 +349,7 @@ export class JobDetail {
         "div",
         { class: "panel-head" },
         el("h3", {}, "Files"),
-        el("span", {}, el("a", { href: zipUrl(d.job_id), class: "btn btn-small", testid: "zip-link", download: `${d.job_id}.zip` }, "Download all (.zip)"), " ", refresh),
+        el("span", {}, el("a", { href: zipUrl(d.job_id), class: "btn btn-small", testid: "zip-link", download: `${d.folder || d.job_id}.zip` }, "Download all (.zip)"), " ", refresh),
       ),
       el("div", { class: "muted small" }, `Run directory: ${d.run_dir || "–"}`),
       this.filesList,
@@ -435,6 +442,13 @@ export class JobDetail {
     if (d.started_at && d.finished_at) parts.push(`wall time ${fmtDuration((new Date(d.finished_at) - new Date(d.started_at)) / 1000)}`);
     if (d.queue_position) parts.push(`queue position ${d.queue_position}`);
     this.timesEl.textContent = parts.join(" · ");
+    if (TERMINAL.has(status)) {
+      this.phaseEl.textContent = ""; // PLAN 15.2: no "phase" once finished
+      // A finished job has no live progress (replayed events would otherwise
+      // leave e.g. "iteration 33 / 600" with a part-filled bar); freq keeps
+      // its force-call count.
+      if (this.detail.calc_type !== "freq") this.progressBox.classList.add("hidden");
+    }
     if (status === "failed" && d.error) this._showError(d.error);
     if (!initial && TERMINAL.has(status)) this._onTerminal();
     if (this.onJobChange) this.onJobChange(d);
@@ -476,7 +490,7 @@ export class JobDetail {
         if (ev.status !== this.status || this.loading) this._setStatus(ev.status, this.loading);
         break;
       case "phase":
-        this.phaseEl.textContent = `phase: ${ev.phase}`;
+        this.phaseEl.textContent = TERMINAL.has(this.status) ? "" : `phase: ${ev.phase}`;
         this._log({ level: "phase", message: `[${ev.phase}] ${ev.message || ""}`, t: ev.t });
         break;
       case "log":
@@ -494,7 +508,10 @@ export class JobDetail {
           this.plots.ingest(ev);
           this.latestProgress = ev;
           if (ev.frame) this.pendingFrame = ev.frame;
-          if (ev.band) this.pendingBand = ev.band;
+          if (ev.band) {
+            this.pendingBand = ev.band;
+            this.pendingHighest = Number.isInteger(ev.highest_image) ? ev.highest_image : null;
+          }
           this.uiTick();
         }
     }
@@ -533,9 +550,12 @@ export class JobDetail {
       const band = this.pendingBand;
       this.pendingBand = null;
       const frames = band.map((fr) => toXyz(this.symbols, fr.positions, fr.cell, this.pbc));
-      const keep = this.view.viewer.frameIndex;
-      this.view.setFrames(frames, (i, n) => `Image ${i} of ${n - 1}`);
-      if (keep < frames.length) this.view.viewer.goto(keep);
+      const h = this.pendingHighest;
+      this.view.setFrames(frames, (i, n) => `Image ${imageLabel(i)} of ${imageLabel(n - 1)}${i === h ? " (highest)" : ""}`);
+      if (h !== null && h < frames.length) {
+        this.view.viewer.goto(h);
+        this._setViewerTitle(h);
+      }
       this.view.refreshCaption();
       this.viewerNote.textContent = `Live band (iteration ${this.latestProgress ? this.latestProgress.iteration : "?"}).`;
     } else if (this.pendingFrame && this.symbols) {
@@ -546,6 +566,12 @@ export class JobDetail {
       const e = this.latestProgress;
       this.viewerNote.textContent = `Live structure (step ${e && e.step !== undefined ? e.step : "?"}).`;
     }
+  }
+
+  _setViewerTitle(index) {
+    if (!this.viewerTitle) return;
+    this.viewerTitle.textContent = `Image with highest energy - ${imageLabel(index)}`;
+    this.viewerTitle.classList.remove("hidden");
   }
 
   _log({ level, message, t }) {
@@ -569,8 +595,10 @@ export class JobDetail {
     if (Array.isArray(r.band) && this.symbols) {
       const frames = r.band.map((fr) => toXyz(this.symbols, fr.positions, fr.cell, this.pbc));
       const ts = Number.isInteger(r.ts_image_index) ? r.ts_image_index : 0;
-      this.view.setFrames(frames, (i, n) => `Image ${i} of ${n - 1}${i === r.ts_image_index ? " (highest)" : ""}`);
+      this.view.setFrames(frames, (i, n) => `Image ${imageLabel(i)} of ${imageLabel(n - 1)}${i === r.ts_image_index ? " (highest)" : ""}`);
       this.view.viewer.goto(ts);
+      this.pendingBand = null; // the final band wins over any queued live band
+      if (Number.isInteger(r.ts_image_index)) this._setViewerTitle(r.ts_image_index);
       this.view.refreshCaption();
       this.viewerNote.textContent = "Final band.";
     } else if (r.final_frame && this.symbols) {

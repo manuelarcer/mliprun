@@ -5,20 +5,27 @@ import signal
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 H = {"X-Mliprun": "1"}
 
 
+def _rd(runs_dir, job_id):
+    """A job's run_dir from the job index (PLAN 15.1: folders follow the label)."""
+    entry = json.loads((runs_dir / "_jobs" / f"{job_id}.json").read_text())
+    return Path(entry["run_dir"])
+
+
 def _times(runs_dir, job_id):
-    lines = (runs_dir / job_id / "fake_times.jsonl").read_text().splitlines()
+    lines = (_rd(runs_dir, job_id) / "fake_times.jsonl").read_text().splitlines()
     return [json.loads(x) for x in lines]
 
 
 def test_jobs_run_strictly_in_series_fifo(client, cu_upload, submit, wait_for_status,
                                           runs_dir):
-    r = submit(client, [cu_upload["id"]] * 3, label="steps=4;sleep=0.05")
+    r = submit(client, [cu_upload["id"]] * 3, label="steps=4;sleep=0.05;")
     ids = [j["job_id"] for j in r.json()["jobs"]]
     details = [wait_for_status(client, i, "done", timeout=30) for i in ids]
     for prev, nxt in zip(details, details[1:]):
@@ -46,7 +53,7 @@ def test_worker_env_and_cwd(make_app, cu_upload, submit, wait_for_status, runs_d
                     files=[("files", ("h.xyz", b"1\n\nH 0 0 0\n"))]).json()["uploads"][0]
         job_id = submit(c, [up["id"]]).json()["jobs"][0]["job_id"]
         d = wait_for_status(c, job_id, ("done", "failed"))
-    run_dir = (runs_dir / job_id).resolve()
+    run_dir = _rd(runs_dir, job_id).resolve()
     env = json.loads((run_dir / "env.json").read_text())
     assert env == {"cwd": str(run_dir), "mpl": "Agg", "unbuf": "1", "arg": str(run_dir)}
     assert "hello from worker" in (run_dir / "worker.log").read_text()
@@ -60,17 +67,17 @@ def test_worker_env_and_cwd(make_app, cu_upload, submit, wait_for_status, runs_d
 def test_cancel_pending_job_never_starts_a_worker(client, cu_upload, submit,
                                                   wait_for_status, runs_dir):
     ids = [j["job_id"] for j in
-           submit(client, [cu_upload["id"]] * 2, label="steps=200;sleep=0.02").json()["jobs"]]
+           submit(client, [cu_upload["id"]] * 2, label="steps=200;sleep=0.02;").json()["jobs"]]
     wait_for_status(client, ids[0], "running")
     r = client.post(f"/api/jobs/{ids[1]}/cancel", headers=H)
     assert r.status_code == 200
     assert r.json()["job"]["status"] == "cancelled"
-    assert not (runs_dir / ids[1] / "worker.log").exists()
+    assert not (_rd(runs_dir, ids[1]) / "worker.log").exists()
     assert client.post(f"/api/jobs/{ids[1]}/cancel", headers=H).status_code == 409
     client.post(f"/api/jobs/{ids[0]}/cancel", headers=H)
     wait_for_status(client, ids[0], "cancelled")
     time.sleep(0.3)
-    assert not (runs_dir / ids[1] / "worker.log").exists()
+    assert not (_rd(runs_dir, ids[1]) / "worker.log").exists()
     ev = client.get(f"/api/jobs/{ids[1]}/events").json()["events"]
     assert [(e["status"], e["reason"]) for e in ev] == [("pending", None),
                                                        ("cancelled", "cancelled by user")]
@@ -88,7 +95,7 @@ def test_cancel_running_job_sigterm(client, cu_upload, submit, wait_for_status, 
     d = wait_for_status(client, job_id, "cancelled", timeout=10)
     assert time.monotonic() - t0 < 2.0             # well before the 2 s SIGKILL grace
     assert d["returncode"] == 3 and d["cancel_requested"] is True
-    summary = json.loads((runs_dir / job_id / "summary.json").read_text())
+    summary = json.loads((_rd(runs_dir, job_id) / "summary.json").read_text())
     assert summary["status"] == "cancelled"        # the worker's own summary is kept
     ev = client.get(f"/api/jobs/{job_id}/events").json()
     assert ev["terminal"] and ev["events"][-1]["status"] == "cancelled"
@@ -113,7 +120,7 @@ def test_cancel_escalates_to_sigkill_after_grace(make_app, submit, wait_for_stat
         elapsed = time.monotonic() - t0
     assert 0.5 <= elapsed < 5
     assert d["returncode"] == -signal.SIGKILL
-    summary = json.loads((runs_dir / job_id / "summary.json").read_text())
+    summary = json.loads((_rd(runs_dir, job_id) / "summary.json").read_text())
     assert summary["status"] == "cancelled" and summary["written_by"] == "server"
 
 
@@ -131,7 +138,7 @@ def test_failing_worker_marks_job_failed_and_server_keeps_serving(
     assert d["error"] == reason and d["returncode"] == rc
     assert client.get("/api/health").json()["status"] == "ok"
     assert wait_for_status(client, good, "done")["status"] == "done"
-    summary = json.loads((runs_dir / bad / "summary.json").read_text())
+    summary = json.loads((_rd(runs_dir, bad) / "summary.json").read_text())
     assert summary["status"] == "failed"
     ev = client.get(f"/api/jobs/{bad}/events").json()["events"]
     assert [e["seq"] for e in ev] == list(range(len(ev)))
@@ -156,7 +163,7 @@ def test_partial_final_line_is_truncated_before_status(client, cu_upload, submit
     job_id = submit(client, [cu_upload["id"]], label="steps=2;partial=1") \
         .json()["jobs"][0]["job_id"]
     wait_for_status(client, job_id, "done")
-    raw = (runs_dir / job_id / "events.jsonl").read_text()
+    raw = (_rd(runs_dir, job_id) / "events.jsonl").read_text()
     assert raw.endswith("\n") and "partial" not in raw
     lines = [json.loads(x) for x in raw.splitlines()]
     assert [e["seq"] for e in lines] == list(range(len(lines)))
@@ -169,11 +176,11 @@ def test_shutdown_cancels_running_job(make_app, submit, wait_for_status, runs_di
         up = c.post("/api/uploads", headers=H,
                     files=[("files", ("h.xyz", b"1\n\nH 0 0 0\n"))]).json()["uploads"][0]
         ids = [j["job_id"] for j in
-               submit(c, [up["id"]] * 2, label="steps=100000;sleep=0.01").json()["jobs"]]
+               submit(c, [up["id"]] * 2, label="steps=100000;sleep=0.01;").json()["jobs"]]
         wait_for_status(c, ids[0], "running")
         _wait_worker_started(c, ids[0])
-    state0 = json.loads((runs_dir / ids[0] / "state.json").read_text())
-    state1 = json.loads((runs_dir / ids[1] / "state.json").read_text())
+    state0 = json.loads((_rd(runs_dir, ids[0]) / "state.json").read_text())
+    state1 = json.loads((_rd(runs_dir, ids[1]) / "state.json").read_text())
     assert state0["status"] == "cancelled" and state0["returncode"] == 3
     assert state1["status"] == "pending"           # re-queued by the next server
 
@@ -237,7 +244,7 @@ def test_restart_kills_orphan_worker(make_app, submit, runs_dir):
         up = c.post("/api/uploads", headers=H,
                     files=[("files", ("h.xyz", b"1\n\nH 0 0 0\n"))]).json()["uploads"][0]
         job_id = submit(c, [up["id"]]).json()["jobs"][0]["job_id"]
-    run_dir = (runs_dir / job_id).resolve()
+    run_dir = _rd(runs_dir, job_id).resolve()
     # A process whose cmdline looks like this job's worker.
     orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)",
                                "-m", "mliprun.webapp.worker", str(run_dir)],
@@ -263,9 +270,9 @@ def test_unrelated_live_pid_is_not_killed(make_app, submit, runs_dir):
         up = c.post("/api/uploads", headers=H,
                     files=[("files", ("h.xyz", b"1\n\nH 0 0 0\n"))]).json()["uploads"][0]
         job_id = submit(c, [up["id"]]).json()["jobs"][0]["job_id"]
-    st = json.loads((runs_dir / job_id / "state.json").read_text())
+    st = json.loads((_rd(runs_dir, job_id) / "state.json").read_text())
     st.update(status="running", pid=os.getpid())      # our own pid: must survive
-    (runs_dir / job_id / "state.json").write_text(json.dumps(st))
+    (_rd(runs_dir, job_id) / "state.json").write_text(json.dumps(st))
     make_app(start_runner=False)
-    st = json.loads((runs_dir / job_id / "state.json").read_text())
+    st = json.loads((_rd(runs_dir, job_id) / "state.json").read_text())
     assert st["status"] == "failed"
