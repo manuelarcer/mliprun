@@ -828,3 +828,85 @@ pre.json {
 .dh-folder code {
   overflow-wrap: anywhere;
 }
+
+/* ------------------------------------------------------------ remote machines */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(27, 27, 26, 0.45);
+  overflow-y: auto;
+  padding: 2rem 1rem;
+}
+.overlay-card {
+  max-width: 900px;
+  margin: 0 auto;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.2rem 1.4rem;
+}
+.machine-card {
+  margin: 0.8rem 0;
+}
+.machine-grid,
+.env-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 0.9rem;
+}
+.machine-grid input,
+.env-grid input,
+.env-row textarea,
+.env-add textarea {
+  width: 100%;
+}
+.env-row textarea,
+.env-add textarea {
+  font-family: var(--mono);
+  font-size: 0.88em;
+}
+.machine-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0;
+}
+.machine-test {
+  margin-top: 0.4rem;
+}
+.gpu-table {
+  margin-top: 0.4rem;
+}
+.env-section {
+  margin-top: 0.8rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+.env-row,
+.env-add {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 0.5rem 0.7rem;
+  margin: 0.5rem 0;
+}
+.env-probe {
+  margin: 0.3rem 0;
+}
+.tag {
+  display: inline-block;
+  padding: 0 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.8em;
+  color: var(--text-2);
+  background: var(--surface-2);
+}
+.dh-remote code {
+  word-break: break-all;
+}
+.remote-only {
+  font-style: italic;
+}
