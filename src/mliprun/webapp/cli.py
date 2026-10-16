@@ -14,6 +14,7 @@ import typer
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_RUNS_DIR = "~/.mliprun/webapp-runs"
+DEFAULT_MACHINES_FILE = "~/.mliprun/webapp-machines.json"
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 INSTALL_HINT = ('The web app needs extra packages: pip install "mliprun[webapp]"\n'
@@ -57,6 +58,10 @@ def webapp_command(
     port: int = typer.Option(DEFAULT_PORT, "--port", help="TCP port to listen on."),
     runs_dir: str = typer.Option(DEFAULT_RUNS_DIR, "--runs-dir",
                                  help="Folder for uploads and job run directories."),
+    machines_file: Optional[str] = typer.Option(
+        None, "--machines-file",
+        help=f"JSON file that stores your SSH machines and Python environments for "
+             f"remote runs (default: {DEFAULT_MACHINES_FILE})."),
     no_browser: bool = typer.Option(False, "--no-browser",
                                     help="Do not open a browser window."),
 ) -> None:
@@ -78,7 +83,10 @@ def webapp_command(
             f"WARNING: binding to {host}. The web app has no authentication: anyone who "
             f"can reach port {port} can run jobs and read files in the runs directory.",
             err=True)
-    app = create_app(Path(runs_dir).expanduser(), allowed_hosts=allowed)
+    extra = {}
+    if machines_file is not None:
+        extra["machines_file"] = Path(machines_file).expanduser()
+    app = create_app(Path(runs_dir).expanduser(), allowed_hosts=allowed, **extra)
     url = url_for(host, port)
     typer.echo(f"mliprun web app: {url}  (runs dir: {app.state.runs_dir})")
     typer.echo("Press Ctrl+C to stop.")

@@ -32,6 +32,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from mliprun.webapp import calculators as wcalculators
 from mliprun.webapp import events as wevents
+from mliprun.webapp import paths as wpaths
+from mliprun.webapp import remote as wremote
 from mliprun.webapp import schema as wschema
 from mliprun.webapp.errors import ApiError, code_for_status, error_body, validation_error
 from mliprun.webapp.jobs import (
@@ -45,6 +47,7 @@ from mliprun.webapp.jobs import (
     JobRegistry,
     LocationUnusable,
     QueueRunner,
+    RemoteQueueRunner,
     default_worker_cmd,
     folder_problem,
     inspect_location,
@@ -68,7 +71,7 @@ MAX_LISTED_FILES = 10000
 WS_PING_INTERVAL_S = 20.0
 
 JOB_KEYS = frozenset({"calc_type", "calculator", "params", "structure_every", "label",
-                      "location", "folder",
+                      "location", "folder", "target", "local_location",
                       "structure_ids", "initial_id", "final_id", "band_id"})
 ID_KEYS = ("structure_ids", "initial_id", "final_id", "band_id")
 MAX_STRUCTURES_PER_SUBMIT = 200
@@ -162,7 +165,10 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
                allowed_hosts: Optional[List[str]] = None,
                worker_cmd: Optional[List[str]] = None,
                cancel_grace_s: float = 10.0,
-               poll_interval_s: float = 0.2) -> FastAPI:
+               poll_interval_s: float = 0.2,
+               machines_file: Optional[Path] = None,
+               ssh_command: Optional[List[str]] = None,
+               remote_backoff_base: float = 2.0) -> FastAPI:
     """Build the web app.
 
     Parameters
@@ -182,6 +188,15 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         Seconds between SIGTERM and SIGKILL when cancelling.
     poll_interval_s : float
         Tail interval of the running job's ``events.jsonl``.
+    machines_file : Path, optional
+        JSON file with the user's SSH machines and environments (default
+        ``~/.mliprun/webapp-machines.json``).
+    ssh_command : list of str, optional
+        ``ssh`` binary plus fixed arguments (default ``["ssh"]``); tests pass
+        a fake.
+    remote_backoff_base : float
+        First reconnect delay (s) after an SSH failure during a remote job;
+        doubles up to 60 s.
 
     Returns
     -------
@@ -206,10 +221,37 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
                     return meta.get("formula"), meta.get("natoms")
         return None, None
 
+    store = wremote.MachineStore(
+        machines_file if machines_file is not None else wremote.DEFAULT_MACHINES_FILE)
+    transport = wremote.SSHTransport(ssh_command)
     registry = JobRegistry(runs_dir, broadcaster, describe_inputs, cancel_grace_s)
+    registry.machine_exists = lambda mid: any(m["id"] == mid for m in store.machines)
     registry.load()
     runner = QueueRunner(registry, worker_cmd or default_worker_cmd(),
                          cancel_grace_s=cancel_grace_s, poll_interval_s=poll_interval_s)
+    runners: Dict[str, QueueRunner] = {"local": runner}
+    loop_started = {"yes": False}
+
+    def notify_all() -> None:
+        for r in list(runners.values()):
+            r.notify()
+
+    registry.on_enqueue = notify_all
+
+    def ensure_runner(key: str) -> Optional[QueueRunner]:
+        """The queue runner of ``key`` (created on demand; None if the machine is gone)."""
+        r = runners.get(key)
+        if r is not None or key == "local":
+            return r
+        if not registry.machine_exists(key):
+            return None
+        r = RemoteQueueRunner(registry, key, store, transport, cancel_grace_s=cancel_grace_s,
+                              backoff_base=remote_backoff_base)
+        registry.on_enqueue = notify_all
+        runners[key] = r
+        if loop_started["yes"] and start_runner:
+            r.start()
+        return r
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -217,11 +259,19 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
                          daemon=True).start()
         if start_runner:
             runner.start()
+            for key in sorted(registry.queue_keys()):
+                if key != "local":
+                    ensure_runner(key)
+            for r in runners.values():
+                if r is not runner:
+                    r.start()
+            loop_started["yes"] = True
         try:
             yield
         finally:
             if start_runner:
-                await runner.stop()
+                for r in list(runners.values()):
+                    await r.stop()
             broadcaster.close_all()
 
     app = FastAPI(title="mliprun web app", version=_mliprun_version(), lifespan=lifespan,
@@ -229,6 +279,9 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
     app.state.runs_dir = runs_dir
     app.state.registry = registry
     app.state.runner = runner
+    app.state.runners = runners
+    app.state.machines = store
+    app.state.transport = transport
     app.state.uploads = uploads
     app.state.broadcaster = broadcaster
     app.add_middleware(SecurityMiddleware, allowed_hosts=allowed_hosts)
@@ -239,6 +292,83 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         if rec is None:
             raise ApiError(404, f"unknown job {job_id!r}")
         return rec
+
+    async def _remote_file_response(rec: JobRecord, entry: dict, inline: int):
+        """Serve a file that stayed on the remote machine, streamed through ``cat``."""
+        name = entry["path"]
+        try:
+            rtarget = store.get_env(rec.target["env_id"])
+        except (wremote.MachineNotFound, KeyError):
+            raise ApiError(409, "the machine of this job is no longer configured; "
+                                f"{name!r} exists only on it")
+        remote_dir = rec.job.get("remote_run_dir")
+        if inline and (entry.get("size") or 0) > MAX_INLINE_BYTES:
+            raise ApiError(413, f"file is larger than {MAX_INLINE_BYTES // (1024 * 1024)} MB; "
+                                "download it instead")
+
+        def _open():
+            stream = transport.stream(rtarget, "cat", [remote_dir, name])
+            try:
+                first = stream.stdout.read(1 << 20)
+                if not first:
+                    stream.finish()
+            except wremote.RemoteUnreachable as exc:
+                stream.close()
+                raise ApiError(502, exc.message, "remote_unreachable")
+            except wremote.RemoteError as exc:
+                stream.close()
+                if exc.returncode == 4:
+                    raise ApiError(404, f"file {name!r} not found on the remote machine")
+                raise ApiError(502, exc.message, "remote_error")
+            return stream, first
+
+        stream, first = await run_in_threadpool(_open)
+        if inline:
+            def _all() -> bytes:
+                try:
+                    chunks = [first] + list(stream.iter_chunks())
+                    stream.finish()
+                finally:
+                    stream.close()
+                return b"".join(chunks)
+
+            data = await run_in_threadpool(_all)
+            if b"\x00" not in data:
+                try:
+                    return PlainTextResponse(data.decode("utf-8"),
+                                             media_type="text/plain; charset=utf-8")
+                except UnicodeDecodeError:
+                    pass
+            first_chunks = [data]
+            stream = None
+        else:
+            first_chunks = [first]
+
+        def _stream():
+            try:
+                yield from first_chunks
+                if stream is not None:
+                    yield from stream.iter_chunks()
+            finally:
+                if stream is not None:
+                    stream.close()
+
+        media = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        base = Path(name).name.replace('"', "")
+        return StreamingResponse(_stream(), media_type=media,
+                                 headers={"Content-Disposition": f'attachment; filename="{base}"'})
+
+    def get_machine(mid: str) -> dict:
+        try:
+            return store.get_machine(mid)
+        except wremote.MachineNotFound:
+            raise ApiError(404, f"unknown machine {mid!r}")
+
+    def unfinished(pred) -> List[JobRecord]:
+        return [r for r in registry.jobs.values() if not r.terminal and pred(r)]
+
+    def field_errors(exc: wremote.MachineValidationError) -> ApiError:
+        return validation_error(exc.details)
 
     # ------------------------------------------------------------------ static
     @app.get("/", include_in_schema=False)
@@ -265,15 +395,28 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         running = registry.running_job()
         return {"status": "ok", "mliprun_version": _mliprun_version(),
                 "runs_dir": str(runs_dir), "queue_length": len(registry.pending),
-                "running_job": running.job_id if running else None}
+                "running_job": running.job_id if running else None,
+                "running_jobs": [r.job_id for r in registry.running_jobs()]}
 
     @app.get("/api/calc-types")
     async def calc_types():
         return wschema.get_calc_types()
 
     @app.get("/api/calculators")
-    async def calculators():
-        return await run_in_threadpool(wcalculators.list_calculators)
+    async def calculators(target: Optional[str] = None):
+        if target is None or target in ("", "local"):
+            return await run_in_threadpool(wcalculators.list_calculators)
+        try:
+            env = store.get_env(target)
+        except wremote.MachineNotFound:
+            raise ApiError(404, f"unknown target {target!r}")
+        probe = env.env.get("probe")
+        if not isinstance(probe, dict) or not probe.get("ok"):
+            detail = (probe or {}).get("error") if isinstance(probe, dict) else None
+            raise ApiError(409, f"environment {env.env['name']} has not been probed "
+                                f"successfully" + (f": {detail}" if detail else "")
+                                + "; probe it in the Machines panel")
+        return probe["calculators"]
 
     # ------------------------------------------------------------------ uploads
     @app.post("/api/uploads")
@@ -321,23 +464,37 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
             raise ApiError(400, "request body must be a JSON object")
         if not isinstance(body, dict):
             raise ApiError(400, "request body must be a JSON object")
-        plans = _plan_submission(body, uploads, runs_dir)
+        plans = _plan_submission(body, uploads, runs_dir, store)
         created: List[JobRecord] = []
+        remote_created: List[tuple] = []     # (RemoteTarget, remote run dir) made by this request
         try:
             for plan in plans:
                 field = plan.pop("folder_field")
+                rtarget = plan.pop("remote_target", None)
                 try:
-                    created.append(registry.create_job(**plan))
+                    rec = registry.create_job(**plan)
                 except FolderExists as exc:
                     raise validation_error([{"field": field, "code": "folder_exists",
                                              "message": str(exc)}])
                 except LocationUnusable as exc:
-                    raise validation_error([{"field": "location",
+                    raise validation_error([{"field": "local_location" if rtarget else "location",
                                              "code": "location_not_writable",
                                              "message": str(exc)}])
-        except Exception:
+                created.append(rec)
+                if rtarget is not None:
+                    remote_dir = await _create_remote_dir(
+                        transport, rtarget, rec, plan["remote_location"], field)
+                    registry.set_remote_run_dir(rec, remote_dir)
+                    remote_created.append((rtarget, remote_dir))
+        except BaseException:
             for rec in created:
                 registry.discard_job(rec)
+            for rtarget, remote_dir in remote_created:
+                try:
+                    await run_in_threadpool(transport.run_json, rtarget, "discard",
+                                            [remote_dir])
+                except Exception:  # noqa: BLE001 - best effort rollback
+                    logger.warning("could not remove the remote folder %s", remote_dir)
             raise
         for rec in created:
             registry.enqueue(rec)
@@ -352,7 +509,21 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         if not isinstance(body, dict):
             raise ApiError(400, "request body must be a JSON object")
         errors = [{"field": k, "message": "unknown key"}
-                  for k in sorted(set(body) - {"location", "folders"})]
+                  for k in sorted(set(body) - {"location", "folders", "target",
+                                               "local_location"})]
+        target_id = body.get("target", "local")
+        if target_id is None:
+            target_id = "local"
+        local_raw = body.get("local_location")
+        if not isinstance(target_id, str):
+            errors.append({"field": "target", "message": "must be a string"})
+            target_id = "local"
+        if local_raw is not None and (not isinstance(local_raw, str)
+                                      or len(local_raw) > MAX_PATH_LEN):
+            errors.append({"field": "local_location",
+                           "message": f"must be a string of at most {MAX_PATH_LEN} characters "
+                                      "or null"})
+            local_raw = None
         location = body.get("location")
         if location is not None and (not isinstance(location, str)
                                      or len(location) > MAX_PATH_LEN):
@@ -369,7 +540,14 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         if errors:
             raise validation_error(errors, f"{len(errors)} problem"
                                            f"{'s' if len(errors) != 1 else ''} with the request")
-        return await run_in_threadpool(_check_paths, location, folders, runs_dir)
+        if target_id == "local":
+            return await run_in_threadpool(_check_paths, location, folders, runs_dir)
+        try:
+            rtarget = store.get_env(target_id)
+        except wremote.MachineNotFound:
+            raise ApiError(404, f"unknown target {target_id!r}")
+        return await run_in_threadpool(_check_paths_remote, transport, rtarget, location,
+                                       local_raw, folders, runs_dir)
 
     @app.get("/api/jobs")
     async def list_jobs(status: Optional[str] = None,
@@ -417,7 +595,17 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         rec = get_job(job_id)
         if rec.terminal:
             raise ApiError(409, f"job {job_id} is already {rec.status}")
-        runner.request_cancel(rec)
+        job_runner = runners.get(rec.queue_key)
+        if job_runner is not None:
+            job_runner.request_cancel(rec)
+        elif rec.status == "pending":
+            runner.request_cancel(rec)            # pending needs no runner of its machine
+        else:                                      # running on a machine that is gone
+            rec.state["cancel_requested"] = True
+            rec.remote_active = False
+            registry.transition(
+                rec, "cancelled", reason="cancelled by user; the machine is no longer "
+                                         "configured, so the remote job was not stopped")
         return {"job": registry.summary(rec)}
 
     @app.get("/api/jobs/{job_id}/events")
@@ -438,7 +626,15 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
     @app.get("/api/jobs/{job_id}/files")
     async def job_files(job_id: str):
         rec = get_job(job_id)
-        return {"files": await run_in_threadpool(_list_files, rec.run_dir)}
+        files = await run_in_threadpool(_list_files, rec.run_dir)
+        remote_only = await run_in_threadpool(_remote_only_files, rec.run_dir)
+        if remote_only:
+            have = {f["path"] for f in files}
+            files += [{"path": f["path"], "size": f["size"], "mtime": None,
+                       "remote_only": True}
+                      for f in remote_only if f["path"] not in have]
+            files.sort(key=lambda f: f["path"])
+        return {"files": files}
 
     @app.get("/api/jobs/{job_id}/files/{path:path}")
     async def job_file(job_id: str, path: str, inline: int = 0):
@@ -448,7 +644,11 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         if target != root and root not in target.parents:
             raise ApiError(400, "path is outside the job directory")
         if not target.is_file():
-            raise ApiError(404, f"file {path!r} not found")
+            entry = next((f for f in await run_in_threadpool(_remote_only_files, rec.run_dir)
+                          if f["path"] == path), None)
+            if entry is None:
+                raise ApiError(404, f"file {path!r} not found")
+            return await _remote_file_response(rec, entry, inline)
         if inline:
             size = target.stat().st_size
             if size > MAX_INLINE_BYTES:
@@ -483,6 +683,128 @@ def create_app(runs_dir: Path, *, start_runner: bool = True,
         return StreamingResponse(
             _stream(), media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{rec.folder}.zip"'})
+
+    # ------------------------------------------------------------------ machines
+    async def _json_object(request: Request) -> dict:
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            raise ApiError(400, "request body must be a JSON object")
+        if not isinstance(body, dict):
+            raise ApiError(400, "request body must be a JSON object")
+        return body
+
+    @app.get("/api/machines")
+    async def list_machines():
+        return {"machines": store.list()}
+
+    @app.post("/api/machines", status_code=201)
+    async def post_machine(request: Request):
+        body = await _json_object(request)
+        try:
+            return _json(store.add_machine(body), 201)
+        except wremote.MachineValidationError as exc:
+            raise field_errors(exc)
+
+    @app.put("/api/machines/{mid}")
+    async def put_machine(mid: str, request: Request):
+        body = await _json_object(request)
+        get_machine(mid)
+        try:
+            return store.update_machine(mid, body)
+        except wremote.MachineValidationError as exc:
+            raise field_errors(exc)
+
+    @app.delete("/api/machines/{mid}")
+    async def delete_machine(mid: str):
+        machine = get_machine(mid)
+        busy = unfinished(lambda r: r.queue_key == mid)
+        if busy:
+            raise ApiError(409, f"machine {machine['name']} still has {len(busy)} unfinished "
+                                f"job{'s' if len(busy) != 1 else ''}; cancel or wait for "
+                                "them first")
+        store.delete_machine(mid)
+        gone = runners.pop(mid, None)
+        if gone is not None:
+            await gone.stop()
+        return {"deleted": mid}
+
+    @app.post("/api/machines/{mid}/test")
+    async def test_machine(mid: str):
+        machine = get_machine(mid)
+
+        def _test() -> dict:
+            t0 = time.monotonic()
+            try:
+                hostname = transport.run_raw(machine, "hostname").strip()
+            except wremote.RemoteError as exc:
+                return {"ok": False, "message": exc.message, "hostname": None, "gpus": [],
+                        "elapsed_s": round(time.monotonic() - t0, 3)}
+            gpus: list = []
+            message = f"connected to {hostname}"
+            if machine["envs"]:
+                rtarget = wremote.RemoteTarget(machine, machine["envs"][0])
+                try:
+                    info = transport.run_json(rtarget, "gpus", timeout=60.0)
+                    gpus = info.get("gpus") or []
+                    if info.get("note"):
+                        message += f"; {info['note']}"
+                except wremote.RemoteError as exc:
+                    message += f"; could not list GPUs: {exc.message}"
+            else:
+                message += "; add an environment to list GPUs"
+            return {"ok": True, "message": message, "hostname": hostname, "gpus": gpus,
+                    "elapsed_s": round(time.monotonic() - t0, 3)}
+
+        return await run_in_threadpool(_test)
+
+    @app.post("/api/machines/{mid}/envs", status_code=201)
+    async def post_env(mid: str, request: Request):
+        body = await _json_object(request)
+        get_machine(mid)
+        try:
+            env = store.add_env(mid, body)
+        except wremote.MachineValidationError as exc:
+            raise field_errors(exc)
+        probe = await run_in_threadpool(
+            wremote.probe_target, transport, store.get_env(env["id"]))
+        return _json(store.set_probe(mid, env["id"], probe), 201)
+
+    @app.put("/api/machines/{mid}/envs/{eid}")
+    async def put_env(mid: str, eid: str, request: Request):
+        body = await _json_object(request)
+        get_machine(mid)
+        try:
+            return store.update_env(mid, eid, body)
+        except wremote.MachineValidationError as exc:
+            raise field_errors(exc)
+        except wremote.MachineNotFound:
+            raise ApiError(404, f"unknown environment {eid!r}")
+
+    @app.delete("/api/machines/{mid}/envs/{eid}")
+    async def delete_env(mid: str, eid: str):
+        get_machine(mid)
+        try:
+            env = store.get_env(eid)
+        except wremote.MachineNotFound:
+            raise ApiError(404, f"unknown environment {eid!r}")
+        busy = unfinished(lambda r: r.is_remote and r.target.get("env_id") == eid)
+        if busy:
+            raise ApiError(409, f"environment {env.env['name']} still has {len(busy)} "
+                                f"unfinished job{'s' if len(busy) != 1 else ''}; cancel or "
+                                "wait for them first")
+        store.delete_env(mid, eid)
+        return {"deleted": eid}
+
+    @app.post("/api/machines/{mid}/envs/{eid}/probe")
+    async def probe_env(mid: str, eid: str):
+        get_machine(mid)
+        try:
+            rtarget = store.get_env(eid)
+        except wremote.MachineNotFound:
+            raise ApiError(404, f"unknown environment {eid!r}")
+        probe = await run_in_threadpool(wremote.probe_target, transport, rtarget)
+        return store.set_probe(mid, eid, probe)
 
     # ------------------------------------------------------------------ websocket
     @app.websocket("/ws")
@@ -607,19 +929,74 @@ def _reserved_dirs(runs_dir: Path) -> List[Path]:
 
 def _check_paths(location: Optional[str], folders: List[str], runs_dir: Path) -> dict:
     """``POST /api/paths/check`` (blocking; creates nothing)."""
-    info = inspect_location(location, runs_dir, _reserved_dirs(runs_dir))
-    out_folders = []
-    for raw in folders:
-        slug = slugify_folder(raw)
-        problem = folder_problem(slug)
-        entry = {"input": raw, "folder": slug, "path": None, "exists": False, "error": problem}
-        if info["path"] is not None and problem is None:
-            path = info["path"] / slug
-            entry["path"] = str(path)
-            entry["exists"] = os.path.lexists(str(path))
-        out_folders.append(entry)
-    return {"location": info["display"], "exists": info["exists"],
-            "writable": info["writable"], "error": info["error"], "folders": out_folders}
+    return wpaths.check_paths(location, folders, runs_dir, _reserved_dirs(runs_dir))
+
+
+def _check_paths_remote(transport, rtarget, location: Optional[str],
+                        local_location: Optional[str], folders: List[str],
+                        runs_dir: Path) -> dict:
+    """``POST /api/paths/check`` for a remote target (blocking; creates nothing).
+
+    ``location``/``folders`` come from the agent on the remote machine;
+    ``exists`` is true when the folder exists there **or** locally under the
+    local copy location. An unreachable machine is reported in ``error``.
+    """
+    remote_loc = (location or "").strip() or rtarget.machine["default_location"]
+    local = wpaths.check_paths(local_location, [], runs_dir, _reserved_dirs(runs_dir))
+    local_path = Path(local["location"]) if local["location"] else runs_dir
+    try:
+        out = transport.run_json(rtarget, "inspect", ["--", remote_loc, *folders])
+    except wremote.RemoteError as exc:
+        out = {"location": remote_loc, "exists": False, "writable": None,
+               "error": exc.message,
+               "folders": [{"input": raw, "folder": slugify_folder(raw), "path": None,
+                            "exists": False,
+                            "error": folder_problem(slugify_folder(raw), ())}
+                           for raw in folders]}
+    for entry in out["folders"]:
+        local_exists = False
+        entry["local_path"] = None
+        if entry.get("error") is None and entry.get("folder") and local["error"] is None:
+            lp = local_path / entry["folder"]
+            entry["local_path"] = str(lp)
+            local_exists = os.path.lexists(str(lp))
+        entry["exists"] = bool(entry.get("exists")) or local_exists
+    out["local_location"] = {"location": local["location"], "exists": local["exists"],
+                             "writable": local["writable"], "error": local["error"]}
+    return out
+
+
+async def _create_remote_dir(transport, rtarget, rec: JobRecord, location: str,
+                             field: str) -> str:
+    """Create the remote run dir of ``rec`` (exclusive) and upload job.json + inputs."""
+    tar = await run_in_threadpool(wremote.tar_local_inputs, rec.run_dir)
+    try:
+        out = await run_in_threadpool(transport.run_json, rtarget, "create",
+                                      [location, rec.folder], tar, 180.0)
+    except wremote.RemoteUnreachable as exc:
+        raise validation_error([{"field": "target", "code": "remote_unreachable",
+                                 "message": exc.message}])
+    except wremote.RemoteError as exc:
+        if exc.returncode == 3:
+            raise validation_error([{"field": field, "code": "folder_exists",
+                                     "message": f"{exc.message} on {rtarget.machine['name']}; "
+                                                "choose another name"}])
+        raise validation_error([{"field": "location", "code": "location_not_writable",
+                                 "message": exc.message}])
+    return str(out["run_dir"])
+
+
+def _remote_only_files(run_dir: Path) -> List[dict]:
+    """Entries of ``remote_files.json`` that were not copied back (blocking)."""
+    data = _read_json_file(Path(run_dir) / "remote_files.json")
+    if data is None:
+        return []
+    out = []
+    for f in data.get("files") or []:
+        if (isinstance(f, dict) and isinstance(f.get("path"), str) and f.get("copied") is False
+                and isinstance(f.get("size"), int)):
+            out.append({"path": f["path"], "size": f["size"]})
+    return out
 
 
 def _optional_text(body: dict, key: str, max_len: int, errors: List[dict]) -> Optional[str]:
@@ -634,7 +1011,7 @@ def _optional_text(body: dict, key: str, max_len: int, errors: List[dict]) -> Op
 
 
 def _plan_submission(body: dict, uploads: UploadStore,
-                     runs_dir: Optional[Path] = None) -> List[dict]:
+                     runs_dir: Optional[Path] = None, store=None) -> List[dict]:
     """Validate a POST /api/jobs body; return ``create_job`` kwargs per job.
 
     Raises :class:`ApiError` (422 / 404). All-or-nothing: nothing is created
@@ -673,11 +1050,51 @@ def _plan_submission(body: dict, uploads: UploadStore,
     if isinstance(label, str):
         label = label.strip() or None
     location_raw = _optional_text(body, "location", MAX_PATH_LEN, errors)
+    local_raw = _optional_text(body, "local_location", MAX_PATH_LEN, errors)
     folder_raw = _optional_text(body, "folder", MAX_PATH_LEN, errors)
     runs_dir = Path(runs_dir) if runs_dir is not None else uploads.root.parent
-    loc_info = inspect_location(location_raw, runs_dir, _reserved_dirs(runs_dir))
+
+    # Target: this computer, or one remote environment (validated against its probe).
+    rtarget = None
+    catalog = None
+    remote_location = None
+    target_id = body.get("target", "local")
+    if target_id is None:
+        target_id = "local"
+    if not isinstance(target_id, str):
+        errors.append({"field": "target", "message": "must be \"local\" or an environment id"})
+    elif target_id != "local":
+        try:
+            if store is None:
+                raise wremote.MachineNotFound(target_id)
+            rtarget = store.get_env(target_id)
+        except wremote.MachineNotFound:
+            errors.append({"field": "target", "message": f"unknown target {target_id!r}"})
+        else:
+            probe = rtarget.env.get("probe")
+            if not isinstance(probe, dict) or not probe.get("ok"):
+                errors.append({"field": "target", "message":
+                               f"environment {rtarget.env['name']} has not been probed "
+                               "successfully; probe it in the Machines panel"})
+                rtarget = None
+            else:
+                catalog = dict(probe.get("calculators") or {})
+                catalog["env_name"] = rtarget.env["name"]
+    if target_id == "local" and local_raw is not None:
+        errors.append({"field": "local_location", "message": "only applies to a remote target"})
+    if rtarget is not None:
+        remote_location = location_raw or rtarget.machine["default_location"]
+        if (not remote_location.startswith(("/", "~")) or "\0" in remote_location
+                or "\n" in remote_location):
+            errors.append({"field": "location", "code": "location_invalid", "message":
+                           "the remote location must be an absolute path (or start with ~)"})
+        loc_info = inspect_location(local_raw, runs_dir, _reserved_dirs(runs_dir))
+        loc_field = "local_location"
+    else:
+        loc_info = inspect_location(location_raw, runs_dir, _reserved_dirs(runs_dir))
+        loc_field = "location"
     if loc_info["code"] is not None:
-        errors.append({"field": "location", "code": loc_info["code"],
+        errors.append({"field": loc_field, "code": loc_info["code"],
                        "message": loc_info["error"]})
     folder_base: Optional[str] = None
     if folder_raw is not None:
@@ -753,7 +1170,8 @@ def _plan_submission(body: dict, uploads: UploadStore,
     for k, group in enumerate(groups):
         metas = {role: uploads.structure_meta(uid, role) for role, (_, uid) in group.items()}
         try:
-            norm = wschema.validate_submission(calc_type, dict(calculator), dict(params), metas)
+            norm = wschema.validate_submission(calc_type, dict(calculator), dict(params), metas,
+                                               catalog)
         except wschema.ValidationFailed as exc:
             prefix = f"structure_ids[{k}]." if multi else ""
             for e in exc.errors:
@@ -780,6 +1198,14 @@ def _plan_submission(body: dict, uploads: UploadStore,
     if all_errors:
         raise validation_error(all_errors)
     plan_folders(plans, loc_info["path"], folder_base, multi, width)
+    if rtarget is not None:
+        block = {"kind": "remote", "machine_id": rtarget.machine["id"],
+                 "machine_name": rtarget.machine["name"], "env_id": rtarget.env["id"],
+                 "env_name": rtarget.env["name"], "host": rtarget.machine["host"],
+                 "python": rtarget.env["python"]}
+        for plan in plans:
+            plan.update({"target": block, "remote_location": remote_location,
+                         "remote_target": rtarget})
     return plans
 
 
@@ -837,40 +1263,13 @@ def _inputs_detail(rec: JobRecord) -> dict:
     return out
 
 
-def _iso_mtime(ts: float) -> str:
-    return iso_utc(datetime.fromtimestamp(ts, tz=timezone.utc))
-
-
 def _inside(root: Path, p: Path) -> bool:
     """True if ``p`` resolves (symlinks followed) to a path inside ``root``."""
-    try:
-        target = p.resolve()
-    except (OSError, RuntimeError):
-        return False
-    return target == root or root in target.parents
+    return wpaths.inside(root, p)
 
 
 def _list_files(run_dir: Path) -> List[dict]:
-    files = []
-    root = run_dir.resolve()
-    for dirpath, dirnames, filenames in os.walk(run_dir):
-        dirnames.sort()
-        for name in sorted(filenames):
-            p = Path(dirpath) / name
-            if not _inside(root, p):
-                continue
-            try:
-                st = p.stat()
-            except OSError:
-                continue
-            files.append({"path": p.relative_to(run_dir).as_posix(), "size": st.st_size,
-                          "mtime": _iso_mtime(st.st_mtime)})
-            if len(files) >= MAX_LISTED_FILES:
-                break
-        if len(files) >= MAX_LISTED_FILES:
-            break
-    files.sort(key=lambda f: f["path"])
-    return files
+    return wpaths.list_files(run_dir)
 
 
 def _build_zip(run_dir: Path, prefix: str):

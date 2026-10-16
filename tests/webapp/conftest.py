@@ -43,6 +43,8 @@ def make_app(runs_dir):
         kw.setdefault("cancel_grace_s", 2.0)
         kw.setdefault("poll_interval_s", 0.05)
         kw.setdefault("allowed_hosts", None)
+        # never read the user's real machines file
+        kw.setdefault("machines_file", runs_dir.parent / "machines.json")
         return create_app(kw.pop("runs_dir", runs_dir), **kw)
 
     return factory
@@ -134,3 +136,51 @@ def wait_for_status_fixture():
 def submit_fixture():
     """``submit(client, upload_ids, label=None, calc_type="optimize", params=None, **extra)``."""
     return _submit
+
+
+# --------------------------------------------------------------------------- #
+# Remote machines (fake ssh): shared by the test_remote_*.py files
+# --------------------------------------------------------------------------- #
+@pytest.fixture(scope="session")
+def real_probe(tmp_path_factory):
+    """One real ``probe`` of this interpreter through the fake ssh (cached)."""
+    from remote_helpers import FAKE_SSH_CMD
+
+    from mliprun.webapp import remote
+
+    transport = remote.SSHTransport(FAKE_SSH_CMD, ctl_dir=tmp_path_factory.mktemp("ctl"))
+    target = remote.RemoteTarget({"host": "localhost", "name": "probe"},
+                                 {"python": sys.executable, "setup": ""})
+    probe = remote.probe_target(transport, target)
+    assert probe["ok"], probe
+    return probe
+
+
+@pytest.fixture
+def remote_setup(tmp_path, real_probe):
+    """``remote_setup(**machine_overrides) -> dict`` with ids; writes the machines file.
+
+    Keys: ``machines_file``, ``machine_id``, ``env_id``, ``location`` (the
+    remote location, an empty tmp dir), ``machine``, ``env``. Call it before
+    ``make_app(machines_file=...)``. ``name`` makes several machines possible
+    in one file (pass the same ``machines_file`` back as ``store_path``).
+    """
+    from remote_helpers import FAKE_SSH_CMD  # noqa: F401 - imported for path setup
+
+    from mliprun.webapp.remote import MachineStore
+
+    def factory(name="box", host="box", store_path=None, **overrides):
+        path = Path(store_path) if store_path else tmp_path / "machines.json"
+        store = MachineStore(path)
+        location = tmp_path / f"remote-{name}"
+        location.mkdir(exist_ok=True)
+        data = {"name": name, "host": host, "default_location": str(location),
+                "poll_interval_s": 0.5}
+        data.update(overrides)
+        machine = store.add_machine(data)
+        env = store.add_env(machine["id"], {"python": sys.executable, "name": f"{name}-env"},
+                            probe=real_probe)
+        return {"machines_file": path, "machine_id": machine["id"], "env_id": env["id"],
+                "location": location, "machine": machine, "env": env}
+
+    return factory
