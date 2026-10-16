@@ -550,8 +550,11 @@ def run_md(
 
     stress_log = (ensemble == "npt")
     dyn.attach(MDLogger(dyn, atoms, sys.stdout, header=True, stress=stress_log), interval=log_interval)
+    file_logger = None
     if log_path:
-        dyn.attach(MDLogger(dyn, atoms, log_path, header=True, stress=stress_log), interval=log_interval)
+        # MDLogger opens log_path itself; closed after the run below.
+        file_logger = MDLogger(dyn, atoms, log_path, header=True, stress=stress_log)
+        dyn.attach(file_logger, interval=log_interval)
 
     # Incremental CSV writer: append a batch of buffered rows every
     # csv_flush_every log calls so the file grows during the run and survives
@@ -618,6 +621,9 @@ def run_md(
         _flush_csv()
         record.complete(status="failed", results={"error": str(exc)})
         raise
+    finally:
+        if file_logger is not None:
+            file_logger.close()
     traj_writer.close()
     _flush_csv()  # final tail of buffered rows
 

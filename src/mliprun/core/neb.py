@@ -474,12 +474,12 @@ class CustomNEB:
             atoms.calc = self.setup_calculator()
             energy_before = atoms.get_potential_energy()
 
-            opt = opt_class(
+            with opt_class(
                 atoms,
                 trajectory=str(self.output_dir / traj_name),
                 logfile=str(self.output_dir / log_name),
-            )
-            opt.run(fmax=endpoint_fmax, steps=max_steps)
+            ) as opt:
+                opt.run(fmax=endpoint_fmax, steps=max_steps)
 
             energy_after = atoms.get_potential_energy()
             fmax_val = calc_fmax(atoms.get_forces())

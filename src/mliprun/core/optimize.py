@@ -6,7 +6,6 @@ from typing import Callable, Optional
 import matplotlib.pyplot as plt
 import pandas as pd
 from ase.io import write
-from ase.io.trajectory import Trajectory
 from ase.optimize import BFGS, FIRE, LBFGS, BFGSLineSearch, GPMin, MDMin
 
 from mliprun.core.committee.calculator import (
@@ -542,7 +541,9 @@ def run_optimization(
     # DOFs). Trajectory frames are still written from the underlying atoms.
     opt_target = _wrap_for_cell_relaxation(atoms) if relax_cell else atoms
 
-    traj = Trajectory(str(traj_file), "w", atoms)
+    # The optimizer owns opt.traj (via ``trajectory=`` below) and closes it
+    # when its ``with`` block exits. No separate writer is opened here: one
+    # used to be, was never written to or closed, and leaked a file handle.
 
     log_data = {"step": [], "energy(eV)": [], "fmax(eV/A)": []}
 
@@ -576,17 +577,21 @@ def run_optimization(
             })
 
     try:
+        # ``with opt`` closes any trajectory/logfile handle the optimizer
+        # opened itself (ASE's IOContext), also when run() raises.
         if verbose:
             opt = OptimizerClass(opt_target, trajectory=str(traj_file), logfile=str(log_file))
-            opt.attach(log_convergence, interval=1)
-            logger.info("Starting optimization with %s (fmax=%.4f, max_steps=%d, relax_cell=%s)",
-                        optimizer.upper(), fmax, max_steps, relax_cell)
-            converged = opt.run(fmax=fmax, steps=max_steps)
+            with opt:
+                opt.attach(log_convergence, interval=1)
+                logger.info("Starting optimization with %s (fmax=%.4f, max_steps=%d, relax_cell=%s)",
+                            optimizer.upper(), fmax, max_steps, relax_cell)
+                converged = opt.run(fmax=fmax, steps=max_steps)
         else:
             with open(log_file, "w") as lf:
                 opt = OptimizerClass(opt_target, trajectory=str(traj_file), logfile=lf)
-                opt.attach(log_convergence, interval=1)
-                converged = opt.run(fmax=fmax, steps=max_steps)
+                with opt:
+                    opt.attach(log_convergence, interval=1)
+                    converged = opt.run(fmax=fmax, steps=max_steps)
 
         final_energy = atoms.get_potential_energy()
         final_fmax = calc_fmax(opt_target.get_forces())
