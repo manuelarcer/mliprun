@@ -27,3 +27,4 @@ One entry per subagent run.
 - 2026-10-16 natsort subagent: batch suffix order = natural filename order (structures.js selectedIds), verified incl. reload; 333 webapp tests pass.
 - 2026-10-16 rev2 tester subagent: test_rev2_naming.py (62), test_rev2_browser.py (5), NEB/AutoNEB event + core-fix tests; 0 bugs. Full suite 1230 passed, 9 skipped, 1 known fail. Orchestrator re-ran new files: 77 passed.
 - 2026-10-16 orchestrator: CI failed 2 tests in test_launch.py (rich colours help output on GitHub Actions, ANSI codes split option names). Fixed by stripping ANSI in those asserts; reproduced and verified locally with GITHUB_ACTIONS=true FORCE_COLOR=1.
+- 2026-10-16 coverage subagent: CI diff-coverage gate failed (74%) because worker subprocesses ran with cwd=run_dir and wrote .coverage.* there. Fix: COVERAGE_FILE=${{ github.workspace }}/.coverage in tests.yml (commit 5fbf169). Local gate 91%. CI green on PR #61 (test x2, fresh-install).
