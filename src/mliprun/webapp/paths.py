@@ -10,6 +10,7 @@ import io
 import os
 import re
 import tarfile
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, BinaryIO, Dict, Iterable, List, Optional, Union
 
@@ -197,3 +198,101 @@ def safe_extract_tar(source: Union[bytes, BinaryIO], dest: Path) -> int:
             if member.isfile():
                 n_files += 1
     return n_files
+
+
+def write_tar(fileobj: BinaryIO, base: Path, relpaths: Iterable[str]) -> int:
+    """Write the regular files ``base/<rel>`` as a tar stream to ``fileobj``.
+
+    Parameters
+    ----------
+    fileobj : binary file object
+        Receives the tar stream (a pipe is fine).
+    base : Path
+        Directory the relative paths are under.
+    relpaths : iterable of str
+        POSIX relative paths; each becomes the archive member name.
+
+    Returns
+    -------
+    int
+        Number of files written.
+    """
+    n = 0
+    with tarfile.open(fileobj=fileobj, mode="w|") as tar:
+        for rel in relpaths:
+            tar.add(str(Path(base) / rel), arcname=rel, recursive=False)
+            n += 1
+    return n
+
+
+def tar_bytes(base: Path, relpaths: Iterable[str]) -> bytes:
+    """:func:`write_tar` into memory."""
+    buf = io.BytesIO()
+    write_tar(buf, base, relpaths)
+    return buf.getvalue()
+
+
+# --------------------------------------------------------------------------- #
+# Run directory listing
+# --------------------------------------------------------------------------- #
+MAX_LISTED_FILES = 10000
+
+
+def _iso_mtime(ts: float) -> str:
+    dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
+
+def inside(root: Path, p: Path) -> bool:
+    """True if ``p`` resolves (symlinks followed) to a path inside ``root``."""
+    try:
+        target = p.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return target == root or root in target.parents
+
+
+def list_files(run_dir: Path) -> List[dict]:
+    """``[{"path", "size", "mtime"}]`` of every file under ``run_dir``, sorted.
+
+    Files whose real path is outside ``run_dir`` (symlinks) are skipped.
+    """
+    files: List[dict] = []
+    root = Path(run_dir).resolve()
+    for dirpath, dirnames, filenames in os.walk(run_dir):
+        dirnames.sort()
+        for name in sorted(filenames):
+            p = Path(dirpath) / name
+            if not inside(root, p):
+                continue
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            files.append({"path": p.relative_to(run_dir).as_posix(), "size": st.st_size,
+                          "mtime": _iso_mtime(st.st_mtime)})
+            if len(files) >= MAX_LISTED_FILES:
+                break
+        if len(files) >= MAX_LISTED_FILES:
+            break
+    files.sort(key=lambda f: f["path"])
+    return files
+
+
+# --------------------------------------------------------------------------- #
+# Copy-back rules for remote jobs
+# --------------------------------------------------------------------------- #
+LOCAL_AUTHORITATIVE = frozenset({"job.json", "state.json", "events.jsonl"})
+
+
+def is_local_authoritative(rel: str) -> bool:
+    """True for files whose local copy is the master (never fetched from the remote)."""
+    return rel in LOCAL_AUTHORITATIVE or rel.startswith("inputs/")
+
+
+def copy_back_eligible(rel: str, size: int, max_bytes: int) -> bool:
+    """Should the remote file ``rel`` of ``size`` bytes be copied back?
+
+    A limit of 0 (or less) means nothing is copied.
+    """
+    return (not is_local_authoritative(rel)) and max_bytes > 0 and size <= max_bytes
