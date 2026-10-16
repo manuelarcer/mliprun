@@ -488,7 +488,7 @@ pip install -e ".[webapp]"
 mlip webapp            # opens http://127.0.0.1:8765/
 ```
 
-Each job writes the normal mliprun outputs into its own run directory, plus a `reproduce.sh` with the equivalent CLI command. ASE's EMT is always offered for demos. The app has no authentication, so keep the default localhost binding. Details, limitations and how to add a calculation type: [`webapp/README.md`](webapp/README.md).
+Each job writes the normal mliprun outputs into its own run directory, plus a `reproduce.sh` with the equivalent CLI command. ASE's EMT is always offered for demos. Jobs can also run on another machine (for example a GPU node) over SSH, with live plots and the small output files copied back. The app has no authentication, so keep the default localhost binding. Details, limitations and how to add a calculation type: [`webapp/README.md`](webapp/README.md).
 
 ---
 

@@ -19,7 +19,9 @@ every iteration (light = early, dark = late) with the final band on top, and
 fmax / barrier per iteration below it.*
 
 Contents: [Install](#install) · [Launch](#launch) ·
-[Run directories](#run-directories) · [Calculation types](#calculation-types) ·
+[Run directories](#run-directories) ·
+[Running on another machine](#running-on-another-machine-ssh) ·
+[Calculation types](#calculation-types) ·
 [Reproducing a job from the CLI](#reproducing-a-job-from-the-cli) ·
 [Known limitations](#known-limitations) · [Testing](#testing) ·
 [Adding a calculation type](#adding-a-new-calculation-type)
@@ -72,6 +74,7 @@ at that moment is cancelled.
 | `--port` | `8765` | TCP port. |
 | `--runs-dir` | `~/.mliprun/webapp-runs` | Folder for uploads and job run directories (created if missing). |
 | `--no-browser` | off | Do not open a browser window. |
+| `--machines-file` | `~/.mliprun/webapp-machines.json` | Where the remote machine settings are kept (see [Running on another machine](#running-on-another-machine-ssh)). |
 
 **About `--host`.** `127.0.0.1` ("loopback") means only programs on this
 computer can connect. The app has **no login or authentication**. If you bind
@@ -163,6 +166,107 @@ A crash in a calculation therefore never takes the server down; the job is
 simply marked failed. The job page lists all files with download links and
 has a "Download all (.zip)" button.
 
+## Running on another machine (SSH)
+
+The server always runs on your computer, but a job can run on another
+machine, for example a GPU node such as cos-cluster. The server reaches that
+machine with your normal `ssh` command, so it uses your `~/.ssh/config`
+(host aliases, keys, jump hosts). No machine is configured by default.
+
+**Requirements on the remote machine.**
+
+- Login without typing a password: an SSH key, or a ControlMaster
+  connection you opened yourself. The web app runs `ssh` with
+  `BatchMode=yes`, so a host that asks for a password fails at once with a
+  clear message instead of hanging.
+- A Python environment with mliprun installed, at a version that contains
+  this feature (`mliprun.webapp.remote_agent`). On a shared editable install
+  (as on cos-cluster) a `git pull` is enough. The remote environment does
+  **not** need the `webapp` extra (fastapi and friends); only the local one
+  does.
+- Linux, `/bin/sh`, and (optional) `nvidia-smi` for the GPU table.
+
+**Setting up a machine.** Click **Machines** in the top bar.
+
+1. **Add machine.** Name (shown in menus), Host (an alias from
+   `~/.ssh/config`, or a hostname), and optionally User, Port, Identity
+   file and Jump host. **Default remote location** is the parent folder for
+   run folders on that machine (for cos-cluster, somewhere under
+   `/scratchb/<user>/`, never `/home`). **Poll interval** (default 2 s) is
+   how often the live data are fetched. **Copy-back limit** (default 50 MB)
+   is the largest file that is copied back to your computer at the end.
+2. **Test connection** shows the remote host name, the time the connection
+   took, and the GPUs with their memory use (from `nvidia-smi`). The web app
+   does no automatic check of the load; on a shared node without a
+   scheduler, look at this table before you submit.
+3. **Add environment**: the full path of the Python interpreter of one venv,
+   for example `/scratchb/juar/.../.venv/mace/bin/python`. One environment
+   per venv, because each MLIP lives in its own venv. The name is filled in
+   as `<machine>-<venv folder>` (here `cos-cluster-mace`) and can be
+   changed. Adding it runs a **probe**: mliprun version, whether the worker
+   can be imported, which MLIPs are installed there, and whether CUDA is
+   usable there. **Setup** lines are shell commands run before every
+   command for that environment (`module load ...`,
+   `export CUDA_VISIBLE_DEVICES=1`, or `export PYTHONPATH=...` to test a
+   copy of mliprun). They run as you, on your machine; the web app has no
+   login, which is one more reason to keep its default `127.0.0.1` binding.
+
+Machines and environments are saved in the machines file and are still
+there after the server restarts. A machine or environment with a pending or
+running job cannot be deleted.
+
+**Submitting.** In the form, **Run on** lists "This computer" and every
+environment whose probe succeeded. Choosing an environment reloads the
+Model and Device menus from that environment's probe, so you only see the
+MLIPs installed there. The job part of the form then shows two locations:
+
+| Field | Default | Meaning |
+|---|---|---|
+| **Remote location** | the machine's default remote location (the last one you used for that environment is remembered) | Parent folder of the run folder **on the remote machine**, where the calculation runs. |
+| **Local copy location** | the server's `--runs-dir` | Parent folder of the run folder **on your computer**: live data and the copied-back files. |
+
+The folder name is the same on both sides, and the "never overwrite" rule
+applies to both: the job is refused if the folder exists on either machine.
+The live check under the fields reads the remote side over SSH; if the
+machine cannot be reached, its message is shown there and Submit is
+disabled.
+
+**While the job runs.** The worker is started on the remote machine,
+detached from the SSH connection, so it keeps running if your laptop sleeps,
+the network drops, or you stop the server. Every poll interval the server
+fetches only the new lines of the remote `events.jsonl` (one short SSH call
+over a shared connection) and appends them to the local copy, so the live
+plots and the viewer work as for a local job. If the connection fails, the
+job is **not** marked failed: the job page shows "Connection problem",
+and the server retries (2 s, 4 s, ... up to 60 s) until the machine answers
+again. After a server restart, a job that was running remotely is picked up
+again instead of being marked failed. Cancel works as for a local job
+(SIGTERM to the remote worker, SIGKILL after the grace time); a cancel
+requested while the machine is unreachable is delivered when it answers.
+
+Measured on cos-cluster (2026-10-16): live data from a 64-atom MACE MD (52
+steps/s, structure every 5 events) were 2.8 KiB/s, and from a 400-atom MD
+with a structure in every event 13.6 KiB/s. Each poll costs the remote
+machine about 0.2 s of one core (a short Python process), so about 10 % of
+one core at the default 2 s interval. Raise the poll interval for very long
+runs if that matters.
+
+**Queues.** Each machine has its own queue, so a local job and a remote job
+can run at the same time. On one machine (all its environments together)
+jobs still run one at a time, first in, first out.
+
+**At the end.** Every remote file up to the copy-back limit is copied into
+the local copy; `job.json`, `state.json`, `events.jsonl` and `inputs/` are
+always the local versions. `remote_files.json` lists every remote file, its
+size and whether it was copied. Larger files (typically `md.traj`) stay on
+the remote machine: the job page lists them as "on <machine>, not copied",
+and clicking one streams it from the remote machine without storing it
+locally. "Download all" zips the local copy only.
+
+Files specific to a remote run directory: `remote_pids.json` (process ids
+of the worker and of the small supervisor process that records its exit
+code), `worker_exit.json` (that exit code) and `supervisor.log`.
+
 ## Calculation types
 
 | Type | Input | Live during the run | At the end |
@@ -228,8 +332,13 @@ the same status, the notes, and the argument list):
   downloads still work.
 - **MLIP detection happens at server start.** Restart the server after
   installing or removing an MLIP package.
-- **One job at a time.** Submitted jobs queue; there is no parallel execution
-  or GPU sharing.
+- **One job at a time per machine.** Submitted jobs queue; a local job and
+  a job on a remote machine can run at the same time, but there is no
+  parallel execution or GPU sharing on one machine.
+- **Remote runs**: the remote side must be Linux with key-based SSH login.
+  Log lines written by a remote worker carry the remote machine's clock
+  (cos-cluster was 292 s ahead of the laptop on 2026-10-16); job start and
+  end times shown in the job list are always the local clock.
 - **AutoNEB always runs on CPU in the CLI**, so its `reproduce.sh` is only
   approximate when you choose another device. AutoNEB also deletes earlier
   `autoneb*.traj` files (and `AutoNEB_iter/`) in its run directory; harmless
@@ -244,8 +353,9 @@ the same status, the notes, and the argument list):
   frames; preview animation for files with up to 500 frames.
 - **Tier-2 tests use MACE-MP-0 medium**, because that is what the package
   builds for the `mace` tag; "small" is not selectable.
-- **Restarting the server** marks a job that was running as failed ("server
-  restarted while the job was running"); pending jobs are re-queued.
+- **Restarting the server** marks a job that was running *on this computer*
+  as failed ("server restarted while the job was running"); a job running
+  on a remote machine is picked up again. Pending jobs are re-queued.
 
 - **Code upgrades need a server restart** (see [Launch](#launch)).
 - **Moving or deleting a run folder** by hand removes that job from the list
@@ -274,6 +384,7 @@ What the groups are, and when they skip:
 | Tier 1 (`test_tier1_emt.py`, `test_robustness.py`) | every calc type end to end with the real worker and EMT on Cu, Pt, Au, Ni; energies, forces, frequencies and barriers equal a direct mliprun API run; queueing, cancel, crash, restart, security | same | as above |
 | Tier 2 (`test_tier2_mace.py`, markers `mace`, `slow`) | short real-MLIP jobs with `mace` (MACE-MP-0 medium) on CPU; energy equals a direct calculator; `reproduce.sh` is `exact` and parses | mace-torch, model download | mace-torch not installed, or the model cannot be built (no network) |
 | Browser (`test_browser.py`) | headless Chromium: upload, run optimize, live plot grows, result shown; cancel an MD job from the page | `pip install playwright` and a Chromium (`playwright install chromium`, or a system `/usr/bin/chromium`) and internet (CDN) | playwright missing, no Chromium launches, or the CDN is unreachable |
+| Remote machines (`test_remote_*.py`) | machines file and its validation, the SSH command line, every remote-agent subcommand, remote jobs end to end (energy equal to a local job, live events, cancel, connection lost and regained, server restart, copy-back limit, local and remote queues in parallel); `test_remote_browser.py` drives the Machines panel and a remote job in Chromium | nothing extra: a stand-in `ssh` (`tests/webapp/fake_ssh.py`) runs the "remote" commands locally in a temporary folder | as the API / browser rows above |
 
 ```bash
 pytest tests/webapp/test_tier2_mace.py        # in a MACE env (about 40 s on CPU)
