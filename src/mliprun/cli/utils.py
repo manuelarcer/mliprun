@@ -18,7 +18,8 @@ MLIP_HELP = (
     "any 'uma-*' name (e.g. 'uma-s-1p2', the current default), 'mace' "
     "(MACE-MP-0 medium), 'mace-mh-1' (multi-head foundation; requires "
     "--mace-head), any '7net-*' tag (e.g. '7net-omni', which requires "
-    "--sevennet-task), or 'chgnet'. Any tag starting with 'uma-' is forwarded "
+    "--sevennet-task), 'chgnet', or the path to a trained MACE model file "
+    "ending in '.model'. Any tag starting with 'uma-' is forwarded "
     "to FAIRChem unchanged, and any unrecognised '7net-*' tag is forwarded to "
     "SevenNet unchanged."
 )
@@ -387,6 +388,17 @@ def _validate_uma_task(mlip: str, uma_task: Optional[str]) -> None:
         )
 
 
+def is_mace_model_file(mlip: str) -> bool:
+    """Whether ``mlip`` names a MACE model file rather than a tag.
+
+    A user-trained MACE potential is passed by path, e.g.
+    ``--mlip /path/to/MACE_model.model``. The ``.model`` suffix is what
+    ``mace_run_train`` writes for a finished model (the ``*_epoch-N.pt``
+    checkpoints are not loadable here), so the suffix alone decides.
+    """
+    return mlip.endswith(".model")
+
+
 def _validate_mace_head(mlip: str, mace_head: Optional[str]) -> None:
     """Check a MACE tag against its head list.
 
@@ -459,6 +471,16 @@ def validate_mlip(mlip: str, sevennet_task: Optional[str] = None,
     if mlip == "mace" or mlip.startswith("mace-mh-"):
         if not MACE_AVAILABLE:
             raise typer.Exit(_install_message("MACE", mlip))
+        _validate_mace_head(mlip, mace_head)
+        return
+
+    if is_mace_model_file(mlip):
+        if not MACE_AVAILABLE:
+            raise typer.Exit(_install_message("MACE", "mace"))
+        if not Path(mlip).is_file():
+            raise typer.Exit(f"MACE model file not found: {mlip}")
+        # Treated as single-head: a trained single-dataset model has no
+        # selectable head, so --mace-head is rejected rather than ignored.
         _validate_mace_head(mlip, mace_head)
         return
 
@@ -654,6 +676,10 @@ def build_calculator(mlip: str, uma_task: Optional[str] = None,
     if mlip == "mace":
         mace_mp = _load_mace_mp()
         return mace_mp(model="medium", device=device)
+
+    elif is_mace_model_file(mlip):
+        from mace.calculators import MACECalculator
+        return MACECalculator(model_paths=mlip, device=device)
 
     elif mlip.startswith("mace-mh-"):
         if mace_head is None:

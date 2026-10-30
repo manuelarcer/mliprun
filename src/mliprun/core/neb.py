@@ -401,6 +401,10 @@ class CustomNEB:
         elif model == "mace":
             from mace.calculators import mace_mp
             return mace_mp(model="medium", device=device)
+        elif model.endswith(".model"):
+            # User-trained MACE model passed by path (see is_mace_model_file).
+            from mace.calculators import MACECalculator
+            return MACECalculator(model_paths=model, device=device)
         elif model.startswith("mace-mh-"):
             if mace_head is None:
                 raise ValueError(

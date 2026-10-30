@@ -102,6 +102,31 @@ class TestValidateMlip:
     def test_chgnet_available_passes(self):
         validate_mlip("chgnet")  # should not raise
 
+    @patch("mliprun.cli.utils.MACE_AVAILABLE", True)
+    def test_mace_model_file_passes(self, tmp_path):
+        model = tmp_path / "MACE_model.model"
+        model.write_bytes(b"")
+        validate_mlip(str(model))  # should not raise
+
+    @patch("mliprun.cli.utils.MACE_AVAILABLE", True)
+    def test_missing_mace_model_file_raises(self, tmp_path):
+        with pytest.raises(typer.Exit):
+            validate_mlip(str(tmp_path / "absent.model"))
+
+    @patch("mliprun.cli.utils.MACE_AVAILABLE", True)
+    def test_mace_model_file_rejects_head(self, tmp_path):
+        model = tmp_path / "MACE_model.model"
+        model.write_bytes(b"")
+        with pytest.raises(typer.Exit):
+            validate_mlip(str(model), mace_head="omat_pbe")
+
+    @patch("mliprun.cli.utils.MACE_AVAILABLE", False)
+    def test_mace_model_file_without_mace_raises(self, tmp_path):
+        model = tmp_path / "MACE_model.model"
+        model.write_bytes(b"")
+        with pytest.raises(typer.Exit):
+            validate_mlip(str(model))
+
 
 class TestResolveMlip:
     @patch("mliprun.cli.utils.FAIRCHEM_AVAILABLE", True)
