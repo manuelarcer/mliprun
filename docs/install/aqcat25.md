@@ -1,6 +1,6 @@
 # AQCat25-EV2 install recipe
 
-_Status: the GPU (CUDA 12.1) steps below follow the upstream model card. The mliprun wiring is unit-tested with the model mocked; no end-to-end run on a cluster is recorded here yet._
+_Status: the CPU-only variant was built and run end to end on macOS arm64 (Python 3.11.10) on 2026-11-16: `mlip doctor`, `singlepoint run`, `optimize run` and `neb run` against the real `aqcat25-ev2-midfilm` checkpoint. The GPU (CUDA 12.1) steps follow the upstream model card and have not been run by us yet._
 
 Models: SandboxAQ's AQCat25-EV2 checkpoints, EquiformerV2 with FiLM conditioning on spin and DFT fidelity (Allam et al., *npj Comput. Mater.* **12**, 226 (2026)). They run on **fairchem-core 1.10.0** patched with two SandboxAQ files. That distribution has the same name, `fairchem-core`, as the 2.x line UMA uses, so mliprun tells them apart by major version: 2.x is UMA, 1.x is AQCat25-EV2.
 
@@ -25,7 +25,7 @@ pip install torch==2.4.0 --index-url https://download.pytorch.org/whl/cu121
 pip install torch_geometric
 pip install torch_sparse torch_scatter -f https://data.pyg.org/whl/torch-2.4.0+cu121.html
 pip install e3nn submitit torchtnt hydra-core pymatgen ase orjson wandb tensorboard \
-    lmdb huggingface-hub numba datasets pandas tqdm requests "numpy<2"
+    lmdb huggingface-hub numba datasets pandas tqdm requests "numpy<2" "scipy<1.15"
 
 # Log in to Hugging Face (after your access request was approved).
 hf auth login
@@ -51,7 +51,7 @@ git clone https://github.com/facebookresearch/fairchem.git
 cd fairchem
 git checkout -b aqcat-ev2 tags/fairchem_core-1.10.0
 
-cp ../aqcat25-ev2/patched_code/equiformer_v2_film.py \
+cp ../aqcat25-ev2/ev2_film/equiformer_v2_film.py \
    packages/fairchem-core/src/fairchem/core/models/equiformer_v2/
 cp ../aqcat25-ev2/patched_code/ase_utils.py \
    packages/fairchem-core/src/fairchem/core/common/relaxation/ase_utils.py
@@ -73,7 +73,25 @@ If the patch is missing, the first run stops with an error saying the env has fa
 
 ## CPU-only variant
 
-_Not yet verified._ A separate check is in progress; this section will give the CPU torch and PyG wheel lines once it is done.
+Verified on macOS arm64 with Python 3.11.10 (the model card asks for 3.10; 3.11 works). Only the torch and PyG wheel lines differ from the GPU recipe; every other step is the same.
+
+```bash
+python3.11 -m venv .venv-aqcat
+source .venv-aqcat/bin/activate
+
+pip install torch==2.4.0
+pip install "numpy<2" torch_geometric
+pip install --only-binary=:all: torch_sparse torch_scatter \
+    -f https://data.pyg.org/whl/torch-2.4.0+cpu.html
+pip install e3nn submitit torchtnt hydra-core pymatgen ase orjson wandb tensorboard \
+    lmdb huggingface-hub numba datasets pandas tqdm requests "numpy<2" "scipy<1.15"
+```
+
+Versions this resolved to: torch 2.4.0, torch_geometric 2.8.1, torch_scatter 2.1.2, torch_sparse 0.6.18, e3nn 0.6.0, numpy 1.26.4, scipy 1.14.1, ase 3.29.0, fairchem-core 1.10.0.
+
+- **`scipy<1.15` is required.** The model card has no scipy pin, and with a newer scipy fairchem 1.10.0 fails at import (`cannot import name 'sph_harm' from 'scipy.special'`).
+- Speed on a laptop CPU: about 1.5 s to load the model and about 1.3 s per evaluation for a 50-atom slab.
+- On load, fairchem prints its whole model configuration and two deprecation warnings about the head class names. Both are harmless.
 
 ## First run
 
@@ -119,7 +137,7 @@ Upstream's `patched_calc` applies the spin and fidelity by patching a class attr
 ### What the numbers mean
 
 - **Energy:** an OC20-style **referenced adsorption energy**, not a DFT total energy. Do not combine it with total energies from VASP or from another MLIP.
-- **Forces:** a direct output head, so they are **not exactly the gradient** of the energy. An optimizer that converges on these forces is converging on the force head, not on the energy surface.
+- **Forces:** a direct output head, so they are **not the gradient** of the energy. An optimizer that converges on these forces is converging on the force head, not on the energy surface. One measurement of the size of the mismatch (CO on a Co(0001) slab at an unrelaxed geometry, maximum force 3.2 eV/Å, `aqcat25-ev2-midfilm`, spin on): the model's force on the C atom along z was −3.19 eV/Å, while the finite difference of the model's own energy gave −4.44 eV/Å. The mismatch near a minimum or a saddle point has not been measured. Treat NEB barriers with care: the band follows the forces, while the barrier is read from the energies.
 - **No stress.** `singlepoint` reports the stress as unavailable.
 
 Each supported command prints this caveat next to the spin and fidelity lines.
