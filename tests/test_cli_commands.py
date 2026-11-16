@@ -177,6 +177,43 @@ class TestSevenNetTaskOptionIsExposed:
         assert "--sevennet-task" in _option_names(app_obj, command_name)
 
 
+class TestAqcatOptionsAreExposed:
+    """Declared, with no default, on exactly the supported commands."""
+
+    _SUPPORTED = [
+        ("mliprun.cli.commands.optimize", "run"),
+        ("mliprun.cli.commands.optimize", "batch"),
+        ("mliprun.cli.commands.singlepoint", "run"),
+        ("mliprun.cli.commands.neb", None),
+    ]
+
+    @pytest.mark.parametrize("module,command_name", _SUPPORTED,
+                             ids=["opt_run", "opt_batch", "sp_run", "neb_run"])
+    @pytest.mark.parametrize("option", ["--aqcat-spin", "--aqcat-fidelity"],
+                             ids=["spin", "fidelity"])
+    def test_declared_with_no_default(self, module, command_name, option):
+        import importlib
+        import typer.main
+        app_obj = importlib.import_module(module).app
+        assert option in _option_names(app_obj, command_name)
+        click_obj = typer.main.get_command(app_obj)
+        if command_name is not None:
+            click_obj = click_obj.commands[command_name]
+        param = next(p for p in click_obj.params if option in p.opts)
+        assert param.default is None
+
+    @pytest.mark.parametrize("module,command_name", [
+        ("mliprun.cli.commands.md", None),
+        ("mliprun.cli.commands.freq", "run"),
+        ("mliprun.cli.commands.autoneb", None),
+        ("mliprun.cli.commands.benchmark", None),
+    ], ids=["md", "freq", "autoneb", "benchmark"])
+    def test_not_declared_on_unsupported_commands(self, module, command_name):
+        import importlib
+        app_obj = importlib.import_module(module).app
+        assert "--aqcat-spin" not in _option_names(app_obj, command_name)
+
+
 class TestOptParamsRecordsTheTask:
     def test_task_written_for_a_sevennet_run(self, tmp_path):
         from mliprun.cli.commands.optimize import _write_params

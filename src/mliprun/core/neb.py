@@ -93,6 +93,12 @@ class CustomNEB:
         Name of the log file for NEB iteration logging.
     device : str
         Compute device for the MLIP calculator ('cpu' or 'cuda').
+    aqcat_spin : str, optional
+        ``'on'`` or ``'off'`` for the AQCat25-EV2 models (``aqcat25-*``).
+        Required for them, with no default: spin on versus off changes the
+        predicted energy by up to several eV.
+    aqcat_fidelity : str, optional
+        ``'high'`` (used when None) or ``'low'`` for the AQCat25-EV2 models.
     """
 
     def __init__(
@@ -111,6 +117,8 @@ class CustomNEB:
         relax_atoms: Optional[list[int]] = None,
         logfile: str = "neb.log",
         device: str = "cpu",
+        aqcat_spin: Optional[str] = None,
+        aqcat_fidelity: Optional[str] = None,
     ) -> None:
         self.initial = initial
         final.set_cell(initial.get_cell(), scale_atoms=True)
@@ -123,6 +131,8 @@ class CustomNEB:
         self.uma_task = uma_task
         self.mace_head = mace_head
         self.sevennet_task = sevennet_task
+        self.aqcat_spin = aqcat_spin
+        self.aqcat_fidelity = aqcat_fidelity
         self.device = device
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -167,6 +177,8 @@ class CustomNEB:
             "UMA task": ("uma_task", str),
             "MACE head": ("mace_head", str),
             "SevenNet task": ("sevennet_task", str),
+            "AQCat spin": ("aqcat_spin", str),
+            "AQCat fidelity": ("aqcat_fidelity", str),
             "Device": ("device", str),
             "Initial": ("initial", str),
             "Final": ("final", str),
@@ -240,6 +252,8 @@ class CustomNEB:
         neb_optimizer: Optional[str] = None,
         neb_max_steps: Optional[int] = None,
         device: Optional[str] = None,
+        aqcat_spin: Optional[str] = None,
+        aqcat_fidelity: Optional[str] = None,
     ) -> tuple["CustomNEB", dict]:
         """Load a CustomNEB instance from existing restart files.
 
@@ -247,7 +261,7 @@ class CustomNEB:
         ----------
         output_dir : str or Path
             Directory containing A2B_full.traj and neb_parameters.txt.
-        mlip, uma_task, mace_head, sevennet_task, fmax, logfile, k, climb, neb_optimizer, neb_max_steps
+        mlip, uma_task, mace_head, sevennet_task, fmax, logfile, k, climb, neb_optimizer, neb_max_steps, aqcat_spin, aqcat_fidelity
             Optional overrides for the corresponding saved parameters.
 
         Returns
@@ -304,6 +318,9 @@ class CustomNEB:
         # task has no default, and inventing one on restart would resume the
         # band on a different energy zero (CANON C3).
         sevennet_task = sevennet_task or params.get("sevennet_task")
+        # Same rule for the AQCat spin: no default, never invented.
+        aqcat_spin = aqcat_spin or params.get("aqcat_spin")
+        aqcat_fidelity = aqcat_fidelity or params.get("aqcat_fidelity")
         fmax = fmax if fmax is not None else params["fmax"]
         logfile = logfile or params.get("log", "neb.log")
         device = device if device is not None else params.get("device", "cpu")
@@ -320,6 +337,8 @@ class CustomNEB:
         instance.uma_task = uma_task
         instance.mace_head = mace_head
         instance.sevennet_task = sevennet_task
+        instance.aqcat_spin = aqcat_spin
+        instance.aqcat_fidelity = aqcat_fidelity
         instance.device = device
         instance.output_dir = output_dir
         instance.logfile = logfile
@@ -343,7 +362,9 @@ class CustomNEB:
 
     def setup_calculator(self, model: Optional[str] = None, uma_task: Optional[str] = None,
                          mace_head: Optional[str] = None,
-                         sevennet_task: Optional[str] = None):
+                         sevennet_task: Optional[str] = None,
+                         aqcat_spin: Optional[str] = None,
+                         aqcat_fidelity: Optional[str] = None):
         """Create and return an MLIP calculator.
 
         Parameters
@@ -357,6 +378,9 @@ class CustomNEB:
             (default: ``self.mace_head``).
         sevennet_task : str, optional
             SevenNet inference task (default: ``self.sevennet_task``).
+        aqcat_spin, aqcat_fidelity : str, optional
+            AQCat25-EV2 spin and fidelity (default: ``self.aqcat_spin`` /
+            ``self.aqcat_fidelity``).
 
         Returns
         -------
@@ -365,16 +389,26 @@ class CustomNEB:
         Raises
         ------
         ValueError
-            If a multi-task SevenNet model is requested with no task.
+            If a multi-task SevenNet model is requested with no task, or an
+            AQCat25-EV2 model with no spin.
         """
         model = model or self.mlip
         uma_task = uma_task or self.uma_task
         mace_head = mace_head or getattr(self, "mace_head", None)
         sevennet_task = sevennet_task or getattr(self, "sevennet_task", None)
+        aqcat_spin = aqcat_spin or getattr(self, "aqcat_spin", None)
+        aqcat_fidelity = aqcat_fidelity or getattr(self, "aqcat_fidelity", None)
 
         device = getattr(self, "device", "cpu")
 
-        if model.startswith("7net"):
+        if model.startswith("aqcat25-"):
+            # One builder for this class and build_calculator: it carries the
+            # spin guard, the cpu/cuda limit and the one-flag-set-per-process
+            # rule, which every NEB image's calculator must share.
+            from mliprun.cli.utils import _build_aqcat_calculator
+            return _build_aqcat_calculator(model, aqcat_spin, aqcat_fidelity,
+                                           device)
+        elif model.startswith("7net"):
             # Table lookup and the guard come first, so the error is raised
             # at the boundary even when sevenn is not installed.
             from mliprun.cli.utils import _SEVENNET_MODELS
@@ -737,6 +771,14 @@ class CustomNEB:
         list[ase.Atoms]
             Optimized NEB images.
         """
+        aqcat_spin = getattr(self, "aqcat_spin", None)
+        aqcat_fidelity = getattr(self, "aqcat_fidelity", None)
+        # Only for an AQCat tag, so every other NEB record keeps its
+        # parameter set unchanged.
+        aqcat_parameters = (
+            {"aqcat_spin": aqcat_spin,
+             "aqcat_fidelity": aqcat_fidelity or "high"}
+            if str(self.mlip).startswith("aqcat25-") else {})
         record = RunRecord.begin(
             self.output_dir,
             command="neb",
@@ -744,6 +786,7 @@ class CustomNEB:
             parameters={"num_images": self.num_images,
                         "uma_task": self.uma_task,
                         "sevennet_task": getattr(self, "sevennet_task", None),
+                        **aqcat_parameters,
                         "interp_fmax": self.interp_fmax,
                         "interp_steps": self.interp_steps},
             inputs={"n_images": len(self.images),
@@ -760,6 +803,8 @@ class CustomNEB:
                 # inferred). An unset attribute is recorded as unknown.
                 mace_head=getattr(self, "mace_head", None),
                 sevennet_task=getattr(self, "sevennet_task", None),
+                aqcat_spin=aqcat_spin,
+                aqcat_fidelity=aqcat_fidelity,
             ),
             run_context=run_context,
             # k, climb, max_steps, the optimizer, and fmax are arguments of
@@ -911,6 +956,12 @@ class CustomNEB:
             When omitted the record still gets written, with every parameter
             tagged ``unspecified``.
         """
+        if str(self.mlip).startswith("aqcat25-"):
+            from mliprun.cli.utils import AQCAT_UNSUPPORTED_MESSAGE
+            raise ValueError(
+                f"{AQCAT_UNSUPPORTED_MESSAGE}; AutoNEB cannot run "
+                f"'{self.mlip}'.")
+
         if self.relax_atoms is not None:
             logger.warning("AutoNEB with relax_atoms (highly-constrained mode) may not work as expected.")
 

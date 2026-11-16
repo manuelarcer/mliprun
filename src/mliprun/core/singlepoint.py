@@ -90,6 +90,8 @@ def run_singlepoint(
     committee=None,
     committee_config=None,
     uncertainty_threshold: Optional[float] = None,
+    aqcat_spin: Optional[str] = None,
+    aqcat_fidelity: Optional[str] = None,
 ) -> dict:
     """Evaluate ``atoms`` once and write the results.
 
@@ -136,6 +138,9 @@ def run_singlepoint(
     uncertainty_threshold : float, optional
         No default, matching ``run_optimization``: without one, sigma is
         reported and no verdict asserted.
+    aqcat_spin, aqcat_fidelity : str, optional
+        AQCat25-EV2 spin and fidelity, recorded in the run record when
+        ``model_name`` is an ``aqcat25-*`` tag (fidelity as resolved).
 
     Returns
     -------
@@ -187,6 +192,8 @@ def run_singlepoint(
                        else committee_config.as_provenance(
                            measured_versions=getattr(
                                committee, "member_versions", None))),
+            aqcat_spin=aqcat_spin,
+            aqcat_fidelity=aqcat_fidelity,
         ),
         run_context=run_context,
     )

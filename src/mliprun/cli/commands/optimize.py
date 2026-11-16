@@ -16,6 +16,8 @@ from mliprun.cli.committee_session import (
     started_committee,
 )
 from mliprun.cli.utils import (
+    AQCAT_FIDELITY_HELP,
+    AQCAT_SPIN_HELP,
     DEVICE_HELP,
     MACE_HEAD_HELP,
     MLIP_HELP,
@@ -23,8 +25,12 @@ from mliprun.cli.utils import (
     UMA_TASK_HELP,
     _resolve_device,
     build_calculator,
+    check_aqcat_optimize,
     detect_mlip,
+    echo_aqcat_settings,
+    is_aqcat_tag,
     param_sources_from_ctx,
+    resolve_aqcat_fidelity,
     setup_calculator,
     validate_mlip,
     SEVENNET_TASK_HELP,
@@ -54,6 +60,15 @@ def _find_input_structure(subdir: Path, pattern: str) -> Path:
             f"narrow --input-name to pick one"
         )
     return candidates[0]
+
+
+def _refuse_aqcat_limits(mlip, optimizer, relax_cell) -> None:
+    """Stop before any model loads if the AQCat model cannot do this run."""
+    try:
+        check_aqcat_optimize(mlip, optimizer, relax_cell)
+    except ValueError as exc:
+        typer.echo(f"❌ {exc}")
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -104,6 +119,8 @@ def run(
              "spread band on the primary y-axis, max force with its "
              "sigma_max_free band on the secondary, against the fmax target. "
              "Requires --committee. Independent of --plot."),
+    aqcat_spin: str = typer.Option(None, help=AQCAT_SPIN_HELP),
+    aqcat_fidelity: str = typer.Option(None, help=AQCAT_FIDELITY_HELP),
 ):
     """
     Run geometry optimization using a supported MLIP model.
@@ -139,10 +156,13 @@ def run(
             mlip = detect_mlip()
             typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
             # An auto-detected tag still has to satisfy its own task rules.
-            validate_mlip(mlip, sevennet_task, uma_task, mace_head)
+            validate_mlip(mlip, sevennet_task, uma_task, mace_head,
+                          aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
         else:
-            validate_mlip(mlip, sevennet_task, uma_task, mace_head)
+            validate_mlip(mlip, sevennet_task, uma_task, mace_head,
+                          aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
             typer.echo(f"🧠 Using MLIP: {mlip}")
+        _refuse_aqcat_limits(mlip, optimizer, relax_cell)
 
     # Rejected rather than ignored: a single model has no disagreement to
     # draw, and silently writing nothing leaves the user waiting for a figure
@@ -182,9 +202,12 @@ def run(
                 typer.echo(f"   MACE head: {mace_head}")
             if mlip.startswith("7net"):
                 typer.echo(f"   SevenNet task: {sevennet_task}")
+            echo_aqcat_settings(mlip, aqcat_spin, aqcat_fidelity)
             atoms = setup_calculator(atoms, mlip, uma_task, device=device,
                                      mace_head=mace_head,
-                                     sevennet_task=sevennet_task)
+                                     sevennet_task=sevennet_task,
+                                     aqcat_spin=aqcat_spin,
+                                     aqcat_fidelity=aqcat_fidelity)
 
         # Run optimization
         typer.echo(f"\n🔧 Optimizer: {optimizer.upper()}")
@@ -224,6 +247,8 @@ def run(
             committee=committee_calc,
             committee_config=committee_config,
             uncertainty_threshold=uncertainty_threshold,
+            aqcat_spin=aqcat_spin,
+            aqcat_fidelity=aqcat_fidelity,
         )
 
     # Save parameters
@@ -232,7 +257,8 @@ def run(
                   max_steps, converged, output_dir,
                   sevennet_task=sevennet_task,
                   committee_config=committee_config,
-                  uncertainty_threshold=uncertainty_threshold)
+                  uncertainty_threshold=uncertainty_threshold,
+                  aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
 
     # Print output summary
     typer.echo("\n✅ Optimization complete. Output files:")
@@ -298,6 +324,8 @@ def batch(
         help="Skip subdirectories that already contain a CONTCAR (resume a partial batch)."),
     verbose: bool = typer.Option(False, help="Show per-structure optimization progress table"),
     plot: bool = typer.Option(False, "--plot/--no-plot", help=PLOT_HELP),
+    aqcat_spin: str = typer.Option(None, help=AQCAT_SPIN_HELP),
+    aqcat_fidelity: str = typer.Option(None, help=AQCAT_FIDELITY_HELP),
 ):
     """
     Relax a series of structures, loading the MLIP model only once.
@@ -323,10 +351,13 @@ def batch(
         mlip = detect_mlip()
         typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
         # An auto-detected tag still has to satisfy its own task rules.
-        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head,
+                      aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
     else:
-        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head,
+                      aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
         typer.echo(f"🧠 Using MLIP: {mlip}")
+    _refuse_aqcat_limits(mlip, optimizer, relax_cell)
 
     subdirs = sorted(d for d in parent.iterdir() if d.is_dir())
     if not subdirs:
@@ -350,8 +381,11 @@ def batch(
         typer.echo(f"   MACE head: {mace_head}")
     if mlip.startswith("7net"):
         typer.echo(f"   SevenNet task: {sevennet_task}")
+    echo_aqcat_settings(mlip, aqcat_spin, aqcat_fidelity)
     calc = build_calculator(mlip, uma_task, device=device, mace_head=mace_head,
-                            sevennet_task=sevennet_task)
+                            sevennet_task=sevennet_task,
+                            aqcat_spin=aqcat_spin,
+                            aqcat_fidelity=aqcat_fidelity)
 
     typer.echo(f"\n🔧 Optimizer: {optimizer.upper()} | fmax={fmax} eV/Å | max_steps={max_steps}")
     typer.echo(f"   {len(subdirs)} subdirectories under {parent.resolve()}\n")
@@ -409,6 +443,8 @@ def batch(
                 uma_task=uma_task,
                 mace_head=mace_head,
                 sevennet_task=sevennet_task,
+                aqcat_spin=aqcat_spin,
+                aqcat_fidelity=aqcat_fidelity,
             )
             walltime = time.perf_counter() - t0
             energy = atoms.get_potential_energy()
@@ -416,7 +452,9 @@ def batch(
             _write_params(subdir / "opt_params.txt", mlip, uma_task, mace_head,
                           device, relax_cell, structure.name, optimizer, fmax,
                           max_steps, converged, subdir,
-                          sevennet_task=sevennet_task)
+                          sevennet_task=sevennet_task,
+                          aqcat_spin=aqcat_spin,
+                          aqcat_fidelity=aqcat_fidelity)
 
             status = "converged" if converged else "not_converged"
             icon = "✅" if converged else "⚠️"
@@ -453,7 +491,8 @@ def batch(
 def _write_params(param_file, mlip, uma_task, mace_head, device, relax_cell,
                   structure_name, optimizer, fmax, max_steps, converged,
                   output_dir, sevennet_task=None, committee_config=None,
-                  uncertainty_threshold=None):
+                  uncertainty_threshold=None, aqcat_spin=None,
+                  aqcat_fidelity=None):
     """Write the per-structure opt_params.txt (matches ``optimize run``)."""
     with open(param_file, "w", encoding="utf-8") as f:
         f.write("Geometry Optimization Parameters\n")
@@ -482,6 +521,10 @@ def _write_params(param_file, mlip, uma_task, mace_head, device, relax_cell,
             f.write(f"MACE head:         {mace_head}\n")
         if mlip.startswith("7net"):
             f.write(f"SevenNet task:     {sevennet_task}\n")
+        if is_aqcat_tag(mlip):
+            f.write(f"AQCat spin:        {aqcat_spin}\n")
+            f.write(f"AQCat fidelity:    "
+                    f"{resolve_aqcat_fidelity(aqcat_fidelity)}\n")
         f.write(f"Device:            {device}\n")
         f.write(f"Relax cell:        {relax_cell}\n")
         f.write(f"Structure:         {structure_name}\n")

@@ -14,6 +14,7 @@ from mliprun.cli.utils import (
     CHGNET_AVAILABLE,
     SEVENNET_TASK_HELP,
     UMA_TASK_HELP,
+    reject_aqcat_unsupported,
     setup_calculator,
 )
 
@@ -63,6 +64,10 @@ def run(
 
     if models:
         model_list = [m.strip() for m in models.split(",") if m.strip()]
+        # The default list never includes them; an explicit request is
+        # refused up front rather than recorded as a per-model failure.
+        for model in model_list:
+            reject_aqcat_unsupported(model, "benchmark")
     else:
         model_list = _available_models(sevennet_task, uma_task)
         if FAIRCHEM_AVAILABLE and uma_task is None:
