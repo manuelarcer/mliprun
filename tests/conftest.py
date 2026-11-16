@@ -26,10 +26,11 @@ def pytest_configure(config):
 # ---------------------------------------------------------------------------
 
 def _is_fairchem_available() -> bool:
+    """UMA needs fairchem-core 2.x; the 1.x line is the AQCat25-EV2 env."""
     try:
         from importlib.metadata import distribution
-        distribution("fairchem-core")
-        return True
+        version = distribution("fairchem-core").version
+        return int(version.split(".", 1)[0]) >= 2
     except Exception:
         return False
 
@@ -71,6 +72,19 @@ def pytest_collection_modifyitems(items):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _reset_aqcat_process_flags(monkeypatch):
+    """Forget the AQCat25-EV2 (spin, fidelity) pair between tests.
+
+    `build_calculator` remembers the first pair built in a process, because
+    upstream patches a class attribute on every build. Tests share one
+    process, so without this reset the first AQCat test would fix the pair
+    for every later one.
+    """
+    monkeypatch.setattr("mliprun.cli.utils._AQCAT_FLAGS_IN_PROCESS", None,
+                        raising=False)
+
 
 @pytest.fixture
 def simple_atoms():

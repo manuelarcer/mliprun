@@ -531,3 +531,413 @@ class TestBuildCalculatorGuardsTheHead:
         with patch("mliprun.cli.utils._load_mace_mp", return_value=fake):
             build_calculator("mace", device="cpu")
         fake.assert_called_once_with(model="medium", device="cpu")
+
+
+# ---------------------------------------------------------------------------
+# AQCat25-EV2 (SandboxAQ EquiformerV2 checkpoints on fairchem-core 1.x)
+# ---------------------------------------------------------------------------
+
+_MIDFILM = "aqcat25-ev2-midfilm"
+_INFILM = "aqcat25-ev2-infilm"
+
+
+class TestAqcatTables:
+    def test_two_tags_map_to_the_pinned_checkpoints(self):
+        from mliprun.cli.utils import _AQCAT_MODELS
+        assert _AQCAT_MODELS == {
+            _MIDFILM: "checkpoints_aqcat_ev2/"
+                      "ev2-in+midFiLM-AQCat25+OC20-20M_20251008_223220.pt",
+            _INFILM: "checkpoints_aqcat_ev2/"
+                     "ev2-inFiLM-OC20-ft-AQCat25+OC20-20M_20251008_223143.pt",
+        }
+
+    def test_repo_and_revision_are_pinned(self):
+        from mliprun.cli.utils import _AQCAT_REPO_ID, _AQCAT_REVISION
+        assert _AQCAT_REPO_ID == "SandboxAQ/aqcat25-ev2"
+        assert _AQCAT_REVISION == "2a7d5574aa7f0addc0678080eb7621a47a892abd"
+
+    def test_is_aqcat_tag(self):
+        from mliprun.cli.utils import is_aqcat_tag
+        assert is_aqcat_tag(_MIDFILM) and is_aqcat_tag(_INFILM)
+        assert not is_aqcat_tag("uma-s-1p2")
+        assert not is_aqcat_tag("mace")
+        assert not is_aqcat_tag(None)
+
+    def test_recipe_points_at_the_aqcat_recipe(self):
+        from mliprun.cli.utils import _recipe_for_tag
+        assert _recipe_for_tag(_MIDFILM) == "aqcat25.md#aqcat25-ev2-midfilm"
+        assert _recipe_for_tag(_INFILM) == "aqcat25.md#aqcat25-ev2-infilm"
+        assert _recipe_for_tag("aqcat25-future") == "aqcat25.md"
+
+
+class TestFairchemMajorVersion:
+    """One distribution name, two families: 2.x is UMA, 1.x is AQCat."""
+
+    @pytest.mark.parametrize("version,expected", [
+        ("2.19.0", 2), ("1.10.0", 1), ("1.10.1.dev3+g1234", 1),
+        ("garbage", None), ("", None), (None, None),
+    ], ids=["v2", "v1", "v1_dev", "garbage", "empty", "none"])
+    def test_major_version_parsing(self, version, expected):
+        from mliprun.cli.utils import _major_version
+        assert _major_version(version) == expected
+
+    def _check(self, func_name, version):
+        from types import SimpleNamespace
+        import mliprun.cli.utils as u
+        func = getattr(u, func_name)
+        func.cache_clear()
+        try:
+            with patch("mliprun.cli.utils.distribution",
+                       return_value=SimpleNamespace(version=version)):
+                return func()
+        finally:
+            func.cache_clear()
+
+    def test_fairchem_2_is_uma_not_aqcat(self):
+        assert self._check("_check_fairchem", "2.19.0") is True
+        assert self._check("_check_aqcat", "2.19.0") is False
+
+    def test_fairchem_1_is_aqcat_not_uma(self):
+        assert self._check("_check_fairchem", "1.10.0") is False
+        assert self._check("_check_aqcat", "1.10.0") is True
+
+    def test_unparseable_version_is_neither(self):
+        assert self._check("_check_fairchem", "weird") is False
+        assert self._check("_check_aqcat", "weird") is False
+
+    def test_absent_distribution_is_neither(self):
+        import mliprun.cli.utils as u
+        from importlib.metadata import PackageNotFoundError
+        for name in ("_check_fairchem", "_check_aqcat"):
+            func = getattr(u, name)
+            func.cache_clear()
+            try:
+                with patch("mliprun.cli.utils.distribution",
+                           side_effect=PackageNotFoundError("fairchem-core")):
+                    assert func() is False
+            finally:
+                func.cache_clear()
+
+
+@patch("mliprun.cli.utils.FAIRCHEM_AVAILABLE", False)
+@patch("mliprun.cli.utils.MACE_AVAILABLE", False)
+@patch("mliprun.cli.utils.SEVENN_AVAILABLE", False)
+@patch("mliprun.cli.utils.CHGNET_AVAILABLE", False)
+class TestDetectMlipInAqcatOnlyEnv:
+    @patch("mliprun.cli.utils.AQCAT_AVAILABLE", True)
+    def test_auto_names_the_tags_and_the_spin_flag(self):
+        with pytest.raises(typer.Exit) as exc:
+            detect_mlip()
+        msg = str(exc.value.exit_code)
+        assert _MIDFILM in msg and _INFILM in msg
+        assert "--aqcat-spin" in msg
+        assert "No supported MLIP installed" not in msg
+
+    @patch("mliprun.cli.utils.AQCAT_AVAILABLE", False)
+    def test_nothing_installed_keeps_the_generic_message(self):
+        with pytest.raises(typer.Exit) as exc:
+            detect_mlip()
+        assert "No supported MLIP installed" in str(exc.value.exit_code)
+
+
+@patch("mliprun.cli.utils.AQCAT_AVAILABLE", True)
+class TestValidateAqcatOptions:
+    def test_spin_is_required_and_the_error_says_why(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip(_MIDFILM)
+        msg = str(exc.value.exit_code)
+        assert "--aqcat-spin" in msg
+        assert "several eV" in msg
+
+    @pytest.mark.parametrize("spin", ["on", "off"], ids=["spin_on", "spin_off"])
+    def test_valid_spin_passes_with_and_without_fidelity(self, spin):
+        validate_mlip(_MIDFILM, aqcat_spin=spin)
+        validate_mlip(_INFILM, aqcat_spin=spin, aqcat_fidelity="low")
+        validate_mlip(_INFILM, aqcat_spin=spin, aqcat_fidelity="high")
+
+    def test_invalid_spin_is_named(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip(_MIDFILM, aqcat_spin="yes")
+        assert "'yes'" in str(exc.value.exit_code)
+
+    def test_invalid_fidelity_is_named(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip(_MIDFILM, aqcat_spin="on", aqcat_fidelity="medium")
+        assert "'medium'" in str(exc.value.exit_code)
+
+    def test_unknown_aqcat_tag_lists_the_known_ones(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("aqcat25-ev2-plain", aqcat_spin="on")
+        msg = str(exc.value.exit_code)
+        assert _MIDFILM in msg and _INFILM in msg
+
+    def test_resolve_mlip_forwards_the_options(self):
+        assert resolve_mlip(_MIDFILM, aqcat_spin="off") == _MIDFILM
+        with pytest.raises(typer.Exit):
+            resolve_mlip(_MIDFILM)
+
+
+class TestAqcatOptionsOnOtherModels:
+    @patch("mliprun.cli.utils.MACE_AVAILABLE", True)
+    def test_spin_on_a_non_aqcat_tag_is_rejected(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("mace", aqcat_spin="on")
+        assert "--aqcat-spin" in str(exc.value.exit_code)
+
+    @patch("mliprun.cli.utils.CHGNET_AVAILABLE", True)
+    def test_fidelity_on_a_non_aqcat_tag_is_rejected(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("chgnet", aqcat_fidelity="low")
+        assert "--aqcat-fidelity" in str(exc.value.exit_code)
+
+    @patch("mliprun.cli.utils.AQCAT_AVAILABLE", False)
+    def test_unavailable_points_at_the_recipe(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip(_MIDFILM, aqcat_spin="on")
+        assert "aqcat25.md" in str(exc.value.exit_code)
+
+    def test_unknown_tag_message_names_the_aqcat_tags(self):
+        with pytest.raises(typer.Exit) as exc:
+            validate_mlip("nonexistent-model")
+        assert _MIDFILM in str(exc.value.exit_code)
+
+
+class TestRejectAqcatUnsupported:
+    def test_rejects_with_the_shared_message(self):
+        from mliprun.cli.utils import reject_aqcat_unsupported
+        with pytest.raises(typer.Exit) as exc:
+            reject_aqcat_unsupported(_MIDFILM, "md")
+        msg = str(exc.value.exit_code)
+        assert ("AQCat25-EV2 models are supported in singlepoint, optimize "
+                "and neb only for now") in msg
+        assert "md" in msg
+
+    def test_other_tags_pass(self):
+        from mliprun.cli.utils import reject_aqcat_unsupported
+        assert reject_aqcat_unsupported("mace", "md") is None
+        assert reject_aqcat_unsupported("auto", "md") is None
+
+
+class TestCheckAqcatOptimize:
+    def test_relax_cell_is_refused_for_lack_of_stress(self):
+        from mliprun.cli.utils import check_aqcat_optimize
+        with pytest.raises(ValueError) as exc:
+            check_aqcat_optimize(_MIDFILM, "bfgs", relax_cell=True)
+        assert "stress" in str(exc.value)
+
+    @pytest.mark.parametrize("optimizer", ["bfgsls", "GPMin"],
+                             ids=["line_search", "gaussian_process"])
+    def test_gradient_assuming_optimizers_are_refused(self, optimizer):
+        from mliprun.cli.utils import check_aqcat_optimize
+        with pytest.raises(ValueError) as exc:
+            check_aqcat_optimize(_INFILM, optimizer, relax_cell=False)
+        assert "gradient" in str(exc.value)
+
+    def test_plain_relaxation_passes_and_other_models_are_untouched(self):
+        from mliprun.cli.utils import check_aqcat_optimize
+        assert check_aqcat_optimize(_MIDFILM, "fire", relax_cell=False) is None
+        assert check_aqcat_optimize("mace", "gpmin", relax_cell=True) is None
+
+
+class TestBuildAqcatCalculator:
+    """patched_calc and the checkpoint download are patched: no fairchem,
+    no network."""
+
+    def _build(self, *args, **kwargs):
+        from unittest.mock import MagicMock
+        fake = MagicMock(name="patched_calc")
+        with patch("mliprun.cli.utils._load_aqcat_calc", return_value=fake), \
+             patch("mliprun.cli.utils._ensure_aqcat_checkpoint",
+                   return_value="/cache/ckpt.pt") as ensure:
+            build_calculator(*args, **kwargs)
+        return fake, ensure
+
+    def test_spin_on_high_fidelity_on_cpu(self):
+        fake, ensure = self._build(_MIDFILM, device="cpu", aqcat_spin="on")
+        ensure.assert_called_once_with(_MIDFILM)
+        fake.assert_called_once_with("/cache/ckpt.pt", is_spin_off=False,
+                                     is_low_fi=False, cpu=True)
+
+    def test_spin_off_low_fidelity_on_cuda(self):
+        fake, _ = self._build(_INFILM, device="cuda", aqcat_spin="off",
+                              aqcat_fidelity="low")
+        fake.assert_called_once_with("/cache/ckpt.pt", is_spin_off=True,
+                                     is_low_fi=True, cpu=False)
+
+    def test_setup_calculator_forwards_the_options(self):
+        from unittest.mock import MagicMock
+        from ase.build import bulk
+        from mliprun.cli.utils import setup_calculator
+        fake = MagicMock(name="patched_calc")
+        with patch("mliprun.cli.utils._load_aqcat_calc", return_value=fake), \
+             patch("mliprun.cli.utils._ensure_aqcat_checkpoint",
+                   return_value="/c.pt"):
+            atoms = setup_calculator(bulk("Cu"), _MIDFILM, device="cpu",
+                                     aqcat_spin="off")
+        assert atoms.calc is fake.return_value
+        fake.assert_called_once_with("/c.pt", is_spin_off=True,
+                                     is_low_fi=False, cpu=True)
+
+    def test_missing_spin_raises_before_loading_anything(self):
+        from unittest.mock import MagicMock
+        loader = MagicMock()
+        with patch("mliprun.cli.utils._load_aqcat_calc", loader):
+            with pytest.raises(ValueError) as exc:
+                build_calculator(_MIDFILM, device="cpu")
+        assert "aqcat_spin" in str(exc.value)
+        assert "several eV" in str(exc.value)
+        loader.assert_not_called()
+
+    def test_invalid_values_raise(self):
+        with pytest.raises(ValueError):
+            build_calculator(_MIDFILM, device="cpu", aqcat_spin="maybe")
+        with pytest.raises(ValueError):
+            build_calculator(_MIDFILM, device="cpu", aqcat_spin="on",
+                             aqcat_fidelity="medium")
+        with pytest.raises(ValueError):
+            build_calculator("aqcat25-ev2-plain", device="cpu",
+                             aqcat_spin="on")
+
+    def test_device_other_than_cpu_or_cuda_raises(self):
+        with pytest.raises(ValueError) as exc:
+            build_calculator(_MIDFILM, device="mps", aqcat_spin="on")
+        assert "mps" in str(exc.value)
+
+    def test_same_flag_pair_twice_is_allowed(self):
+        fake, _ = self._build(_MIDFILM, device="cpu", aqcat_spin="on")
+        fake2, _ = self._build(_INFILM, device="cpu", aqcat_spin="on",
+                               aqcat_fidelity="high")
+        assert fake.call_count == 1 and fake2.call_count == 1
+
+    def test_a_different_flag_pair_in_one_process_raises(self):
+        self._build(_MIDFILM, device="cpu", aqcat_spin="on")
+        with pytest.raises(ValueError) as exc:
+            self._build(_MIDFILM, device="cpu", aqcat_spin="off")
+        assert "process" in str(exc.value)
+
+    def test_dispatch_goes_through_the_shared_helper(self):
+        from unittest.mock import MagicMock
+        helper = MagicMock(return_value="calc")
+        with patch("mliprun.cli.utils._build_aqcat_calculator", helper):
+            assert build_calculator(_INFILM, device="cpu", aqcat_spin="on",
+                                    aqcat_fidelity="low") == "calc"
+        helper.assert_called_once_with(_INFILM, "on", "low", "cpu")
+
+
+class TestAqcatLoaderAndCheckpoint:
+    def test_loader_without_the_patch_points_at_the_recipe(self, monkeypatch):
+        import sys
+        from mliprun.cli.utils import _load_aqcat_calc
+        _load_aqcat_calc.cache_clear()
+        # A None entry makes `import` raise ImportError for that name.
+        monkeypatch.setitem(
+            sys.modules, "fairchem.core.common.relaxation.ase_utils", None)
+        try:
+            with pytest.raises(ImportError) as exc:
+                _load_aqcat_calc()
+        finally:
+            _load_aqcat_calc.cache_clear()
+        assert "SandboxAQ" in str(exc.value)
+        assert "aqcat25.md" in str(exc.value)
+
+    def test_loader_returns_patched_calc(self, monkeypatch):
+        import sys
+        import types
+        from mliprun.cli.utils import _load_aqcat_calc
+        module = types.ModuleType("fairchem.core.common.relaxation.ase_utils")
+        module.patched_calc = object()
+        monkeypatch.setitem(
+            sys.modules, "fairchem.core.common.relaxation.ase_utils", module)
+        _load_aqcat_calc.cache_clear()
+        try:
+            assert _load_aqcat_calc() is module.patched_calc
+        finally:
+            _load_aqcat_calc.cache_clear()
+
+    def _fake_hub(self, monkeypatch, download):
+        import sys
+        import types
+        hub = types.ModuleType("huggingface_hub")
+        hub.hf_hub_download = download
+        monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+
+    def test_checkpoint_download_uses_the_pinned_revision(self, monkeypatch):
+        from unittest.mock import MagicMock
+        from mliprun.cli.utils import _ensure_aqcat_checkpoint
+        download = MagicMock(return_value="/hf/cache/file.pt")
+        self._fake_hub(monkeypatch, download)
+        assert _ensure_aqcat_checkpoint(_INFILM) == "/hf/cache/file.pt"
+        download.assert_called_once_with(
+            repo_id="SandboxAQ/aqcat25-ev2",
+            filename="checkpoints_aqcat_ev2/"
+                     "ev2-inFiLM-OC20-ft-AQCat25+OC20-20M_20251008_223143.pt",
+            revision="2a7d5574aa7f0addc0678080eb7621a47a892abd")
+
+    def test_gated_repo_error_points_at_the_recipe(self, monkeypatch):
+        from mliprun.cli.utils import _ensure_aqcat_checkpoint
+
+        class GatedRepoError(Exception):
+            pass
+
+        def download(**kwargs):
+            raise GatedRepoError("401 Client Error")
+
+        self._fake_hub(monkeypatch, download)
+        with pytest.raises(RuntimeError) as exc:
+            _ensure_aqcat_checkpoint(_MIDFILM)
+        assert "aqcat25.md" in str(exc.value)
+        assert "hf auth login" in str(exc.value)
+
+    def test_http_403_is_treated_as_an_access_failure(self, monkeypatch):
+        from types import SimpleNamespace
+        from mliprun.cli.utils import _ensure_aqcat_checkpoint
+
+        class HfHubHTTPError(Exception):
+            response = SimpleNamespace(status_code=403)
+
+        def download(**kwargs):
+            raise HfHubHTTPError("forbidden")
+
+        self._fake_hub(monkeypatch, download)
+        with pytest.raises(RuntimeError) as exc:
+            _ensure_aqcat_checkpoint(_MIDFILM)
+        assert "aqcat25.md" in str(exc.value)
+
+    def test_other_download_errors_propagate_unchanged(self, monkeypatch):
+        from mliprun.cli.utils import _ensure_aqcat_checkpoint
+
+        def download(**kwargs):
+            raise OSError("disk full")
+
+        self._fake_hub(monkeypatch, download)
+        with pytest.raises(OSError, match="disk full"):
+            _ensure_aqcat_checkpoint(_MIDFILM)
+
+    def test_unknown_tag_raises(self):
+        from mliprun.cli.utils import _ensure_aqcat_checkpoint
+        with pytest.raises(ValueError):
+            _ensure_aqcat_checkpoint("aqcat25-ev2-plain")
+
+    def test_missing_huggingface_hub_points_at_the_recipe(self, monkeypatch):
+        import sys
+        from mliprun.cli.utils import _ensure_aqcat_checkpoint
+        monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+        with pytest.raises(ImportError) as exc:
+            _ensure_aqcat_checkpoint(_MIDFILM)
+        assert "aqcat25.md" in str(exc.value)
+
+
+class TestEchoAqcatSettings:
+    def test_echoes_spin_resolved_fidelity_and_the_caveat(self, capsys):
+        from mliprun.cli.utils import echo_aqcat_settings
+        echo_aqcat_settings(_MIDFILM, "on", None)
+        out = capsys.readouterr().out
+        assert "AQCat spin: on" in out
+        assert "AQCat fidelity: high" in out
+        assert "adsorption energy" in out
+        assert "not the energy gradient" in out or "rather than the energy gradient" in out
+
+    def test_silent_for_other_models(self, capsys):
+        from mliprun.cli.utils import echo_aqcat_settings
+        echo_aqcat_settings("mace", "on", "low")
+        assert capsys.readouterr().out == ""
