@@ -210,6 +210,20 @@ class TestRejections:
         with pytest.raises(CommitteeConfigError, match="at least two"):
             load_committee(path)
 
+    def test_an_aqcat_member_is_refused(self, tmp_path, fake_env):
+        a, b = fake_env("a"), fake_env("b")
+        path = _write(tmp_path, f"""
+            members:
+              - {{env: {a}, mlip: aqcat25-ev2-midfilm}}
+              - {{env: {b}, mlip: mace}}
+        """)
+        with pytest.raises(CommitteeConfigError) as exc:
+            load_committee(path)
+        msg = str(exc.value)
+        assert "member 0" in msg
+        assert ("AQCat25-EV2 models are supported in singlepoint, optimize "
+                "and neb only") in msg
+
     def test_an_unknown_member_key(self, tmp_path, fake_env):
         """Typo protection: a silently ignored 'gpus:' would send every
         member to the same device."""

@@ -244,6 +244,11 @@ def validate_calculator(calculator, symbols: Optional[set] = None,
         errors.append({"field": "calculator.name", "message": "required"})
         return norm, errors
     norm["name"] = name
+    if _utils().is_aqcat_tag(name):
+        errors.append({"field": "calculator.name", "message":
+                       f"{_utils().AQCAT_UNSUPPORTED_MESSAGE}; the web app "
+                       f"does not offer {name}."})
+        return norm, errors
     if catalog is not None:
         entries = list(catalog.get("calculators") or [])
         entry = next((e for e in entries if e.get("name") == name), None)
@@ -328,10 +333,15 @@ def _exit_message(exc) -> str:
 def check_mlip(spec: dict) -> None:
     """Run the package's ``validate_mlip`` for ``spec``; raise ``RuntimeError``.
 
-    No-op for ``emt``.
+    No-op for ``emt``. The AQCat25-EV2 tags are always refused: the web app
+    does not support them.
     """
     if spec.get("name") == "emt":
         return
+    if _utils().is_aqcat_tag(spec.get("name")):
+        raise RuntimeError(
+            f"{_utils().AQCAT_UNSUPPORTED_MESSAGE}; the web app does not "
+            f"offer {spec.get('name')}.")
     try:
         _utils().validate_mlip(spec["name"], sevennet_task=spec.get("sevennet_task"),
                                uma_task=spec.get("uma_task"),

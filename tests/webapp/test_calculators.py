@@ -12,17 +12,19 @@ from mliprun.cli import utils as cli_utils
 from mliprun.webapp import calculators
 
 
+_FLAGS = ("FAIRCHEM_AVAILABLE", "MACE_AVAILABLE", "SEVENN_AVAILABLE",
+          "CHGNET_AVAILABLE", "AQCAT_AVAILABLE")
+
+
 @pytest.fixture
 def nothing_installed(monkeypatch):
-    for flag in ("FAIRCHEM_AVAILABLE", "MACE_AVAILABLE", "SEVENN_AVAILABLE",
-                 "CHGNET_AVAILABLE"):
+    for flag in _FLAGS:
         monkeypatch.setattr(cli_utils, flag, False)
 
 
 @pytest.fixture
 def everything_installed(monkeypatch):
-    for flag in ("FAIRCHEM_AVAILABLE", "MACE_AVAILABLE", "SEVENN_AVAILABLE",
-                 "CHGNET_AVAILABLE"):
+    for flag in _FLAGS:
         monkeypatch.setattr(cli_utils, flag, True)
 
 
@@ -83,6 +85,35 @@ def test_uninstalled_known_tag_gets_install_hint(nothing_installed):
     assert "install recipe" in errs[0]["message"]
     _, errs = calculators.validate_calculator({"name": "nonsense"})
     assert "unknown calculator" in errs[0]["message"]
+
+
+_AQCAT_REFUSAL = ("AQCat25-EV2 models are supported in singlepoint, "
+                  "optimize and neb only")
+
+
+def test_aqcat_tags_are_never_offered(everything_installed):
+    names = [c["name"] for c in calculators.list_calculators()["calculators"]]
+    assert not any(name.startswith("aqcat25-") for name in names)
+
+
+def test_aqcat_only_env_defaults_to_emt(nothing_installed, monkeypatch):
+    monkeypatch.setattr(cli_utils, "AQCAT_AVAILABLE", True)
+    assert calculators.default_calculator() == "emt"
+
+
+def test_validate_calculator_refuses_aqcat(everything_installed):
+    _, errs = calculators.validate_calculator(
+        {"name": "aqcat25-ev2-midfilm", "device": "cpu"})
+    assert [e["field"] for e in errs] == ["calculator.name"]
+    assert _AQCAT_REFUSAL in errs[0]["message"]
+
+
+def test_make_calculator_refuses_aqcat(monkeypatch):
+    build = pytest.fail  # must never be reached
+    monkeypatch.setattr(cli_utils, "build_calculator", build)
+    with pytest.raises(RuntimeError, match="optimize and neb only"):
+        calculators.make_calculator({"name": "aqcat25-ev2-infilm",
+                                     "device": "cpu"})
 
 
 def test_make_calculator_emt():

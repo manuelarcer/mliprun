@@ -334,11 +334,18 @@ def _validate_head_task(index: int, mlip, uma_task, mace_head,
         return
 
     from mliprun.cli.utils import (
+        AQCAT_UNSUPPORTED_MESSAGE,
         _KNOWN_UMA_MODELS,
         _MACE_MH_HEADS,
         _SEVENNET_MODELS,
         _UMA_TASKS,
+        is_aqcat_tag,
     )
+
+    if is_aqcat_tag(mlip):
+        raise CommitteeConfigError(
+            f"member {index}: '{mlip}': {AQCAT_UNSUPPORTED_MESSAGE}, so it "
+            f"cannot be a committee member.")
 
     if mlip.startswith("7net"):
         if mlip not in _SEVENNET_MODELS:
