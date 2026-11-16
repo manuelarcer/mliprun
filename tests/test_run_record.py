@@ -388,18 +388,19 @@ class TestHeadProvenance:
 
 
 class TestSchemaVersion:
-    def test_schema_version_is_five(self):
+    def test_schema_version_is_six(self):
         """2 added uma_task/mace_head; 3 adds sevennet_task; 4 adds the
         committee block, because collect_provenance took a single
         mlip_model and a committee needs a list; 5 makes the uncertainty
         threshold opt-in, so a committee run with no threshold records
         threshold_source: "none" and flagged: null instead of a
-        manufactured fmax-derived verdict."""
-        assert SCHEMA_VERSION == 5
+        manufactured fmax-derived verdict; 6 adds aqcat_spin and
+        aqcat_fidelity for the AQCat25-EV2 models."""
+        assert SCHEMA_VERSION == 6
 
     def test_written_record_carries_the_new_version(self, tmp_path):
         _begin(tmp_path)
-        assert _read(tmp_path)["schema_version"] == 5
+        assert _read(tmp_path)["schema_version"] == 6
 
 
 class TestHeadInStageProvenance:
@@ -607,6 +608,86 @@ class TestSevenNetTaskProvenance:
         changed, new = _split_provenance(incoming, top)
         assert changed == {}
         assert new == {"sevennet_task": "mpa"}
+
+
+class TestAqcatProvenance:
+    """schema 6: the AQCat25-EV2 spin and fidelity join the head fields.
+
+    Spin on versus off moves the energy by up to several eV, so a record
+    without it cannot back an energy in any formula.
+    """
+
+    def test_aqcat_run_carries_spin_and_fidelity(self):
+        prov = collect_provenance(
+            mlip_model="aqcat25-ev2-midfilm", device_requested="cpu",
+            device_resolved="cpu", aqcat_spin="off", aqcat_fidelity="low",
+        )
+        assert prov["aqcat_spin"] == "off"
+        assert prov["aqcat_fidelity"] == "low"
+        assert prov["uma_task"] is None
+        assert prov["sevennet_task"] is None
+
+    def test_fidelity_is_recorded_as_resolved(self):
+        # Not given means upstream's default, high; the record says what ran.
+        prov = collect_provenance(
+            mlip_model="aqcat25-ev2-infilm", device_requested="auto",
+            device_resolved="cuda", aqcat_spin="on",
+        )
+        assert prov["aqcat_fidelity"] == "high"
+
+    def test_non_aqcat_run_nulls_both_fields(self):
+        prov = collect_provenance(
+            mlip_model="mace", device_requested="cpu",
+            device_resolved="cpu", aqcat_spin="on", aqcat_fidelity="low",
+        )
+        assert "aqcat_spin" in prov and prov["aqcat_spin"] is None
+        assert "aqcat_fidelity" in prov and prov["aqcat_fidelity"] is None
+
+    def test_package_resolves_to_fairchem_core(self):
+        from mliprun.core.run_record import _mlip_package
+        assert _mlip_package("aqcat25-ev2-midfilm")["name"] == "fairchem-core"
+
+    def test_spin_switch_between_stages_is_reported_as_changed(self):
+        top = {"mlip_model": "aqcat25-ev2-midfilm", "aqcat_spin": "on",
+               "aqcat_fidelity": "high"}
+        incoming = {"mlip_model": "aqcat25-ev2-midfilm", "aqcat_spin": "off",
+                    "aqcat_fidelity": "high"}
+        changed, new = _split_provenance(incoming, top)
+        assert changed == {"aqcat_spin": "off"}
+        assert new == {}
+
+    def test_absent_keys_in_a_schema_5_record_are_new_not_changed(self):
+        top = {"mlip_model": "mace", "sevennet_task": None}
+        incoming = {"mlip_model": "mace", "aqcat_spin": None,
+                    "aqcat_fidelity": None}
+        changed, new = _split_provenance(incoming, top)
+        assert changed == {}
+        assert new == {"aqcat_spin": None, "aqcat_fidelity": None}
+
+    def test_appending_to_a_schema_5_record_keeps_its_version(self, tmp_path):
+        # A schema-5 record has no aqcat keys; appending must neither claim
+        # schema 6 for it nor report the missing keys as a change.
+        legacy = {
+            "schema_version": 5, "command": "neb", "status": "converged",
+            "run": {"mode": "one-off", "batch": None}, "inputs": {},
+            "parameters": {},
+            "provenance": {"mlip_model": "mace", "uma_task": None,
+                           "mace_head": None, "sevennet_task": None},
+            "stages": [{"index": 0, "kind": "neb", "status": "converged"}],
+        }
+        (tmp_path / RECORD_FILENAME).write_text(json.dumps(legacy))
+        RunRecord.begin(
+            tmp_path, command="neb", stage_kind="neb-restart",
+            parameters={}, inputs={}, append=True,
+            provenance=collect_provenance(mlip_model="mace",
+                                          device_requested="cpu",
+                                          device_resolved="cpu"),
+        )
+        data = _read(tmp_path)
+        assert data["schema_version"] == 5
+        stage = data["stages"][1]
+        assert "aqcat_spin" not in stage.get("stage_provenance", {})
+        assert stage[NEW_FIELDS_KEY]["aqcat_spin"] is None
 
 
 class TestCommitteeProvenance:

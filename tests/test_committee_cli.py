@@ -152,7 +152,7 @@ class TestEndToEnd:
         assert (out / "committee_member_b.log").exists()
 
         record = json.loads((out / "mliprun_run.json").read_text())
-        assert record["schema_version"] == 5
+        assert record["schema_version"] == 6
         assert record["provenance"]["committee"]["config_sha256"] == \
             config.sha256
         uncertainty = record["stages"][0]["results"]["committee_uncertainty"]
