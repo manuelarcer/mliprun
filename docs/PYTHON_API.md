@@ -49,6 +49,7 @@ setup_calculator(atoms, mlip="uma-s-1p2", uma_task="omat")  # mutates atoms.calc
 - `mlip="7net-omni"` (or any `7net-*`) → SevenNet; `sevennet_task` selects the task, which SevenNet's API calls the `modal`. Required for multi-task checkpoints (`7net-omni`, `7net-omni-i8`, `7net-omni-i12`, `7net-mf-ompa`, `7net-mf-0`) and rejected for single-task ones (`7net-omat`, `7net-l3i5`, `7net-0`). No default: the tasks have independent energy zeros.
 - `mlip="uma-..."` → any FAIRChem UMA tag, with `uma_task` selecting the head and **required, with no default** (`omat`, `omc`, `omol`, `oc20`, `oc22`, `oc25`, `odac`)
 - `mlip="chgnet"` → CHGNet default model
+- `mlip="aqcat25-ev2-midfilm"` or `"aqcat25-ev2-infilm"` → SandboxAQ AQCat25-EV2 (needs the patched fairchem-core 1.10.0 env, [`docs/install/aqcat25.md`](install/aqcat25.md)). `aqcat_spin` (`"on"`/`"off"`) is **required, with no default**: spin on versus off changes the energy by up to several eV. `aqcat_fidelity` (`"high"`/`"low"`) defaults to `"high"`. Device must resolve to `cpu` or `cuda`. One (spin, fidelity) pair per Python process: upstream patches a class attribute on every build, so a second calculator with a different pair raises `ValueError`. No stress; the energy is an OC20-style referenced adsorption energy and the forces are a direct output, not the energy gradient. `run_optimization` raises `ValueError` for `relax_cell=True` or optimizer `bfgsls`/`gpmin` with these tags. Not supported in `run_md`, the frequency API, `run_autoneb` or committees.
 
 `device` selects the compute device (`"auto"` → cuda if available else cpu, or force `"cuda"` / `"cpu"`). Each head argument is ignored for models outside its own family. None of the three has a default: a multi-head model with no head raises rather than picking one.
 
@@ -632,6 +633,7 @@ neb.export_poscars()
 | `mlip` | `"7net-mf-ompa"` | A historical default, and a multi-task SevenNet tag: leaving it means also passing `sevennet_task`, or the constructor's calculator setup raises. Pass `"uma-s-1p2"` etc. as needed. |
 | `uma_task` | `None` | Used only when `mlip` starts with `"uma-"`. Required for those models — no default, because the heads have independent energy zeros. |
 | `sevennet_task` | `None` | Used only when `mlip` starts with `"7net"`. Required for multi-task checkpoints — no default, because the tasks have independent energy zeros. |
+| `aqcat_spin`, `aqcat_fidelity` | `None` | Used only for `aqcat25-*` tags. `aqcat_spin` (`"on"`/`"off"`) is required; `aqcat_fidelity` defaults to `"high"`. Written to `neb_parameters.txt` and read back by `load_from_restart`. `run_autoneb` refuses these tags. |
 | `output_dir` | `"."` | Created if missing |
 | `relax_atoms` | `None` | List of indices to keep mobile (highly-constrained mode). All others are constrained with `FixAtoms`. IDPP is skipped in this mode. |
 | `logfile` | `"neb.log"` | NEB iteration log filename |

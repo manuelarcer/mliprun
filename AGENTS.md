@@ -8,9 +8,11 @@ covers usage in more depth.
 
 A CLI + Python API that drives ASE-based **geometry optimization, molecular
 dynamics, and NEB/AutoNEB transition-state searches** using machine-learning
-interatomic potentials (MLIPs): UMA (fairchem-core), MACE (mace-torch),
-SevenNet (sevenn), and CHGNet (chgnet). `CONTEXT.md` defines the project
-vocabulary (MLIP tag vs package vs env) — read it before discussing installs.
+interatomic potentials (MLIPs): UMA (fairchem-core 2.x), MACE (mace-torch),
+SevenNet (sevenn), CHGNet (chgnet), and SandboxAQ's AQCat25-EV2
+(`aqcat25-ev2-midfilm` / `aqcat25-ev2-infilm`, on a patched fairchem-core
+1.10.0). `CONTEXT.md` defines the project vocabulary (MLIP tag vs package vs
+env) — read it before discussing installs.
 
 ## Install (fresh machine)
 
@@ -49,6 +51,17 @@ Rules that are easy to get wrong:
    Face cache for UMA; for SevenNet, into the installed package itself under
    `site-packages/sevenn/pretrained_potentials/`, ~103 MB per checkpoint). Air-gapped compute nodes need the checkpoint
    pre-fetched — commands are in the install recipes.
+5. **AQCat25-EV2 is explicit-only and narrow.** It shares the distribution
+   name `fairchem-core` with UMA: mliprun treats 2.x as UMA and 1.x as
+   AQCat25-EV2, so the two never share an env. `--mlip auto` never picks
+   it; `--aqcat-spin on|off` is required (spin moves the energy by up to
+   several eV); `--aqcat-fidelity` defaults to `high`. Only `singlepoint`,
+   `optimize` and `neb` accept the tags; `md`, `freq`, `autoneb`,
+   `benchmark`, committees and the web app refuse them. No stress, so no
+   `--relax-cell`; forces are a direct output head, so no `bfgsls`/`gpmin`.
+   The energy is an OC20-style referenced adsorption energy. One
+   (spin, fidelity) pair per Python process. Gated HF repo, CC BY-NC-SA 4.0;
+   recipe: `docs/install/aqcat25.md`.
 
 `mlip doctor` reports all of the above states (versions, asetools health,
 installed MLIPs, `--mlip auto` resolution, torch/CUDA) and exits 1 if no
