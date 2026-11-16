@@ -4,6 +4,39 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **AQCat25-EV2 models: `--mlip aqcat25-ev2-midfilm` and
+  `--mlip aqcat25-ev2-infilm`.** SandboxAQ's EquiformerV2 checkpoints
+  (Allam et al., npj Comput. Mater. 12, 226 (2026)), run on a patched
+  fairchem-core 1.10.0 in their own env: recipe in
+  `docs/install/aqcat25.md`. Supported in `singlepoint run`, `optimize run`,
+  `optimize batch` and `neb run` (new run and restart). `--aqcat-spin on|off`
+  is required with no default, because spin on versus off changes the
+  energy by up to several eV; `--aqcat-fidelity high|low` defaults to
+  `high`. Both are rejected for every other model. The checkpoint downloads
+  from the gated Hugging Face repo at a pinned revision (CC BY-NC-SA 4.0;
+  mliprun ships none of the files). Each run prints the spin, the fidelity
+  and a caveat: the energy is an OC20-style referenced adsorption energy,
+  not a DFT total energy, and the forces are a direct model output rather
+  than the energy gradient. `optimize` refuses `--relax-cell` (no stress)
+  and the `bfgsls` / `gpmin` optimizers before any model loads. One
+  (spin, fidelity) pair per Python process, because upstream applies the
+  flags through a class-level patch. `--mlip auto` never picks these
+  models; `md`, `freq`, `autoneb`, `benchmark`, committees and the web app
+  refuse them. `mlip doctor` lists the AQCat25-EV2 env and exits 0 there.
+
+### Changed
+
+- **Run record schema 6:** `provenance.aqcat_spin` and
+  `provenance.aqcat_fidelity` (null for every other model). A schema-5
+  record lacks both keys; a stage appended to one reports them as new
+  fields, not as a change.
+- **`FAIRCHEM_AVAILABLE` (UMA) now requires fairchem-core 2.x.** A
+  fairchem-core 1.x install is the AQCat25-EV2 line (`AQCAT_AVAILABLE`),
+  so `--mlip auto` no longer resolves to `uma-s-1p2` in that env, and
+  `mlip doctor` reports it under AQCat25-EV2 instead of UMA.
+
 ## [0.5.0] - 2026-10-16
 
 ### Added

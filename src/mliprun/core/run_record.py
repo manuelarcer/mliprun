@@ -30,12 +30,15 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 RECORD_FILENAME = "mliprun_run.json"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 #: Model-tag prefix -> installed distribution name. Longest prefix wins, so
-#: ``mace-mh-1`` resolves before the bare ``mace`` entry.
+#: ``mace-mh-1`` resolves before the bare ``mace`` entry. The AQCat25-EV2
+#: models run on fairchem-core 1.x, so two prefixes share one distribution;
+#: the recorded version says which line it was.
 _MLIP_PACKAGES = (
     ("uma-", "fairchem-core"),
+    ("aqcat25-", "fairchem-core"),
     ("mace-mh-", "mace-torch"),
     ("mace", "mace-torch"),
     ("7net", "sevenn"),
@@ -55,7 +58,8 @@ VALID_PARAM_SOURCES = frozenset({"user", "default", "env", "prompt", "unspecifie
 #: stage.
 _PROVENANCE_DIFF_FIELDS = ("mliprun_version", "hostname", "device_resolved",
                            "mlip_model", "uma_task", "mace_head",
-                           "sevennet_task", "committee_config_sha256")
+                           "sevennet_task", "aqcat_spin", "aqcat_fidelity",
+                           "committee_config_sha256")
 
 #: Stage key for diff fields the incoming provenance carries but the stored
 #: top-level provenance has no slot for at all -- see `_split_provenance`.
@@ -170,7 +174,9 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
                         device_resolved: str, uma_task: Optional[str] = None,
                         mace_head: Optional[str] = None,
                         sevennet_task: Optional[str] = None,
-                        committee: Optional[dict] = None) -> dict:
+                        committee: Optional[dict] = None,
+                        aqcat_spin: Optional[str] = None,
+                        aqcat_fidelity: Optional[str] = None) -> dict:
     """Gather environment and version facts for the record.
 
     ``device_requested`` and ``device_resolved`` are kept apart because
@@ -201,6 +207,13 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
     Values are recorded verbatim. SevenNet's ``7net-mf-0`` names its tasks in
     uppercase (``PBE``, ``R2SCAN``) where every other model uses lowercase, so
     normalising the case here would record a task name no checkpoint has.
+
+    ``aqcat_spin`` and ``aqcat_fidelity`` (schema 6) are gated the same way,
+    on an ``aqcat25-*`` tag. The fidelity is recorded as the value that ran:
+    ``high`` when none was given, which is upstream's default. Spin on versus
+    off moves the AQCat25-EV2 energy by up to several eV, so a record without
+    it could not back an energy in any formula. No checkpoint hash is
+    recorded: the tag maps to a file at a pinned Hugging Face revision.
 
     ``committee`` is the block from
     :meth:`~mliprun.core.committee.config.CommitteeConfig.as_provenance` --
@@ -233,6 +246,7 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
     except Exception:  # noqa: BLE001 -- fails on some HPC/container setups
         hostname = None
     tag = mlip_model if isinstance(mlip_model, str) else ""
+    aqcat = tag.startswith("aqcat25-")
     provenance = {
         "mliprun_version": mliprun_version,
         "ase_version": ase_version,
@@ -241,6 +255,8 @@ def collect_provenance(*, mlip_model: Any, device_requested: str,
         "uma_task": uma_task if tag.startswith("uma-") else None,
         "mace_head": mace_head if tag.startswith("mace-mh-") else None,
         "sevennet_task": sevennet_task if tag.startswith("7net") else None,
+        "aqcat_spin": aqcat_spin if aqcat else None,
+        "aqcat_fidelity": ((aqcat_fidelity or "high") if aqcat else None),
         "device_requested": device_requested,
         "device_resolved": device_resolved,
         "python_version": python_version,

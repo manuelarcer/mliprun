@@ -206,3 +206,133 @@ class TestCustomNEBSevenNetCalculator:
             neb.setup_calculator()
         assert "oc20" in str(exc.value)
         assert "7net-omni" in str(exc.value)
+
+
+_AQCAT_TAG = "aqcat25-ev2-midfilm"
+
+
+def _aqcat_params_text(spin="off", fidelity="low"):
+    lines = [
+        "NEB Run Parameters",
+        "===================",
+        f"MLIP model:            {_AQCAT_TAG}",
+    ]
+    if spin is not None:
+        lines.append(f"AQCat spin:            {spin}")
+    if fidelity is not None:
+        lines.append(f"AQCat fidelity:        {fidelity}")
+    lines += [
+        "Device:                cpu",
+        "Intermediate images:   1",
+        "Total images:          3",
+        "Final fmax:            0.05",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+class TestAqcatRoundTrip:
+    """Spin on versus off moves the energy by up to several eV, so a restart
+    that dropped the spin would resume the band on another energy surface."""
+
+    def test_spin_and_fidelity_survive_the_params_file(self, tmp_path):
+        path = tmp_path / "neb_parameters.txt"
+        path.write_text(_aqcat_params_text())
+        params = CustomNEB._parse_parameters_file(path)
+        assert params["aqcat_spin"] == "off"
+        assert params["aqcat_fidelity"] == "low"
+
+    def test_absent_options_parse_as_missing(self, tmp_path):
+        path = tmp_path / "neb_parameters.txt"
+        path.write_text(_aqcat_params_text(spin=None, fidelity=None))
+        params = CustomNEB._parse_parameters_file(path)
+        assert params.get("aqcat_spin") is None
+        assert params.get("aqcat_fidelity") is None
+
+    def _restart_dir(self, tmp_path, **kwargs):
+        from ase.build import bulk
+        from ase.io import write
+        (tmp_path / "neb_parameters.txt").write_text(_aqcat_params_text(**kwargs))
+        write(str(tmp_path / "A2B_full.traj"), [bulk("Cu", "fcc", a=3.6)] * 3)
+        return tmp_path
+
+    def test_load_from_restart_keeps_the_stored_options(self, tmp_path):
+        neb, params = CustomNEB.load_from_restart(self._restart_dir(tmp_path))
+        assert neb.aqcat_spin == "off"
+        assert neb.aqcat_fidelity == "low"
+        assert params["aqcat_spin"] == "off"
+
+    def test_load_from_restart_override_wins(self, tmp_path):
+        neb, _ = CustomNEB.load_from_restart(
+            self._restart_dir(tmp_path), aqcat_spin="on",
+            aqcat_fidelity="high")
+        assert neb.aqcat_spin == "on"
+        assert neb.aqcat_fidelity == "high"
+
+
+class TestCustomNEBAqcatCalculator:
+    def _neb(self, spin, fidelity=None):
+        neb = CustomNEB.__new__(CustomNEB)
+        neb.mlip = _AQCAT_TAG
+        neb.uma_task = neb.mace_head = neb.sevennet_task = None
+        neb.aqcat_spin, neb.aqcat_fidelity = spin, fidelity
+        neb.device = "cpu"
+        return neb
+
+    def test_goes_through_the_shared_builder(self, monkeypatch):
+        from unittest.mock import MagicMock
+        helper = MagicMock(return_value="calc")
+        monkeypatch.setattr("mliprun.cli.utils._build_aqcat_calculator", helper)
+        assert self._neb("on", "low").setup_calculator() == "calc"
+        helper.assert_called_once_with(_AQCAT_TAG, "on", "low", "cpu")
+
+    def test_builds_with_explicit_flags(self, monkeypatch):
+        from unittest.mock import MagicMock
+        fake = MagicMock()
+        monkeypatch.setattr("mliprun.cli.utils._load_aqcat_calc",
+                            lambda: fake)
+        monkeypatch.setattr("mliprun.cli.utils._ensure_aqcat_checkpoint",
+                            lambda tag: "/c.pt")
+        self._neb("off").setup_calculator()
+        fake.assert_called_once_with("/c.pt", is_spin_off=True,
+                                     is_low_fi=False, cpu=True)
+
+    def test_missing_spin_raises_before_loading(self, monkeypatch):
+        from unittest.mock import MagicMock
+        loader = MagicMock()
+        monkeypatch.setattr("mliprun.cli.utils._load_aqcat_calc", loader)
+        with pytest.raises(ValueError) as exc:
+            self._neb(None).setup_calculator()
+        assert "aqcat_spin" in str(exc.value)
+        loader.assert_not_called()
+
+
+class TestAqcatNebRecord:
+    def _neb(self, tmp_path, monkeypatch):
+        from ase.build import bulk
+        from ase.calculators.emt import EMT
+        initial = bulk("Cu", "fcc", a=3.6) * (2, 1, 1)
+        final = initial.copy()
+        final.positions[0] += [0.2, 0.0, 0.0]
+        neb = CustomNEB(initial, final, num_images=1, mlip=_AQCAT_TAG,
+                        aqcat_spin="off", output_dir=tmp_path)
+        # EMT stands in for the model: only the record is under test.
+        monkeypatch.setattr(neb, "setup_calculator", lambda: EMT())
+        return neb
+
+    def test_run_neb_records_spin_and_resolved_fidelity(self, tmp_path,
+                                                        monkeypatch):
+        import json
+        neb = self._neb(tmp_path, monkeypatch)
+        neb.run_neb(max_steps=1)
+        record = json.loads((tmp_path / "mliprun_run.json").read_text())
+        assert record["provenance"]["aqcat_spin"] == "off"
+        assert record["provenance"]["aqcat_fidelity"] == "high"
+        assert record["parameters"]["aqcat_spin"]["value"] == "off"
+        assert record["parameters"]["aqcat_fidelity"]["value"] == "high"
+
+    def test_run_autoneb_refuses_the_tag(self, tmp_path, monkeypatch):
+        neb = self._neb(tmp_path, monkeypatch)
+        with pytest.raises(ValueError) as exc:
+            neb.run_autoneb()
+        assert "singlepoint, optimize and neb only" in str(exc.value)
+        assert not (tmp_path / "mliprun_run.json").exists()

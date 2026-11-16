@@ -15,20 +15,42 @@ from importlib.metadata import version as _dist_version
 
 import typer
 
-# (distribution, MLIP tag reported for `--mlip auto`) in detect_mlip()'s
-# preference order: UMA > MACE > SevenNet > CHGNet.
+# (family label, distribution, availability flag in mliprun.cli.utils, MLIP
+# tag reported for `--mlip auto`) in detect_mlip()'s preference order: UMA >
+# MACE > SevenNet > CHGNet. AQCat25-EV2 comes last with no tag: it is
+# explicit-only, so `auto` never resolves to it.
+#
+# Two families share the fairchem-core distribution: 2.x is UMA and 1.x is
+# AQCat25-EV2 (see `_family_matches`), which is why rows are keyed by flag.
 #
 # This duplicates detect_mlip()'s tag choices and has drifted from them
 # before. tests/test_cli_doctor.py asserts the two agree for every entry --
 # keep that test passing rather than editing this table alone.
 _MLIP_PACKAGES = [
-    ("fairchem-core", "uma-s-1p2"),
-    ("mace-torch", "mace"),
-    ("sevenn", "7net-omni"),
-    ("chgnet", "chgnet"),
+    ("UMA", "fairchem-core", "FAIRCHEM_AVAILABLE", "uma-s-1p2"),
+    ("MACE", "mace-torch", "MACE_AVAILABLE", "mace"),
+    ("SevenNet", "sevenn", "SEVENN_AVAILABLE", "7net-omni"),
+    ("CHGNet", "chgnet", "CHGNET_AVAILABLE", "chgnet"),
+    ("AQCat25-EV2", "fairchem-core", "AQCAT_AVAILABLE", None),
 ]
 
+#: Which fairchem-core line each family needs. Mirrors `_check_fairchem` /
+#: `_check_aqcat` in cli/utils.py, applied to the version doctor reads.
+_FAIRCHEM_LINES = {"FAIRCHEM_AVAILABLE": "2.x", "AQCAT_AVAILABLE": "1.x"}
+
 _INSTALL_DOCS = "docs/install/README.md"
+
+
+def _family_matches(flag, dist_version):
+    """Whether an installed distribution version belongs to this family."""
+    if flag not in _FAIRCHEM_LINES:
+        return True
+    from mliprun.cli.utils import _major_version
+
+    major = _major_version(dist_version)
+    if flag == "AQCAT_AVAILABLE":
+        return major == 1
+    return major is not None and major >= 2
 
 
 def _package_version(dist_name):
@@ -108,11 +130,17 @@ def doctor():
     typer.echo("")
     typer.echo("MLIP packages (one env per MLIP — see ADR 0001):")
     installed = []
-    for dist, tag in _MLIP_PACKAGES:
+    for label, dist, flag, tag in _MLIP_PACKAGES:
         dist_version = _package_version(dist)
-        typer.echo(f"  {dist:<14} {dist_version or 'not installed'}")
-        if dist_version is not None:
-            installed.append(tag)
+        if dist_version is None:
+            status = "not installed"
+        elif _family_matches(flag, dist_version):
+            status = dist_version
+            installed.append((label, tag))
+        else:
+            status = (f"not installed ({dist} {dist_version} found; "
+                      f"{label} needs the {_FAIRCHEM_LINES[flag]} line)")
+        typer.echo(f"  {label:<12} {dist:<14} {status}")
 
     if len(installed) > 1:
         typer.echo(
@@ -121,9 +149,20 @@ def doctor():
         )
 
     typer.echo("")
-    if installed:
-        typer.echo(f"--mlip auto resolves to: {installed[0]}")
-    else:
+    auto_tags = [tag for _, tag in installed if tag is not None]
+    if auto_tags:
+        typer.echo(f"--mlip auto resolves to: {auto_tags[0]}")
+    elif installed:
+        typer.echo(
+            "--mlip auto does not resolve in this env: AQCat25-EV2 models "
+            "are explicit-only.")
+    if any(label == "AQCat25-EV2" for label, _ in installed):
+        from mliprun.cli.utils import _AQCAT_MODELS
+
+        typer.echo(
+            f"AQCat25-EV2: pass --mlip {' or --mlip '.join(_AQCAT_MODELS)} "
+            "with --aqcat-spin on|off (singlepoint, optimize and neb only).")
+    if not installed:
         typer.echo(
             "FAIL: no supported MLIP installed. Pick one and follow its "
             f"install recipe in {_INSTALL_DOCS}."

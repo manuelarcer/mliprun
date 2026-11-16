@@ -5,11 +5,11 @@ A CLI + Python API that drives ASE-based optimisation, MD, and NEB workflows usi
 ## Language
 
 **MLIP tag**:
-The user-facing identifier passed to `--mlip` (e.g. `mace`, `mace-mh-1`, `uma-s-1p2`, `7net-omni`, `chgnet`). Maps one-to-many to package names.
+The user-facing identifier passed to `--mlip` (e.g. `mace`, `mace-mh-1`, `uma-s-1p2`, `7net-omni`, `chgnet`, `aqcat25-ev2-midfilm`). Maps one-to-many to package names.
 _Avoid_: model name, calculator name.
 
 **Package name**:
-The PyPI distribution that provides an MLIP (`mace-torch`, `fairchem-core`, `sevenn`, `chgnet`). One package can serve several **MLIP tags** (e.g. `mace-torch` serves both `mace` and every `mace-mh-*`; `sevenn` serves every `7net-*`).
+The PyPI distribution that provides an MLIP (`mace-torch`, `fairchem-core`, `sevenn`, `chgnet`). One package can serve several **MLIP tags** (e.g. `mace-torch` serves both `mace` and every `mace-mh-*`; `sevenn` serves every `7net-*`). One package name can also cover two incompatible release lines: `fairchem-core` 2.x serves `uma-*`, while a SandboxAQ-patched `fairchem-core` 1.10.0 serves the `aqcat25-*` tags. mliprun tells them apart by major version, and each line needs its own **MLIP env**.
 _Avoid_: distribution.
 
 **MLIP env**:
@@ -20,7 +20,7 @@ _Avoid_: virtualenv (too generic), conda env (only one tool).
 A per-MLIP markdown file under `docs/install/<tag-or-package>.md` containing tested conda *and* venv instructions for creating an **MLIP env**, plus any first-run notes (HF auth for UMA, checkpoint pre-download for MACE-MH). The platform never executes installs; it points users at the recipe.
 
 **Calculator**:
-The ASE `Calculator` subclass instantiated from an MLIP package (e.g. `MACECalculator`, `FAIRChemCalculator`, `SevenNetCalculator`, `CHGNetCalculator`). Lives in the **MLIP env**, attached to an `ase.Atoms` object by `setup_calculator()` in `src/mliprun/cli/utils.py`.
+The ASE `Calculator` subclass instantiated from an MLIP package (e.g. `MACECalculator`, `FAIRChemCalculator`, `SevenNetCalculator`, `CHGNetCalculator`, and the `OCPCalculator` that SandboxAQ's `patched_calc` returns for `aqcat25-*`). Lives in the **MLIP env**, attached to an `ase.Atoms` object by `setup_calculator()` in `src/mliprun/cli/utils.py`.
 
 **Committee**:
 Two or more **Members** evaluated together against the same structure, reporting the members' disagreement as a per-configuration uncertainty (sigma, eV/Å). Driving one relaxation trajectory with their mean force (`optimize run --committee`), evaluating one static configuration with no relaxation (`singlepoint run --committee`), or running one displacement sweep with their mean force and reporting both that sigma at the input geometry and one Hessian per member (`freq run --committee`). Declared in a `committee.yaml`; not supported by `optimize batch`, `md`, or `neb`/`autoneb`.

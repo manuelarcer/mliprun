@@ -198,27 +198,75 @@ class TestDoctorAgreesWithDetectMlip:
     doctor still reported 7net-mf-ompa, so the diagnostic tool contradicted
     the tool it diagnoses. This test ties the two together."""
 
+    _FLAGS = ("FAIRCHEM_AVAILABLE", "MACE_AVAILABLE", "SEVENN_AVAILABLE",
+              "CHGNET_AVAILABLE", "AQCAT_AVAILABLE")
+
     def test_every_doctor_tag_matches_what_detect_mlip_returns(self):
+        # Keyed by availability flag, not distribution: fairchem-core serves
+        # two families (2.x UMA, 1.x AQCat25-EV2).
         from unittest.mock import patch
+        import pytest
+        import typer
         from mliprun.cli.commands.doctor import _MLIP_PACKAGES
         from mliprun.cli.utils import detect_mlip
 
-        flag_for = {
-            "fairchem-core": "FAIRCHEM_AVAILABLE",
-            "mace-torch": "MACE_AVAILABLE",
-            "sevenn": "SEVENN_AVAILABLE",
-            "chgnet": "CHGNET_AVAILABLE",
-        }
-        for dist, tag in _MLIP_PACKAGES:
-            patches = {name: (name == flag_for[dist])
-                       for name in flag_for.values()}
+        for label, dist, flag, tag in _MLIP_PACKAGES:
+            patches = {name: (name == flag) for name in self._FLAGS}
             with patch.multiple("mliprun.cli.utils", **patches):
+                if tag is None:
+                    # Explicit-only family: auto must refuse, naming why.
+                    with pytest.raises(typer.Exit) as exc:
+                        detect_mlip()
+                    assert "--aqcat-spin" in str(exc.value.exit_code)
+                    continue
                 assert detect_mlip() == tag, (
-                    f"doctor reports '{tag}' for a {dist}-only env, but "
+                    f"doctor reports '{tag}' for a {label}-only env, but "
                     f"detect_mlip() returns '{detect_mlip()}'"
                 )
 
     def test_doctor_table_covers_every_availability_flag(self):
         from mliprun.cli.commands.doctor import _MLIP_PACKAGES
-        assert {d for d, _ in _MLIP_PACKAGES} == {
+        assert {flag for _, _, flag, _ in _MLIP_PACKAGES} == set(self._FLAGS)
+        assert {d for _, d, _, _ in _MLIP_PACKAGES} == {
             "fairchem-core", "mace-torch", "sevenn", "chgnet"}
+
+
+class TestDoctorSharedFairchemDistribution:
+    """fairchem-core 2.x is UMA; 1.x is the AQCat25-EV2 env."""
+
+    def _run(self, monkeypatch, extra):
+        monkeypatch.setattr(doctor_cmd, "_package_version",
+                            _fake_versions(extra))
+        monkeypatch.setattr(doctor_cmd, "_asetools_status", lambda: "ok")
+        return runner.invoke(main_app, ["doctor"])
+
+    def test_aqcat_only_env_is_usable_and_auto_is_explained(self, monkeypatch):
+        result = self._run(monkeypatch, {"fairchem-core": "1.10.0"})
+        assert result.exit_code == 0, result.output
+        assert "AQCat25-EV2" in result.output
+        assert "1.10.0" in result.output
+        assert "--mlip auto does not resolve" in result.output
+        assert "aqcat25-ev2-midfilm" in result.output
+        assert "aqcat25-ev2-infilm" in result.output
+        assert "--aqcat-spin" in result.output
+        assert "resolves to: uma-s-1p2" not in result.output
+        assert "WARN: multiple" not in result.output
+
+    def test_fairchem_2_is_reported_as_uma_only(self, monkeypatch):
+        result = self._run(monkeypatch, {"fairchem-core": "2.19.0"})
+        assert result.exit_code == 0
+        assert "--mlip auto resolves to: uma-s-1p2" in result.output
+        assert "--mlip auto does not resolve" not in result.output
+
+    def test_aqcat_next_to_mace_resolves_to_mace_and_warns(self, monkeypatch):
+        result = self._run(monkeypatch, {"fairchem-core": "1.10.0",
+                                         "mace-torch": "0.3.15"})
+        assert result.exit_code == 0
+        assert "--mlip auto resolves to: mace" in result.output
+        assert "WARN: multiple" in result.output
+        assert "aqcat25-ev2-midfilm" in result.output
+
+    def test_unparseable_fairchem_version_counts_as_neither(self, monkeypatch):
+        result = self._run(monkeypatch, {"fairchem-core": "unknown"})
+        assert result.exit_code == 1
+        assert "unknown" in result.output

@@ -19,6 +19,7 @@ from mliprun.cli.utils import (
     _resolve_device,
     detect_mlip,
     param_sources_from_ctx,
+    reject_aqcat_unsupported,
     setup_calculator,
     validate_mlip,
 )
@@ -169,6 +170,7 @@ def run(
         if committee_config.mixed_theory:
             typer.echo(f"\n⚠️  {committee_config.mixed_theory_warning()}\n")
     else:
+        reject_aqcat_unsupported(mlip, "freq")
         if mlip == "auto":
             mlip = detect_mlip()
             typer.echo(f"🧠 Auto-detected MLIP: {mlip}")

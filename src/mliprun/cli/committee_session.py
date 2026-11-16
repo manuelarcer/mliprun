@@ -21,7 +21,7 @@ from mliprun.cli.utils import param_sources_from_ctx
 #: is included because each member's device comes from committee.yaml
 #: (``spec.device``); a stray ``--device`` here would silently do nothing.
 COMMITTEE_CONFLICTS = ("mlip", "uma_task", "mace_head", "sevennet_task",
-                        "device")
+                        "aqcat_spin", "aqcat_fidelity", "device")
 
 
 def reject_conflicting_options(ctx) -> None:

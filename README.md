@@ -13,7 +13,7 @@ A modular CLI toolkit for evaluating Machine Learning Interatomic Potentials (ML
 - **AutoNEB** with dynamic image insertion
 - **Benchmarking**
 
-Supports **UMA** (FAIRChem), **MACE**, **SevenNet** (7net), and **CHGNet** models with automatic detection and streamlined CLI using [Typer](https://typer.tiangolo.com/).
+Supports **UMA** (FAIRChem), **MACE**, **SevenNet** (7net), and **CHGNet** models with automatic detection and streamlined CLI using [Typer](https://typer.tiangolo.com/), plus SandboxAQ's **AQCat25-EV2** models (explicit-only; `singlepoint`, `optimize` and `neb`).
 
 ---
 
@@ -137,6 +137,9 @@ pip install torch_geometric sevenn
 
 # CHGNet
 pip install chgnet
+
+# AQCat25-EV2 (SandboxAQ): patched fairchem-core 1.10.0, gated, non-commercial
+# licence. No one-line install: follow docs/install/aqcat25.md
 ```
 
 5. **Verify the install**
@@ -146,7 +149,7 @@ mlip doctor
 
 Reports Python/package versions, asetools health, installed MLIP packages, what `--mlip auto` resolves to, and torch/CUDA status. Exits non-zero if no MLIP is installed, so it can be scripted.
 
-> **Note**: With `--mlip auto` (the default), the CLI picks the first available in the order **UMA → MACE → SevenNet → CHGNet**, or you can pass `--mlip <name>` to force a specific one. Note that a SevenNet-only environment resolves to `7net-omni`, which is multi-task and then stops for a missing `--sevennet-task` — deliberately, since guessing a task would silently change the level of theory. Prefer one MLIP per environment: the packages pin mutually incompatible torch/e3nn versions, so installing several into one env can silently break — see [ADR 0001](docs/adr/0001-per-mlip-envs.md). UMA is preferred when installed (it is the most accurate), but it is gated on Hugging Face and unusable without an access request — so MACE is placed ahead of SevenNet/CHGNet as the readily-usable fallback. A fresh environment with only `pip install mace-torch` lands on a working model with no access request. UMA's Hugging Face setup is covered in [UMA_USAGE_GUIDE.md](docs/UMA_USAGE_GUIDE.md#2-hugging-face-access).
+> **Note**: With `--mlip auto` (the default), the CLI picks the first available in the order **UMA → MACE → SevenNet → CHGNet**, or you can pass `--mlip <name>` to force a specific one. Note that a SevenNet-only environment resolves to `7net-omni`, which is multi-task and then stops for a missing `--sevennet-task` — deliberately, since guessing a task would silently change the level of theory. Prefer one MLIP per environment: the packages pin mutually incompatible torch/e3nn versions, so installing several into one env can silently break — see [ADR 0001](docs/adr/0001-per-mlip-envs.md). UMA is preferred when installed (it is the most accurate), but it is gated on Hugging Face and unusable without an access request — so MACE is placed ahead of SevenNet/CHGNet as the readily-usable fallback. A fresh environment with only `pip install mace-torch` lands on a working model with no access request. UMA's Hugging Face setup is covered in [UMA_USAGE_GUIDE.md](docs/UMA_USAGE_GUIDE.md#2-hugging-face-access). The AQCat25-EV2 models are never picked by `auto`: in an env where they are the only MLIP, `auto` stops and names the tags and `--aqcat-spin` to pass.
 
 ### Windows Setup
 
@@ -167,10 +170,11 @@ The package installs the following entry points:
 
 These apply to `optimize`, `singlepoint`, `freq`, `md`, `neb`, `autoneb`, and `benchmark`:
 
-- `--mlip`: Model tag. `auto` (default) picks the first installed in order **UMA → MACE → SevenNet → CHGNet** (UMA preferred when present, MACE as the readily-usable fallback), or pass an explicit tag: any `uma-*` (e.g. `uma-s-1p2`), `mace` (MACE-MP-0), `mace-mh-1` (multi-head foundation), any `7net-*` tag (e.g. `7net-omni`, which requires `--sevennet-task`), `chgnet`.
+- `--mlip`: Model tag. `auto` (default) picks the first installed in order **UMA → MACE → SevenNet → CHGNet** (UMA preferred when present, MACE as the readily-usable fallback), or pass an explicit tag: any `uma-*` (e.g. `uma-s-1p2`), `mace` (MACE-MP-0), `mace-mh-1` (multi-head foundation), any `7net-*` tag (e.g. `7net-omni`, which requires `--sevennet-task`), `chgnet`, or `aqcat25-ev2-midfilm` / `aqcat25-ev2-infilm` (AQCat25-EV2; `singlepoint`, `optimize` and `neb` only, see [docs/install/aqcat25.md](docs/install/aqcat25.md)).
 - `--uma-task`: Task head for UMA models. **No default and required for every `uma-*` model** — the heads are independent fine-tunes with independent energy zeros, so a guessed head silently changes the level of theory. One of `omat` (bulk inorganic), `omc` (molecular crystals), `omol` (molecules), `oc20` (catalysis/surfaces), `oc22`, `oc25`, `odac`. Ignored for non-UMA models.
 - `--mace-head`: Head for multi-head MACE models (`mace-mh-*`). **No default and required for those models**, for the same reason as `--uma-task`. One of `omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`. Rejected for plain `mace`, which is single-head.
 - `--sevennet-task`: Inference task for SevenNet models (`modal` in SevenNet's API). **No default** — a multi-task tag without one is an error listing the valid tasks, because the tasks are independent fine-tunes with independent energy zeros. `7net-omni`/`-i8`/`-i12`: `mpa` (PBE+U, general), `oc20` (RPBE, surfaces), `oc22`, `omat24`, `matpes_pbe`, `odac23`, `omol25_low`, `omol25_high`, `spice`, `qcml`, `pet_mad`, `mp_r2scan`, `matpes_r2scan`. `7net-mf-ompa`: `omat24`, `mpa`. `7net-mf-0`: `PBE`, `R2SCAN` (uppercase; names are matched exactly). Rejected for single-task tags (`7net-omat`, `7net-l3i5`, `7net-0`). Ignored for non-SevenNet models.
+- `--aqcat-spin on|off` and `--aqcat-fidelity high|low` (`singlepoint`, `optimize`, `neb` only): for the AQCat25-EV2 tags. **`--aqcat-spin` has no default and is required**: spin on versus off changes the predicted energy by up to several eV. `--aqcat-fidelity` defaults to `high` (AQCat25 settings, RPBE 500 eV); `low` is the OC20 settings (RPBE 350 eV). Both are rejected for every other model. These models predict no stress, so `optimize --relax-cell` is refused, and so are the `bfgsls` and `gpmin` optimizers, because the forces are a direct model output rather than the energy gradient. The energy is an OC20-style referenced adsorption energy, not a DFT total energy.
 - `--device`: `auto` (default; cuda if available, else cpu), `cuda`, or `cpu`. On multi-GPU nodes set `CUDA_VISIBLE_DEVICES` to choose the GPU. (`neb` is the exception: it defaults to `cpu`, so pass `--device cuda` explicitly for GPU NEB runs. Rejected together with `--committee`: see [Committee evaluation](#committee-evaluation) below.)
 - `--plot / --no-plot`: write PNG figures of the results. **Off by default** (plotting is opt-in) — the CSV data is always written, so pass `--plot` only when you want the figures. Applies to `optimize`, `md`, and `neb`.
 
@@ -229,7 +233,7 @@ Run several MLIPs, each in its own environment, against the same structure. The 
 optimize run --structure POSCAR --committee committee.yaml --fmax 0.05
 ```
 
-`committee.yaml` declares two or more members, each with its own env, MLIP tag, and task/head: see [examples/committee.yaml](examples/committee.yaml). `--committee` replaces `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, and `--device`: passing any of those alongside it is an error, since the file already owns model selection and each member's device. Members may sit at different levels of theory (e.g. an RPBE/OC20 head next to a PBE/OMat24 one); mliprun does not refuse this, but the reported spread then becomes a comparison *between* levels of theory rather than an error bar within one, and mliprun warns loudly when it detects the mismatch. `optimize run`, `singlepoint run` (see [Single-Point Evaluation](#single-point-evaluation) below) and `freq run` (see [Vibrational Frequencies](#vibrational-frequencies) below) are the only commands that support committees; `optimize batch`, `md`, and `neb`/`autoneb` do not. `freq run --committee` reports each member's own frequencies **in addition to** the consensus statistics documented here: it measures the same `sigma_max_free` disagreement at the input geometry of the displacement sweep, takes the same opt-in `--uncertainty-threshold`, and writes the same `results.committee_uncertainty` block into the run record — see [Vibrational Frequencies](#vibrational-frequencies).
+`committee.yaml` declares two or more members, each with its own env, MLIP tag, and task/head: see [examples/committee.yaml](examples/committee.yaml). `--committee` replaces `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, `--aqcat-spin`, `--aqcat-fidelity`, and `--device`: passing any of those alongside it is an error, since the file already owns model selection and each member's device. Members may sit at different levels of theory (e.g. an RPBE/OC20 head next to a PBE/OMat24 one); mliprun does not refuse this, but the reported spread then becomes a comparison *between* levels of theory rather than an error bar within one, and mliprun warns loudly when it detects the mismatch. `optimize run`, `singlepoint run` (see [Single-Point Evaluation](#single-point-evaluation) below) and `freq run` (see [Vibrational Frequencies](#vibrational-frequencies) below) are the only commands that support committees; `optimize batch`, `md`, and `neb`/`autoneb` do not. `freq run --committee` reports each member's own frequencies **in addition to** the consensus statistics documented here: it measures the same `sigma_max_free` disagreement at the input geometry of the displacement sweep, takes the same opt-in `--uncertainty-threshold`, and writes the same `results.committee_uncertainty` block into the run record — see [Vibrational Frequencies](#vibrational-frequencies).
 
 **Outputs (in addition to the usual `optimize run` files):** `opt_committee.csv` (per-step disagreement trace), `opt_committee_peratom.csv` (per-atom disagreement at the final geometry), `committee_<member>.log` (one per member). Full column reference: [OUTPUTS.md](docs/OUTPUTS.md#committee-outputs).
 
@@ -247,7 +251,7 @@ performed the same single evaluation but mislabelled it a failed relaxation
 (`status: not_converged`) and wrote no per-atom forces.
 
 **Key options:**
-- `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, `--device`: same model-selection options as `optimize`.
+- `--mlip`, `--uma-task`, `--mace-head`, `--sevennet-task`, `--aqcat-spin`, `--aqcat-fidelity`, `--device`: same model-selection options as `optimize`.
 - `--stress / --no-stress`: force or skip the stress attempt. Default: attempted only when the cell is periodic in all three directions — a slab's stress along the vacuum direction means nothing.
 - `--committee committee.yaml`: evaluate this one configuration with a committee instead of a single MLIP; reports the same disagreement statistics as `optimize run --committee`, at this one geometry, with no relaxation.
 - `--prefix`: stem for the output file names (default `singlepoint`).

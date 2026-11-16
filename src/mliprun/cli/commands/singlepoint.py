@@ -11,7 +11,10 @@ from mliprun.cli.committee_session import (
     started_committee,
 )
 from mliprun.cli.utils import (
+    AQCAT_FIDELITY_HELP,
+    AQCAT_SPIN_HELP,
     DEVICE_HELP,
+    echo_aqcat_settings,
     MACE_HEAD_HELP,
     MLIP_HELP,
     SEVENNET_TASK_HELP,
@@ -84,6 +87,8 @@ def run(
              "optimization folder that produced the structure -- a run "
              "record is replaced by the next command that writes in the "
              "same directory."),
+    aqcat_spin: str = typer.Option(None, help=AQCAT_SPIN_HELP),
+    aqcat_fidelity: str = typer.Option(None, help=AQCAT_FIDELITY_HELP),
 ):
     """Evaluate a structure once and report energy, forces and stress."""
     atoms = read(structure)
@@ -115,7 +120,8 @@ def run(
             typer.echo(f"🧠 Auto-detected MLIP: {mlip}")
         else:
             typer.echo(f"🧠 Using MLIP: {mlip}")
-        validate_mlip(mlip, sevennet_task, uma_task, mace_head)
+        validate_mlip(mlip, sevennet_task, uma_task, mace_head,
+                      aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
 
     # Separate from the structure's own directory on purpose: a prior run
     # record stays where it is, and this run writes elsewhere.
@@ -146,9 +152,12 @@ def run(
                 typer.echo(f"   MACE head: {mace_head}")
             if mlip.startswith("7net"):
                 typer.echo(f"   SevenNet task: {sevennet_task}")
+            echo_aqcat_settings(mlip, aqcat_spin, aqcat_fidelity)
             atoms = setup_calculator(atoms, mlip, uma_task, device=device,
                                      mace_head=mace_head,
-                                     sevennet_task=sevennet_task)
+                                     sevennet_task=sevennet_task,
+                                     aqcat_spin=aqcat_spin,
+                                     aqcat_fidelity=aqcat_fidelity)
 
         results = run_singlepoint(
             atoms=atoms,
@@ -165,6 +174,8 @@ def run(
             committee=committee_calc,
             committee_config=committee_config,
             uncertainty_threshold=uncertainty_threshold,
+            aqcat_spin=aqcat_spin,
+            aqcat_fidelity=aqcat_fidelity,
         )
 
     typer.echo(f"\n⚡ Energy: {results['energy_eV']:.6f} eV")

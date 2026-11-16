@@ -157,7 +157,7 @@ class TestMDRecordsHead:
         data = json.loads((tmp_path / "mliprun_run.json").read_text())
         assert data["provenance"]["uma_task"] == "oc25"
         assert data["provenance"]["mace_head"] is None
-        assert data["schema_version"] == 5
+        assert data["schema_version"] == 6
 
 
 class TestBarostatMask:

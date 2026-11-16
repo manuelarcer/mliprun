@@ -19,6 +19,7 @@ from mliprun.cli.utils import (
     _resolve_device,
     detect_mlip,
     param_sources_from_ctx,
+    reject_aqcat_unsupported,
     setup_calculator,
     validate_mlip,
     SEVENNET_TASK_HELP,
@@ -226,6 +227,7 @@ def run(
         pfactor_label = f"{pfactor:.4g}"
 
     # Detect or use specified model
+    reject_aqcat_unsupported(mlip, "md")
     if mlip == "auto":
         mlip = detect_mlip()
         typer.echo(f"🧠 Auto-detected MLIP: {mlip}")

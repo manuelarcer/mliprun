@@ -10,6 +10,7 @@ Pick the MLIP that fits your problem, then follow its recipe to create a dedicat
 | `mace`, `mace-mh-0`, `mace-mh-1` | MACE-MP-0 (medium) for fast inorganic baselines; multi-head foundation checkpoints (`mace-mh-*`) for cross-domain transfer (PBE bulk, r2SCAN, OC20, organics). | [`mace.md`](./mace.md) |
 | `7net-omni` (recommended), `7net-omni-i8`, `7net-omni-i12`, `7net-mf-ompa`, `7net-mf-0`, `7net-omat`, `7net-l3i5`, `7net-0` | SevenNet. No auth. `7net-omni` is a 13-task multi-fidelity model and the only SevenNet checkpoint with surface heads (`oc20` RPBE, `oc22`), so it is the one to use for catalysis. Multi-task tags require `--sevennet-task`; there is no default. | [`sevenn.md`](./sevenn.md) |
 | `chgnet` | Lightest install, fastest cold start, weights bundled. Good for quick scans on crystal structures (MP-trained). | [`chgnet.md`](./chgnet.md) |
+| `aqcat25-ev2-midfilm` (recommended), `aqcat25-ev2-infilm` | SandboxAQ AQCat25-EV2: EquiformerV2 conditioned on spin and DFT fidelity, for adsorption on catalyst surfaces. Gated Hugging Face repo, CC BY-NC-SA 4.0 (non-commercial). Needs patched fairchem-core 1.10.0 in its own env. `--aqcat-spin on\|off` is required; never picked by `--mlip auto`; `singlepoint`, `optimize` and `neb` only. Energies are OC20-style referenced adsorption energies. | [`aqcat25.md`](./aqcat25.md) |
 
 ## Recommended workflow
 

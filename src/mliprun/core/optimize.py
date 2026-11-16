@@ -339,6 +339,8 @@ def run_optimization(
     committee_config=None,
     uncertainty_threshold: Optional[float] = None,
     observer: Optional[Callable[[dict], None]] = None,
+    aqcat_spin: Optional[str] = None,
+    aqcat_fidelity: Optional[str] = None,
 ) -> bool:
     """Run geometry optimization on an ASE Atoms object.
 
@@ -431,6 +433,11 @@ def run_optimization(
         reads only, so numerics are unchanged. An exception it raises
         propagates: the run record is completed as ``failed`` and the
         exception re-raised. ``None`` (default) disables it.
+    aqcat_spin : str, optional
+        AQCat25-EV2 spin (``'on'``/``'off'``), recorded in the run record when
+        ``model_name`` is an ``aqcat25-*`` tag.
+    aqcat_fidelity : str, optional
+        AQCat25-EV2 fidelity, recorded as resolved (``'high'`` when None).
 
     Returns
     -------
@@ -440,7 +447,10 @@ def run_optimization(
     Raises
     ------
     ValueError
-        If ``optimizer`` is not recognised.
+        If ``optimizer`` is not recognised, or if ``model_name`` is an
+        AQCat25-EV2 tag and the run needs what that model cannot give: a
+        stress (``relax_cell``) or forces equal to the energy gradient
+        (``bfgsls``, ``gpmin``). Raised before the run record is written.
     """
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -479,6 +489,10 @@ def run_optimization(
         )
 
     OptimizerClass = OPTIMIZER_MAP[optimizer_name]
+
+    # Local import, as elsewhere in core: the AQCat tables live in cli.utils.
+    from mliprun.cli.utils import check_aqcat_optimize
+    check_aqcat_optimize(model_name, optimizer_name, relax_cell)
 
     if committee is not None:
         # A committee may be reused across structures (the docstring above
@@ -533,6 +547,8 @@ def run_optimization(
             mace_head=mace_head,
             sevennet_task=sevennet_task,
             committee=_committee_provenance(committee, committee_config),
+            aqcat_spin=aqcat_spin,
+            aqcat_fidelity=aqcat_fidelity,
         ),
         run_context=run_context,
     )

@@ -12,6 +12,13 @@ from mliprun.core.neb import CustomNEB
 from mliprun.core.params_io import write_parameters_file, write_endpoint_results
 from mliprun.core.run_record import RunContext
 from mliprun.cli.utils import MACE_HEAD_HELP, MLIP_HELP, PLOT_HELP, SEVENNET_TASK_HELP, UMA_TASK_HELP, param_sources_from_ctx, parse_relax_atoms, resolve_mlip
+from mliprun.cli.utils import (
+    AQCAT_FIDELITY_HELP,
+    AQCAT_SPIN_HELP,
+    echo_aqcat_settings,
+    is_aqcat_tag,
+    resolve_aqcat_fidelity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,9 +77,18 @@ def create_backup_folder(output_dir: Path):
     return backup_dir, moved_files
 
 
+def _aqcat_param_lines(mlip, aqcat_spin, aqcat_fidelity) -> dict:
+    """neb_parameters.txt lines for an AQCat tag; empty for every other."""
+    if not is_aqcat_tag(mlip):
+        return {}
+    return {"AQCat spin:": aqcat_spin,
+            "AQCat fidelity:": resolve_aqcat_fidelity(aqcat_fidelity)}
+
+
 def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
                     fmax, log, k, climb,
-                    dyneb, scale_fmax, neb_optimizer, neb_max_steps, device):
+                    dyneb, scale_fmax, neb_optimizer, neb_max_steps, device,
+                    aqcat_spin=None, aqcat_fidelity=None):
     """Handle NEB restart mode.
 
     Returns
@@ -95,7 +111,8 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
             mace_head=mace_head, sevennet_task=sevennet_task,
             fmax=fmax, logfile=log, k=k, climb=climb,
             neb_optimizer=neb_optimizer, neb_max_steps=neb_max_steps,
-            device=device,
+            device=device, aqcat_spin=aqcat_spin,
+            aqcat_fidelity=aqcat_fidelity,
         )
     except (FileNotFoundError, ValueError, RuntimeError) as e:
         typer.echo(f"Error: {e}")
@@ -110,6 +127,10 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         typer.echo(f"   - MACE head:           {loaded_params['mace_head']}")
     if loaded_params.get("sevennet_task"):
         typer.echo(f"   - SevenNet task:       {loaded_params['sevennet_task']}")
+    if loaded_params.get("aqcat_spin"):
+        typer.echo(f"   - AQCat spin:          {loaded_params['aqcat_spin']}")
+    if loaded_params.get("aqcat_fidelity"):
+        typer.echo(f"   - AQCat fidelity:      {loaded_params['aqcat_fidelity']}")
     typer.echo(f"   - Intermediate images: {loaded_params['num_images']}")
     typer.echo(f"   - Total images:        {loaded_params['total_images']}")
     if loaded_params.get("relax_atoms"):
@@ -170,6 +191,9 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         # No default fallback: a SevenNet task must never be invented on
         # restart, or the band resumes on a different energy zero (C3).
         "sevennet_task": sevennet_task or loaded_params.get("sevennet_task"),
+        # Same rule for the AQCat spin: never invented on restart.
+        "aqcat_spin": aqcat_spin or loaded_params.get("aqcat_spin"),
+        "aqcat_fidelity": aqcat_fidelity or loaded_params.get("aqcat_fidelity"),
         "fmax": fmax if fmax is not None else loaded_params["fmax"],
         "k": k if k is not None else loaded_params.get("k", 0.1),
         "climb": climb if climb is not None else loaded_params.get("climb", True),
@@ -184,6 +208,8 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         "device": device if device is not None else loaded_params.get("device", "cpu"),
         "optimize_endpoints": False,
     }
+    echo_aqcat_settings(params["mlip"], params["aqcat_spin"],
+                        params["aqcat_fidelity"])
 
     # Write updated parameter file
     write_parameters_file(output_dir / "neb_parameters.txt", "NEB Run Parameters (RESTART)", {
@@ -192,6 +218,8 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         **({f"UMA task:": params["uma_task"]} if params["mlip"].startswith("uma-") else {}),
         **({f"MACE head:": params["mace_head"]} if params["mlip"].startswith("mace-mh-") else {}),
         **({f"SevenNet task:": params["sevennet_task"]} if params["mlip"].startswith("7net") else {}),
+        **_aqcat_param_lines(params["mlip"], params["aqcat_spin"],
+                             params["aqcat_fidelity"]),
         "Device:": params["device"],
         "Initial:": "(from restart)",
         "Final:": "(from restart)",
@@ -221,7 +249,8 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
                     dyneb, scale_fmax,
                     neb_optimizer, neb_max_steps, optimize_endpoints,
                     endpoint_fmax, endpoint_optimizer, endpoint_max_steps,
-                    relax_atoms_str, device):
+                    relax_atoms_str, device, aqcat_spin=None,
+                    aqcat_fidelity=None):
     """Handle normal (non-restart) NEB mode.
 
     Returns
@@ -260,13 +289,15 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
         typer.echo("Error: Initial and final structures must have the same number of atoms.")
         raise typer.Exit(code=1)
 
-    mlip = resolve_mlip(mlip, sevennet_task, uma_task, mace_head)
+    mlip = resolve_mlip(mlip, sevennet_task, uma_task, mace_head,
+                        aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
     if mlip.startswith("uma-"):
         typer.echo(f"   UMA task: {uma_task}")
     if mlip.startswith("mace-mh-"):
         typer.echo(f"   MACE head: {mace_head}")
     if mlip.startswith("7net"):
         typer.echo(f"   SevenNet task: {sevennet_task}")
+    echo_aqcat_settings(mlip, aqcat_spin, aqcat_fidelity)
 
     # Parse relax_atoms
     relax_indices = None
@@ -279,6 +310,7 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
     params = {
         "mlip": mlip, "uma_task": uma_task, "mace_head": mace_head,
         "sevennet_task": sevennet_task,
+        "aqcat_spin": aqcat_spin, "aqcat_fidelity": aqcat_fidelity,
         "fmax": fmax, "k": k,
         "climb": climb, "dyneb": dyneb, "scale_fmax": scale_fmax,
         "neb_optimizer": neb_optimizer,
@@ -294,6 +326,7 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
         **({f"UMA task:": uma_task} if mlip.startswith("uma-") else {}),
         **({f"MACE head:": mace_head} if mlip.startswith("mace-mh-") else {}),
         **({f"SevenNet task:": sevennet_task} if mlip.startswith("7net") else {}),
+        **_aqcat_param_lines(mlip, aqcat_spin, aqcat_fidelity),
         "Device:": device,
         "Initial:": str(initial),
         "Final:": str(final),
@@ -329,6 +362,7 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
         uma_task=uma_task, mace_head=mace_head,
         sevennet_task=sevennet_task, output_dir=output_dir,
         relax_atoms=relax_indices, logfile=log, device=device,
+        aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity,
     )
 
     # Optimize endpoints
@@ -375,6 +409,8 @@ def run(
     endpoint_max_steps: int = typer.Option(None, help="Maximum steps for endpoint optimization"),
     device: str = typer.Option(None, help="Compute device for the MLIP calculator: 'cpu' (default) or 'cuda'"),
     plot: bool = typer.Option(False, "--plot/--no-plot", help=PLOT_HELP),
+    aqcat_spin: str = typer.Option(None, help=AQCAT_SPIN_HELP),
+    aqcat_fidelity: str = typer.Option(None, help=AQCAT_FIDELITY_HELP),
 ):
     """Run Nudged Elastic Band (NEB) calculation."""
     output_dir = Path.cwd()
@@ -398,6 +434,7 @@ def run(
             k=k, climb=climb, dyneb=dyneb, scale_fmax=scale_fmax,
             neb_optimizer=neb_optimizer,
             neb_max_steps=neb_max_steps, device=device,
+            aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity,
         )
         typer.echo("Skipping interpolation (loaded from restart)")
     else:
@@ -413,6 +450,7 @@ def run(
             endpoint_optimizer=endpoint_optimizer,
             endpoint_max_steps=endpoint_max_steps,
             relax_atoms_str=relax_atoms, device=device,
+            aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity,
         )
 
     # ---- Run NEB optimization ----

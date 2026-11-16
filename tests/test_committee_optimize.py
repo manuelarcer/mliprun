@@ -179,7 +179,7 @@ class TestRunRecord:
             committee.close()
 
         record = _record(tmp_path)
-        assert record["schema_version"] == 5
+        assert record["schema_version"] == 6
         assert len(record["provenance"]["committee"]["members"]) == 2
         assert record["provenance"]["committee_config_sha256"] == config.sha256
 

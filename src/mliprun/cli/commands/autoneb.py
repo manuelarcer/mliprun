@@ -8,7 +8,7 @@ from ase.optimize import FIRE
 from mliprun.core.neb import CustomNEB
 from mliprun.core.params_io import write_parameters_file, write_endpoint_results
 from mliprun.core.run_record import RunContext
-from mliprun.cli.utils import MACE_HEAD_HELP, MLIP_HELP, SEVENNET_TASK_HELP, UMA_TASK_HELP, param_sources_from_ctx, parse_relax_atoms, resolve_mlip
+from mliprun.cli.utils import MACE_HEAD_HELP, MLIP_HELP, SEVENNET_TASK_HELP, UMA_TASK_HELP, param_sources_from_ctx, parse_relax_atoms, reject_aqcat_unsupported, resolve_mlip
 
 app = typer.Typer()
 
@@ -50,6 +50,7 @@ def run(
         typer.echo("Error: Initial and final structures must have the same number of atoms.")
         raise typer.Exit(code=1)
 
+    reject_aqcat_unsupported(mlip, "autoneb")
     mlip = resolve_mlip(mlip, sevennet_task, uma_task, mace_head)
     if mlip.startswith("uma-"):
         typer.echo(f"   UMA task: {uma_task}")

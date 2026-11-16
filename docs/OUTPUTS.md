@@ -934,7 +934,7 @@ layer — so a script that calls `run_optimization` directly gets one too.
 
 | Key | Meaning |
 |-----|---------|
-| `schema_version` | Currently `5`. Check it before parsing. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. The `singlepoint` and `freq` stage kinds are additive and do not bump the schema: `provenance` is untouched, and no existing field changes meaning. |
+| `schema_version` | Currently `6`. Check it before parsing. Version 6 added `provenance.aqcat_spin` and `provenance.aqcat_fidelity` for the AQCat25-EV2 models (see [The AQCat25-EV2 fields](#the-aqcat25-ev2-fields)); a schema-5 record simply lacks both keys, and appending a stage to one reports them under `stage_provenance_new_fields`, never as a change. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. The `singlepoint` and `freq` stage kinds are additive and do not bump the schema: `provenance` is untouched, and no existing field changes meaning. |
 | `command` | `optimize`, `md`, `neb`, `autoneb`, `singlepoint` or `freq`. |
 | `status` | Status of the **latest** stage: `running`, `converged`, `not_converged`, `completed` (a `singlepoint` or `freq` stage: there is nothing to converge) or `failed`. A record left saying `running` means the job died without reporting back. |
 | `run.mode` | `one-off` or `batch`. |
@@ -967,6 +967,30 @@ passed neither.
 Use these two fields before combining energies from different directories: an
 energy produced under one head must not enter a formula with an energy
 produced under another.
+
+#### The AQCat25-EV2 fields
+
+`provenance.aqcat_spin` (`on` / `off`) and `provenance.aqcat_fidelity`
+(`high` / `low`) are recorded only when the model tag is `aqcat25-*`, and
+are `null` for every other model. The fidelity is the value that ran:
+`high` when `--aqcat-fidelity` was not given (upstream's default). Both join
+the stage-provenance diff, so a NEB restart that switched spin is reported
+as a change. `provenance.mlip_package.name` is `fairchem-core`, as for UMA;
+the version (1.x here, 2.x for UMA) says which line ran. No checkpoint hash
+is recorded: each tag maps to a fixed file at a pinned Hugging Face
+revision.
+
+Two caveats about the numbers these models produce, which no field states:
+
+- `energy` is an **OC20-style referenced adsorption energy**, not a DFT
+  total energy. Never combine it with total energies from VASP or from
+  another MLIP, and never combine a spin-on energy with a spin-off one.
+- `forces` come from a **direct output head**, so they are not exactly the
+  gradient of the energy. There is no stress; a `singlepoint` record gives
+  the stress as unavailable.
+
+`opt_params.txt` and `neb_parameters.txt` carry the same two values as
+`AQCat spin:` and `AQCat fidelity:` lines.
 
 ### Parameter sources
 
