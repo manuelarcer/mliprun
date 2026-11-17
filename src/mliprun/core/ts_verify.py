@@ -7,6 +7,7 @@ and the displace-and-relax check when requested).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -479,3 +480,61 @@ def verify_ts(
 
     record.complete(status="completed", results=results)
     return results
+
+
+def load_neb_for_verification(neb_dir) -> dict:
+    """Read a finished NEB folder: its final band, its parameters and its last stage.
+
+    Returns ``images`` (with their stored energies), ``ts_index`` (the
+    highest-energy image), ``params`` (from ``neb_parameters.txt``) and, from
+    the last ``neb`` or ``neb-restart`` stage of ``mliprun_run.json``,
+    ``last_stage_status`` and ``last_stage_climb`` (``None`` when the record
+    or the stage is missing). Raises ``ValueError`` when ``A2B.traj`` or
+    ``neb_parameters.txt`` is missing, or when the highest image is an endpoint.
+    """
+    from ase.io import read as ase_read
+
+    from mliprun.core.neb import CustomNEB
+    from mliprun.core.vibrations import _param_value
+
+    neb_dir = Path(neb_dir)
+    traj_path = neb_dir / "A2B.traj"
+    params_path = neb_dir / "neb_parameters.txt"
+    if not traj_path.exists():
+        raise ValueError(f"{traj_path} not found: {neb_dir} does not hold a finished NEB band")
+    if not params_path.exists():
+        raise ValueError(f"{params_path} not found: it names the model the NEB used")
+
+    images = ase_read(str(traj_path), index=":")
+    params = CustomNEB._parse_parameters_file(params_path)
+
+    energies = [image.get_potential_energy() for image in images]
+    ts_index = int(np.argmax(energies))
+    if ts_index == 0 or ts_index == len(images) - 1:
+        raise ValueError(
+            f"no interior maximum: the highest-energy image is image {ts_index} of {len(images)}, an endpoint. "
+            "The band has not found a barrier, so there is no transition state to verify"
+        )
+
+    status = None
+    climb = None
+    record_path = neb_dir / "mliprun_run.json"
+    if record_path.exists():
+        try:
+            payload = json.loads(record_path.read_text())
+            neb_stages = [s for s in payload.get("stages", []) if s.get("kind") in ("neb", "neb-restart")]
+            if neb_stages:
+                last = neb_stages[-1]
+                status = last.get("status")
+                raw_climb = _param_value((last.get("parameters") or {}).get("climb"))
+                climb = None if raw_climb is None else bool(raw_climb)
+        except (OSError, ValueError):
+            pass  # an unreadable record only removes a warning, never the verification
+
+    return {
+        "images": images,
+        "ts_index": ts_index,
+        "params": params,
+        "last_stage_status": status,
+        "last_stage_climb": climb,
+    }
