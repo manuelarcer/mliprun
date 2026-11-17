@@ -1,0 +1,23 @@
+{
+  "status": "exact",
+  "notes": [],
+  "argv": [
+    "optimize",
+    "run",
+    "--structure",
+    "POSCAR",
+    "--mlip",
+    "uma-s-1p2",
+    "--uma-task",
+    "oc20",
+    "--device",
+    "cuda",
+    "--optimizer",
+    "bfgs",
+    "--fmax",
+    "0.02",
+    "--max-steps",
+    "500",
+    "--no-plot"
+  ]
+}

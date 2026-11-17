@@ -55,7 +55,14 @@ is the run directory relative to the repository root.
   `converged: false` and no frames. There is no `md.xyz`. Two one-frame structures are in
   the pack: `md_bilayer_built.xyz` (as built, the intended MD start) and
   `md_bilayer_relaxed.xyz` (after the uma-s-1p2/oc20 relaxation).
-- `webapp.json` is not built here; Task 7 produces it.
+- **webapp:** converged (last fmax 0.0134 eV/Å, target 0.02 eV/Å, 12 BFGS steps). The
+  local web app (`mlip webapp`) submitted the unrelaxed `01_relax/o_fcc/POSCAR` to
+  cos-cluster env `cos-cluster-uma` (shared install at commit `2b3044b`), GPU card 0, on
+  2026-11-18. Job directory `../runs/05_webapp/showcase-o-fcc-webapp-2` (remote
+  `/scratchb/juar/mlip-webapp/showcase-o-fcc-webapp-2`); final energy differs from
+  `relax.json` by +2.2e-6 eV. `webapp.json` and `webapp.mp4` are built by
+  `../../scripts/record_webapp.py`, not by `build_pack.py`. Not in the prov ledger: prov has
+  no adapter for a web app optimize job (no `opt_params.txt`).
 
 ## What was not pulled
 

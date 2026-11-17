@@ -1,0 +1,27 @@
+{
+  "job_id": "20261117-234302-optimize-357af6",
+  "calc_type": "optimize",
+  "status": "done",
+  "started_at": "2026-11-17T23:47:46.715Z",
+  "finished_at": "2026-11-17T23:48:14.944Z",
+  "walltime_s": 28.229,
+  "result": {
+    "calc_type": "optimize",
+    "record_status": "converged",
+    "record_results": {
+      "converged": true,
+      "final_energy_eV": -192.46915139776362,
+      "final_fmax_eV_per_A": 0.013398115523159504
+    },
+    "walltime_s": 3.093,
+    "converged": true,
+    "final_energy_eV": -192.46915139776362,
+    "final_fmax_eV_per_A": 0.013398115523159504,
+    "steps": 12
+  },
+  "error": null,
+  "reproduce": {
+    "status": "exact",
+    "notes": []
+  }
+}

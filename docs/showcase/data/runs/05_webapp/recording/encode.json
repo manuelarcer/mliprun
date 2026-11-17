@@ -1,0 +1,20 @@
+{
+ "speedup": 3,
+ "segments_s": {
+  "form": [
+   1.732,
+   10.548
+  ],
+  "wait": [
+   10.548,
+   39.318
+  ],
+  "result": [
+   39.318,
+   47.362
+  ]
+ },
+ "wait_real_s": 28.8,
+ "clip_s_expected": 26.5,
+ "size_bytes": 547945
+}
