@@ -481,6 +481,95 @@ def test_a_changed_ts_geometry_archives_the_previous_verification(tmp_path):
     assert "A verification of a different TS geometry" in (tmp_path / "ts_verify.txt").read_text()
 
 
+def test_archiving_moves_only_the_verifications_own_files(tmp_path):
+    _verify(tmp_path)
+    (tmp_path / "user_notes.txt").write_text("keep me")
+    (tmp_path / "inputs").mkdir()
+    (tmp_path / "inputs" / "x.txt").write_text("input")
+
+    second = _verify(tmp_path, ts_shift=0.01)
+    assert second["archived_previous"] == "previous_1"
+    assert (tmp_path / "user_notes.txt").read_text() == "keep me"
+    assert (tmp_path / "inputs" / "x.txt").read_text() == "input"
+    archived = {p.name for p in (tmp_path / "previous_1").iterdir()}
+    assert {"ts_verify.txt", "ts_structure.vasp", "mliprun_run.json", "ts_freq",
+            "ts_freq_vibrations.json"} <= archived
+    assert "user_notes.txt" not in archived and "inputs" not in archived
+
+
+def test_a_foreign_run_record_is_not_archived(tmp_path):
+    from mliprun.core.ts_verify import _prepare_output_dir
+
+    stale = _structures(0.5)[0]
+    from ase.io import write as ase_write
+    ase_write(str(tmp_path / "ts_structure.vasp"), stale, format="vasp")
+    foreign = '{"command": "neb", "stages": []}'
+    (tmp_path / "mliprun_run.json").write_text(foreign)
+    (tmp_path / "A2B.traj").write_text("band")
+
+    assert _prepare_output_dir(tmp_path, _structures()[0]) == "previous_1"
+    assert (tmp_path / "mliprun_run.json").read_text() == foreign
+    assert (tmp_path / "A2B.traj").read_text() == "band"
+    assert not (tmp_path / "previous_1" / "mliprun_run.json").exists()
+    assert (tmp_path / "previous_1" / "ts_structure.vasp").exists()
+
+
+def test_an_unreadable_run_record_is_not_archived(tmp_path):
+    from ase.io import write as ase_write
+
+    from mliprun.core.ts_verify import _prepare_output_dir
+
+    ase_write(str(tmp_path / "ts_structure.vasp"), _structures(0.5)[0], format="vasp")
+    (tmp_path / "mliprun_run.json").write_text("{ not json")
+    assert _prepare_output_dir(tmp_path, _structures()[0]) == "previous_1"
+    assert (tmp_path / "mliprun_run.json").read_text() == "{ not json"
+
+
+def test_a_stale_report_is_removed_even_without_a_stored_structure(tmp_path):
+    (tmp_path / "ts_verify.txt").write_text("TS verification: verified\n")
+    (tmp_path / "ts_relax_plus.log").write_text("old")
+    from mliprun.core.ts_verify import _prepare_output_dir
+
+    assert _prepare_output_dir(tmp_path, _structures()[0]) is None
+    assert not (tmp_path / "ts_verify.txt").exists()
+    assert not (tmp_path / "ts_relax_plus.log").exists()
+
+
+def test_the_foreign_record_after_a_run_is_replaced_by_the_frequency_run(tmp_path):
+    from ase.io import write as ase_write
+
+    ase_write(str(tmp_path / "ts_structure.vasp"), _structures(0.5)[0], format="vasp")
+    (tmp_path / "mliprun_run.json").write_text('{"command": "neb", "stages": []}')
+    _verify(tmp_path)
+    record = json.loads((tmp_path / "mliprun_run.json").read_text())
+    # Measured: the left-in-place foreign record is replaced by the frequency run,
+    # as `freq run --output-dir` does; it is not appended to.
+    assert record["command"] == "ts-verify"
+    assert [s["kind"] for s in record["stages"]] == ["freq", "ts-verify"]
+
+
+@pytest.mark.parametrize("change", ["count", "symbols", "cell", "unreadable"])
+def test_same_geometry_is_false_for_a_different_system(tmp_path, change):
+    from ase.io import write as ase_write
+
+    from mliprun.core.ts_verify import _same_geometry
+
+    ts = _structures()[0]
+    stored = ts.copy()
+    if change == "count":
+        stored = Atoms("H2", positions=[CENTRE, CENTRE + 1], cell=ts.cell, pbc=False)
+    elif change == "symbols":
+        stored.set_chemical_symbols(["He"])
+    elif change == "cell":
+        stored.set_cell([11.0, 10.0, 10.0])
+    path = tmp_path / "ts_structure.vasp"
+    if change == "unreadable":
+        path.write_text("garbage\n")
+    else:
+        ase_write(str(path), stored, format="vasp")
+    assert _same_geometry(path, ts) is False
+
+
 def test_the_same_geometry_keeps_the_directory_and_reuses_the_cache(tmp_path):
     first = _verify(tmp_path, checks=("overlap", "relax"))
     assert first["n_force_calls_frequencies"] > 0

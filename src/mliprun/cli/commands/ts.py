@@ -51,7 +51,7 @@ def echo_ts_verification(results: dict, output_dir: Path) -> None:
                f"(limit {results['ts_fmax_limit_eV_per_A']:.4f})")
     for note in report_notes(results):
         typer.echo(f"   {note}")
-    overlap =results.get("overlap")
+    overlap = results.get("overlap")
     if overlap is not None:
         value = ("not computed" if overlap["value"] is None
                  else f"{overlap['value']:.4f}")

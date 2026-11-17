@@ -261,34 +261,52 @@ def _same_geometry(structure_path: Path, atoms) -> bool:
     return bool(np.allclose(stored.get_positions(), atoms.get_positions(), rtol=0.0, atol=_GEOMETRY_TOLERANCE))
 
 
+def _own_outputs(directory: Path) -> list[Path]:
+    """Entries of ``directory`` that a verification wrote.
+
+    The structure and report, everything named ``ts_freq*`` (frequency files,
+    mode trajectories, the displacement cache directory) or ``ts_relax_*``,
+    and ``mliprun_run.json`` only when it is a ``ts-verify`` record. Anything
+    else, including another command's record, is not ours to move or delete.
+    """
+    own = []
+    for entry in sorted(directory.iterdir()):
+        name = entry.name
+        if name in ("ts_structure.vasp", "ts_verify.txt") or name.startswith(("ts_freq", "ts_relax_")):
+            own.append(entry)
+        elif name == "mliprun_run.json":
+            try:
+                if json.loads(entry.read_text()).get("command") == "ts-verify":
+                    own.append(entry)
+            except (OSError, ValueError, AttributeError):
+                pass  # unreadable or not a record: leave it where it is
+    return own
+
+
 def _prepare_output_dir(output_path: Path, work) -> str | None:
     """Make ``output_path`` ready for a new verification of ``work``.
 
-    A previous verification of a different TS geometry is moved, whole, into
-    ``previous_<n>/`` (returned as that name). For the same geometry the
-    directory stays, so its displacement cache is reused, but this command's
-    own regenerated outputs (the report and the relaxation files) are removed
-    so that no older verdict or relaxation lingers beside the new record.
+    The verification's own files (see :func:`_own_outputs`) of a different TS
+    geometry are moved into ``previous_<n>/`` (returned as that name); other
+    files in the directory stay. For the same geometry the directory stays, so
+    its displacement cache is reused, but the report and the relaxation files
+    are removed so that no older verdict or relaxation lingers beside the new
+    record. A report left without a stored structure is removed too.
     """
     structure = output_path / "ts_structure.vasp"
-    if not structure.exists():
-        return None
-    if _same_geometry(structure, work):
-        (output_path / "ts_verify.txt").unlink(missing_ok=True)
-        for side in ("plus", "minus"):
-            for stale in output_path.glob(f"ts_relax_{side}.*"):
-                stale.unlink()
-        return None
-    number = 1
-    while (output_path / f"previous_{number}").exists():
-        number += 1
-    archive = output_path / f"previous_{number}"
-    archive.mkdir()
-    for entry in list(output_path.iterdir()):
-        if entry == archive or (entry.name.startswith("previous_") and entry.is_dir()):
-            continue
-        entry.rename(archive / entry.name)
-    return archive.name
+    if structure.exists() and not _same_geometry(structure, work):
+        number = 1
+        while (output_path / f"previous_{number}").exists():
+            number += 1
+        archive = output_path / f"previous_{number}"
+        archive.mkdir()
+        for entry in _own_outputs(output_path):
+            entry.rename(archive / entry.name)
+        return archive.name
+    for entry in _own_outputs(output_path):
+        if entry.name == "ts_verify.txt" or entry.name.startswith("ts_relax_"):
+            entry.unlink()
+    return None
 
 
 def report_notes(results: dict) -> list[str]:
@@ -326,7 +344,7 @@ def _format_report(results: dict, settings: dict) -> str:
         f"(limit {results['ts_fmax_limit_eV_per_A']:.4f} eV/A)"
     )
     lines.extend(report_notes(results))
-    overlap =results.get("overlap")
+    overlap = results.get("overlap")
     if overlap is not None:
         value = "not computed" if overlap["value"] is None else f"{overlap['value']:.4f}"
         lines.append(f"Overlap check: {overlap['status']}")
