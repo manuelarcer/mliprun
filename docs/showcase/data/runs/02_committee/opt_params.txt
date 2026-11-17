@@ -1,0 +1,18 @@
+Geometry Optimization Parameters
+=================================
+MLIP model:        committee
+Committee:         /scratchb/juar/mliprun-showcase/02_committee/committee.yaml
+  sha256:          9db95037b849d459dc6b3bf68ddd314f31506bde81db19bee46f20ed55988474
+  mixed theory:    False
+  - uma-s-1p2@oc20: uma-s-1p2 [RPBE/OC20] gpu=0 env=/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma
+  - 7net-omni@oc20: 7net-omni [RPBE/OC20] gpu=0 env=/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/sevenn
+  - mace-mh-1@oc20_usemppbe: mace-mh-1 [RPBE/OC20] gpu=0 env=/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/mace
+Uncertainty thr.:  none
+Device:            auto
+Relax cell:        False
+Structure:         POSCAR
+Optimizer:         BFGS
+fmax (eV/Å):       0.02
+Max steps:         500
+Converged:         True
+Output dir:        /scratchb/juar/mliprun-showcase/02_committee

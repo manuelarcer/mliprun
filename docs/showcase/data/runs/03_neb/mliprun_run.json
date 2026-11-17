@@ -1,0 +1,105 @@
+{
+  "schema_version": 6,
+  "command": "neb",
+  "status": "converged",
+  "run": {
+    "mode": "one-off",
+    "batch": null
+  },
+  "inputs": {
+    "n_images": 9,
+    "n_atoms": 37
+  },
+  "parameters": {
+    "num_images": {
+      "value": 7,
+      "source": "user"
+    },
+    "uma_task": {
+      "value": "oc20",
+      "source": "user"
+    },
+    "sevennet_task": {
+      "value": null,
+      "source": "default"
+    },
+    "interp_fmax": {
+      "value": 0.1,
+      "source": "default"
+    },
+    "interp_steps": {
+      "value": 100,
+      "source": "default"
+    }
+  },
+  "provenance": {
+    "mliprun_version": "0.4.0",
+    "ase_version": "3.28.0",
+    "mlip_package": {
+      "name": "fairchem-core",
+      "version": "2.19.0"
+    },
+    "mlip_model": "uma-s-1p2",
+    "uma_task": "oc20",
+    "mace_head": null,
+    "sevennet_task": null,
+    "aqcat_spin": null,
+    "aqcat_fidelity": null,
+    "device_requested": "cuda",
+    "device_resolved": "cuda",
+    "python_version": "3.11.15",
+    "hostname": "cosrnode01g",
+    "started_at": "2026-11-17T23:01:19+08:00",
+    "finished_at": "2026-11-17T23:07:08+08:00",
+    "walltime_s": 349.657
+  },
+  "stages": [
+    {
+      "index": 0,
+      "kind": "neb",
+      "status": "converged",
+      "started_at": "2026-11-17T23:01:19+08:00",
+      "walltime_s": 349.657,
+      "steps": 45,
+      "results": {
+        "n_images": 9,
+        "forward_barrier_eV": 0.5442378085499797,
+        "reverse_barrier_eV": 0.1760966583964887,
+        "reaction_energy_eV": 0.368141150153491,
+        "ts_image_index": 5,
+        "ts_at_endpoint": false,
+        "final_fmax_eV_per_A": 0.017678107329530287
+      },
+      "parameters": {
+        "climb": {
+          "value": true,
+          "source": "user"
+        },
+        "max_steps": {
+          "value": 600,
+          "source": "unspecified"
+        },
+        "k": {
+          "value": 0.1,
+          "source": "user"
+        },
+        "optimizer": {
+          "value": "FIRE",
+          "source": "unspecified"
+        },
+        "fmax": {
+          "value": 0.02,
+          "source": "user"
+        },
+        "dyneb": {
+          "value": false,
+          "source": "default"
+        },
+        "scale_fmax": {
+          "value": 0.0,
+          "source": "default"
+        }
+      }
+    }
+  ]
+}

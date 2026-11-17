@@ -1,0 +1,6 @@
+cell lengths (A): 2.821226 2.821226 2.821226
+cell angles (deg): 59.999999 60.000000 60.000000
+length spread (A): 4.66e-08 (tol 1e-4)
+max |angle - 60| (deg): 5.67e-07 (tol 0.01)
+lattice constant a (A): 3.989816
+fcc check: PASS

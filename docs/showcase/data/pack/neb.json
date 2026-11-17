@@ -1,0 +1,317 @@
+{
+ "use_case": "neb",
+ "command": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/bin/mlip neb run --initial o_fcc/opt_final.vasp --final o_hcp/opt_final.vasp --mlip uma-s-1p2 --uma-task oc20 --device cuda --num-images 7 --k 0.1 --climb --fmax 0.02 --optimize-endpoints --endpoint-fmax 0.02 --endpoint-optimizer bfgs --verify-ts both --plot",
+ "converged": true,
+ "flags": [
+  "ts_verified",
+  "ts_verify_endpoint_fmax_above_relax_fmax"
+ ],
+ "key_numbers": [
+  {
+   "label": "forward barrier, fcc → hcp",
+   "value": 0.5442378085499797,
+   "unit": "eV"
+  },
+  {
+   "label": "reverse barrier, hcp → fcc",
+   "value": 0.1760966583964887,
+   "unit": "eV"
+  },
+  {
+   "label": "reaction energy, E(hcp) − E(fcc)",
+   "value": 0.368141150153491,
+   "unit": "eV"
+  },
+  {
+   "label": "final band fmax",
+   "value": 0.017678107329530287,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "fmax target (band and endpoints)",
+   "value": 0.02,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "NEB optimizer steps",
+   "value": 45.0,
+   "unit": "steps"
+  },
+  {
+   "label": "TS imaginary frequency (magnitude; the mode is imaginary)",
+   "value": 128.32415663161584,
+   "unit": "cm⁻¹"
+  },
+  {
+   "label": "overlap of imaginary mode with NEB tangent",
+   "value": 0.9622349075649221,
+   "unit": "dimensionless"
+  },
+  {
+   "label": "overlap threshold",
+   "value": 0.7,
+   "unit": "dimensionless"
+  },
+  {
+   "label": "TS fmax (free components)",
+   "value": 0.0122631546222283,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "O height above top Pt layer at TS",
+   "value": 1.4140550745094487,
+   "unit": "Å"
+  },
+  {
+   "label": "band check: largest drift from seeded band",
+   "value": 0.10777087866954392,
+   "unit": "Å"
+  },
+  {
+   "label": "band check: allowance for that atom",
+   "value": 1.118502682834698,
+   "unit": "Å"
+  },
+  {
+   "label": "band check: largest inter-image jump",
+   "value": 0.23879577159604462,
+   "unit": "Å"
+  },
+  {
+   "label": "ts_verify endpoint fmax, IS",
+   "value": 0.013398363254964352,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "ts_verify endpoint fmax, FS",
+   "value": 0.017368769273161888,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "ts_verify internal relax fmax",
+   "value": 0.01,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "TS mode animation peak displacement",
+   "value": 0.3,
+   "unit": "Å"
+  }
+ ],
+ "series": {
+  "image_index": [
+   0.0,
+   1.0,
+   2.0,
+   3.0,
+   4.0,
+   5.0,
+   6.0,
+   7.0,
+   8.0
+  ],
+  "energy_eV": [
+   -192.46915339749947,
+   -192.42619295238762,
+   -192.21214178761653,
+   -192.0415795781434,
+   -191.95619833663443,
+   -191.9249155889495,
+   -191.95453523632278,
+   -192.05957320126396,
+   -192.10101224734598
+  ],
+  "relative_energy_eV": [
+   0.0,
+   0.04296044511184505,
+   0.25701160988293736,
+   0.42757381935606986,
+   0.5129550608650391,
+   0.5442378085499797,
+   0.5146181611766849,
+   0.4095801962355097,
+   0.368141150153491
+  ],
+  "reaction_coordinate_A": [
+   0.0,
+   0.30049156924850284,
+   0.5521546301868469,
+   0.7934919083206587,
+   1.0359386501177974,
+   1.2766057993797915,
+   1.485149449981561,
+   1.718035054097432,
+   1.94538247612537
+  ],
+  "seed_reaction_coordinate_A": [
+   0.0,
+   0.20726611140243847,
+   0.4145322219060669,
+   0.6217983429093571,
+   0.8290644545654154,
+   1.0363305650981784,
+   1.2435966761874744,
+   1.4508627857372405,
+   1.6581288969032502
+  ],
+  "neb_step": [
+   0.0,
+   1.0,
+   2.0,
+   3.0,
+   4.0,
+   5.0,
+   6.0,
+   7.0,
+   8.0,
+   9.0,
+   10.0,
+   11.0,
+   12.0,
+   13.0,
+   14.0,
+   15.0,
+   16.0,
+   17.0,
+   18.0,
+   19.0,
+   20.0,
+   21.0,
+   22.0,
+   23.0,
+   24.0,
+   25.0,
+   26.0,
+   27.0,
+   28.0,
+   29.0,
+   30.0,
+   31.0,
+   32.0,
+   33.0,
+   34.0,
+   35.0,
+   36.0,
+   37.0,
+   38.0,
+   39.0,
+   40.0,
+   41.0,
+   42.0,
+   43.0,
+   44.0,
+   45.0
+  ],
+  "neb_fmax_eV_per_A": [
+   3.17475714824236,
+   2.057941734717779,
+   0.5552329101071285,
+   1.0988316974410597,
+   1.0446813808257365,
+   0.9371693940000224,
+   0.7783987522687048,
+   0.5763937148079012,
+   0.3491303891604801,
+   0.4074999734486334,
+   0.5985890707529576,
+   0.7356367117112877,
+   0.7785346576036972,
+   0.6960567014978536,
+   0.48185569738166084,
+   0.18547864552971216,
+   0.23703405816026235,
+   0.22743162453255725,
+   0.20871272047592884,
+   0.18200429516032796,
+   0.149098499651324,
+   0.11280133594195708,
+   0.09098441464275288,
+   0.113228627610714,
+   0.13910033249778542,
+   0.16013809239271126,
+   0.1698659390325977,
+   0.15953420546171004,
+   0.1295545160668997,
+   0.08602207602512371,
+   0.07297739414294747,
+   0.09557766199530537,
+   0.07837301056587205,
+   0.036633269408445794,
+   0.059228259040780176,
+   0.0522231454858333,
+   0.04065806018522262,
+   0.026137438005496064,
+   0.022649251555442226,
+   0.02907697552549388,
+   0.036811763830217385,
+   0.0410109325548485,
+   0.039841226794179715,
+   0.032274792730537225,
+   0.02057557393525683,
+   0.017678107329530287
+  ],
+  "neb_barrier_eV": [
+   0.8603589303232013,
+   0.705555899131042,
+   0.6141192975088927,
+   0.6347546516682598,
+   0.6293500855879586,
+   0.6197337558633365,
+   0.60805889806133,
+   0.5969374871513935,
+   0.5886561810759474,
+   0.5843137946863237,
+   0.5830248449509838,
+   0.5823885690002442,
+   0.5796788869375007,
+   0.5730392040107688,
+   0.5634042767427729,
+   0.5550169046781832,
+   0.5523538964500005,
+   0.5521284062362781,
+   0.5517122212125116,
+   0.551172052566443,
+   0.5505864899167534,
+   0.5500365625597681,
+   0.549572423870444,
+   0.5492196304729475,
+   0.5489224297318458,
+   0.5486148303644143,
+   0.5482005650870576,
+   0.5476099231082969,
+   0.5468819792664874,
+   0.5462031889317416,
+   0.5457580877277053,
+   0.5454511282756869,
+   0.5450271442821588,
+   0.5446233176258772,
+   0.5446846695215584,
+   0.5446541935473022,
+   0.5446021604206805,
+   0.5445496873521449,
+   0.5445078928729856,
+   0.5444856958051503,
+   0.5444707377810403,
+   0.5444477408188106,
+   0.5444153051034561,
+   0.544356632853777,
+   0.5442880019196252,
+   0.5442378085499797
+  ]
+ },
+ "frames": "neb_band.xyz",
+ "run_dir": "03_neb",
+ "cwd": "/scratchb/juar/mliprun-showcase/03_neb",
+ "frames_extra": {
+  "seed": "neb_seed.xyz",
+  "ts_mode": "ts_mode.xyz"
+ },
+ "ts_image_index": 5,
+ "notes": [
+  "ts_verify reported endpoint fmax 0.0134 (IS) / 0.0174 (FS) eV/Å, above its internal displace-and-relax fmax of 0.01 eV/Å (the endpoints were relaxed to 0.02 eV/Å). The verdict is unaffected: both displaced relaxations matched their endpoint (result: connects).",
+  "TS is image 5 of 9 (climbing image).",
+  "neb_band.xyz: final band (A2B.traj). neb_seed.xyz: IDPP seed band (idpp.traj; identical to A2B_full.traj frames 0..8, max position difference 0.0 Å, checked on the cluster).",
+  "ts_mode.xyz: 30 frames, TS + 0.3 Å · sin(2πk/30) · mode, the mode scaled so its most-displaced atom moves 0.3 Å; nonzero only on the 19 atoms ts_verify displaced (indices 18..36). An illustration of the mode, not dynamics.",
+  "Band explosion allowance: 1.0 Å + 1.0 × each atom's IS→FS travel; not exploded."
+ ]
+}

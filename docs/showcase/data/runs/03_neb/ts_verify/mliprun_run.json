@@ -1,0 +1,374 @@
+{
+  "schema_version": 6,
+  "command": "ts-verify",
+  "status": "completed",
+  "run": {
+    "mode": "one-off",
+    "batch": null
+  },
+  "inputs": {
+    "n_atoms": 37,
+    "formula": "OPt36"
+  },
+  "parameters": {
+    "prefix": {
+      "value": "ts_freq",
+      "source": "unspecified"
+    },
+    "delta": {
+      "value": 0.01,
+      "source": "unspecified"
+    },
+    "nfree": {
+      "value": 2,
+      "source": "unspecified"
+    },
+    "direction": {
+      "value": "central",
+      "source": "unspecified"
+    },
+    "method": {
+      "value": "standard",
+      "source": "unspecified"
+    },
+    "write_modes": {
+      "value": "imaginary",
+      "source": "unspecified"
+    },
+    "imaginary_floor_cm-1": {
+      "value": 10.0,
+      "source": "unspecified"
+    },
+    "indices": {
+      "value": [
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35,
+        36
+      ],
+      "source": "unspecified"
+    },
+    "expect_fmax": {
+      "value": null,
+      "source": "unspecified"
+    }
+  },
+  "provenance": {
+    "mliprun_version": "0.4.0",
+    "ase_version": "3.28.0",
+    "mlip_package": {
+      "name": "fairchem-core",
+      "version": "2.19.0"
+    },
+    "mlip_model": "uma-s-1p2",
+    "uma_task": "oc20",
+    "mace_head": null,
+    "sevennet_task": null,
+    "aqcat_spin": null,
+    "aqcat_fidelity": null,
+    "device_requested": "cuda",
+    "device_resolved": "cuda",
+    "python_version": "3.11.15",
+    "hostname": "cosrnode01g",
+    "started_at": "2026-11-17T23:08:20+08:00",
+    "finished_at": "2026-11-17T23:09:40+08:00",
+    "walltime_s": 79.541
+  },
+  "stages": [
+    {
+      "index": 0,
+      "kind": "freq",
+      "status": "completed",
+      "started_at": "2026-11-17T23:08:20+08:00",
+      "walltime_s": 21.304,
+      "steps": null,
+      "results": {
+        "n_modes": 57,
+        "n_imaginary": 1,
+        "n_imaginary_raw": 1,
+        "imaginary_floor_cm-1": 10.0,
+        "frequencies_cm-1": [
+          -128.32415663161584,
+          14.204645348255767,
+          14.409720801867936,
+          48.780673160535166,
+          50.005909045891144,
+          52.62316305421658,
+          54.83951978997382,
+          55.22327447387017,
+          57.188456270446885,
+          59.47707198565335,
+          59.84564821186868,
+          60.12657886943327,
+          61.32845862965185,
+          61.935277921104365,
+          62.40456521434488,
+          62.72777246630673,
+          65.20498723965063,
+          65.57777473842135,
+          70.5165591296457,
+          71.6446582382222,
+          77.27264447651346,
+          77.72298506003584,
+          77.91364011978024,
+          79.61823803911844,
+          81.09740960668323,
+          81.1693969545848,
+          81.74548432307827,
+          83.69412548526971,
+          84.36336669777752,
+          85.12364399317995,
+          88.4338801751827,
+          89.2633411241953,
+          90.32335909763094,
+          92.78880337627743,
+          96.6486748929246,
+          97.41639401176818,
+          104.75476525217877,
+          108.6786142511217,
+          111.01765054370695,
+          114.96702605422847,
+          115.52637075596738,
+          116.12526572440862,
+          116.62113399952536,
+          117.8485993224406,
+          120.13813348489893,
+          120.514877353842,
+          122.2418864391679,
+          123.24266401964445,
+          123.6243143208264,
+          125.22694690762395,
+          125.62072330415408,
+          127.86211435799923,
+          130.02835313742284,
+          131.1246506818955,
+          132.610688645525,
+          397.66222540741626,
+          485.8463192738371
+        ],
+        "imaginary_mask": [
+          true,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false,
+          false
+        ],
+        "zpe_eV": 0.34616037194397686,
+        "fmax_at_input_free_eV_per_A": 0.0122631546222283,
+        "fmax_at_input_all_eV_per_A": 0.18709277107028588,
+        "fmax_expectation": null,
+        "fmax_expectation_source": "none",
+        "fmax_warning": null,
+        "n_displaced_atoms": 19,
+        "n_force_calls": 115,
+        "unhandled_constraints": []
+      }
+    },
+    {
+      "index": 1,
+      "kind": "ts-verify",
+      "status": "completed",
+      "started_at": "2026-11-17T23:08:42+08:00",
+      "walltime_s": 58.237,
+      "steps": null,
+      "results": {
+        "verdict": "verified",
+        "reason": "one imaginary mode and every requested check passed",
+        "checks_requested": [
+          "overlap",
+          "relax"
+        ],
+        "n_imaginary": 1,
+        "imaginary_frequencies_cm-1": [
+          128.32415663161584
+        ],
+        "ts_fmax_free_eV_per_A": 0.0122631546222283,
+        "ts_fmax_limit_eV_per_A": 0.03,
+        "ts_fmax_above_limit": false,
+        "displaced_indices": [
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36
+        ],
+        "n_force_calls_frequencies": 115,
+        "overlap": {
+          "status": "pass",
+          "value": 0.9622349075649221,
+          "threshold": 0.7,
+          "reference": "neb_tangent"
+        },
+        "relax": {
+          "status": "pass",
+          "result": "connects",
+          "displacement_A": 0.1,
+          "match_tolerance_A": 0.3,
+          "fmax_eV_per_A": 0.01,
+          "optimizer": "bfgs",
+          "max_steps": 200,
+          "initial_fmax_eV_per_A": 0.013398363254964352,
+          "final_fmax_eV_per_A": 0.017368769273161888,
+          "endpoints_relaxed": false,
+          "plus": {
+            "converged": true,
+            "steps": 27,
+            "distance_to_initial_A": 1.633832955717926,
+            "distance_to_final_A": 0.011340128043368368,
+            "distance_to_ts_A": 0.5851743769414893,
+            "matched": "final",
+            "returned_to_ts": false,
+            "energy_difference_eV": -0.00018237590893477318
+          },
+          "minus": {
+            "converged": true,
+            "steps": 56,
+            "distance_to_initial_A": 0.006712840353848411,
+            "distance_to_final_A": 1.63191631311105,
+            "distance_to_ts_A": 1.106596678060826,
+            "matched": "initial",
+            "returned_to_ts": false,
+            "energy_difference_eV": -0.00020909237980504258
+          }
+        },
+        "inputs": {
+          "neb_dir": "/scratchb/juar/mliprun-showcase/03_neb",
+          "ts_image_index": 5,
+          "n_images": 9,
+          "neb_last_stage_status": "converged",
+          "neb_last_stage_climb": true
+        }
+      },
+      "parameters": {
+        "checks": {
+          "value": [
+            "overlap",
+            "relax"
+          ],
+          "source": "unspecified"
+        },
+        "delta": {
+          "value": 0.01,
+          "source": "unspecified"
+        },
+        "nfree": {
+          "value": 2,
+          "source": "unspecified"
+        },
+        "imaginary_floor_cm-1": {
+          "value": 10.0,
+          "source": "unspecified"
+        },
+        "ts_fmax_limit_eV_per_A": {
+          "value": 0.03,
+          "source": "unspecified"
+        },
+        "overlap_threshold": {
+          "value": 0.7,
+          "source": "unspecified"
+        },
+        "displacement_A": {
+          "value": 0.1,
+          "source": "unspecified"
+        },
+        "match_tolerance_A": {
+          "value": 0.3,
+          "source": "unspecified"
+        },
+        "relax_fmax": {
+          "value": 0.01,
+          "source": "unspecified"
+        },
+        "relax_optimizer": {
+          "value": "bfgs",
+          "source": "unspecified"
+        },
+        "relax_max_steps": {
+          "value": 200,
+          "source": "unspecified"
+        }
+      }
+    }
+  ]
+}
