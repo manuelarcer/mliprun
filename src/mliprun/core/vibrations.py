@@ -934,6 +934,7 @@ def run_frequencies(
     committee_config=None,
     uncertainty_threshold=None,
     observer=None,
+    record_command: str = "freq",
 ) -> dict:
     """Vibrational frequencies by finite differences.
 
@@ -969,6 +970,10 @@ def run_frequencies(
         exception it raises propagates: the run record is completed as
         ``failed`` and the exception re-raised. ``None`` (default) disables
         it.
+    record_command : str
+        The ``command`` written to a newly created run record. Callers that
+        embed the frequency run in a larger command (TS verification) pass
+        their own name; the stage kind stays ``"freq"``.
 
     Returns
     -------
@@ -1017,7 +1022,7 @@ def run_frequencies(
     }
     record = RunRecord.begin(
         output_path,
-        command="freq",
+        command=record_command,
         stage_kind="freq",
         parameters=parameters,
         inputs={
