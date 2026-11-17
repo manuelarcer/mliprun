@@ -192,6 +192,7 @@ def test_a_true_saddle_connects_both_minima(tmp_path):
         assert (tmp_path / name).exists()
     report = (tmp_path / "ts_verify.txt").read_text()
     assert "Displace-and-relax check: connects" in report
+    assert "fmax of IS 0.0000 eV/A, of FS 0.0000 eV/A" in report
     record = json.loads((tmp_path / "mliprun_run.json").read_text())
     assert record["stages"][1]["results"]["relax"]["result"] == "connects"
 

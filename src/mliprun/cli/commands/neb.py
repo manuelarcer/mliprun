@@ -4,19 +4,24 @@ from datetime import datetime
 from pathlib import Path
 import shutil
 
+import numpy as np
 import typer
 from ase.io import read
 from ase.optimize import FIRE, MDMin, BFGS, LBFGS
 
+from mliprun.cli.commands.ts import echo_ts_verification
 from mliprun.core.neb import CustomNEB
 from mliprun.core.params_io import write_parameters_file, write_endpoint_results
 from mliprun.core.run_record import RunContext
+from mliprun.core.ts_verify import CHECKS_BY_CHOICE, neb_tangent, verify_ts
+from mliprun.core.utils import resolve_device
 from mliprun.cli.utils import MACE_HEAD_HELP, MLIP_HELP, PLOT_HELP, SEVENNET_TASK_HELP, UMA_TASK_HELP, param_sources_from_ctx, parse_relax_atoms, resolve_mlip
 from mliprun.cli.utils import (
     AQCAT_FIDELITY_HELP,
     AQCAT_SPIN_HELP,
     echo_aqcat_settings,
     is_aqcat_tag,
+    reject_aqcat_unsupported,
     resolve_aqcat_fidelity,
 )
 
@@ -88,7 +93,7 @@ def _aqcat_param_lines(mlip, aqcat_spin, aqcat_fidelity) -> dict:
 def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
                     fmax, log, k, climb,
                     dyneb, scale_fmax, neb_optimizer, neb_max_steps, device,
-                    aqcat_spin=None, aqcat_fidelity=None):
+                    aqcat_spin=None, aqcat_fidelity=None, verify_ts=None):
     """Handle NEB restart mode.
 
     Returns
@@ -146,6 +151,8 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         overrides.append(f"k: {k}")
     if climb is not None:
         overrides.append(f"climb: {climb}")
+    if verify_ts is not None:
+        overrides.append(f"verify_ts: {verify_ts}")
     if dyneb is not None:
         overrides.append(f"dyneb: {dyneb}")
     if scale_fmax is not None:
@@ -197,6 +204,7 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         "fmax": fmax if fmax is not None else loaded_params["fmax"],
         "k": k if k is not None else loaded_params.get("k", 0.1),
         "climb": climb if climb is not None else loaded_params.get("climb", True),
+        "verify_ts": verify_ts or loaded_params.get("verify_ts"),
         "dyneb": dyneb if dyneb is not None else loaded_params.get("dyneb", False),
         "scale_fmax": scale_fmax if scale_fmax is not None else loaded_params.get("scale_fmax", 0.0),
         "neb_optimizer": neb_optimizer or loaded_params.get("neb_optimizer", "fire"),
@@ -230,6 +238,7 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         "Final fmax:": params["fmax"],
         "Spring constant (k):": params["k"],
         "Climb:": params["climb"],
+        **({"Verify TS:": params["verify_ts"]} if params["verify_ts"] else {}),
         "Dynamic NEB:": params["dyneb"],
         "Scale fmax:": params["scale_fmax"],
         "NEB optimizer:": params["neb_optimizer"],
@@ -250,7 +259,7 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
                     neb_optimizer, neb_max_steps, optimize_endpoints,
                     endpoint_fmax, endpoint_optimizer, endpoint_max_steps,
                     relax_atoms_str, device, aqcat_spin=None,
-                    aqcat_fidelity=None):
+                    aqcat_fidelity=None, verify_ts=None):
     """Handle normal (non-restart) NEB mode.
 
     Returns
@@ -312,7 +321,8 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
         "sevennet_task": sevennet_task,
         "aqcat_spin": aqcat_spin, "aqcat_fidelity": aqcat_fidelity,
         "fmax": fmax, "k": k,
-        "climb": climb, "dyneb": dyneb, "scale_fmax": scale_fmax,
+        "climb": climb, "verify_ts": verify_ts,
+        "dyneb": dyneb, "scale_fmax": scale_fmax,
         "neb_optimizer": neb_optimizer,
         "neb_max_steps": neb_max_steps, "log": log,
         "num_images": num_images, "total_images": total_images,
@@ -337,6 +347,7 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
         "Final fmax:": fmax,
         "Spring constant (k):": k,
         "Climb:": climb,
+        **({"Verify TS:": verify_ts} if verify_ts else {}),
         "Dynamic NEB:": dyneb,
         "Scale fmax:": scale_fmax,
         "NEB optimizer:": neb_optimizer,
@@ -381,6 +392,85 @@ def _handle_new_neb(output_dir, initial, final, *, num_images, interp_fmax,
     return neb_obj, params
 
 
+def _check_verify_ts_options(output_dir, restart, verify_ts, climb, mlip):
+    """Refuse a bad ``--verify-ts`` setup before any model loads.
+
+    On ``--restart`` the stored value, climb setting and model count as if
+    they had been given, unless the command line overrides them. Returns
+    the ``--verify-ts`` value that applies (``None`` when unset).
+    """
+    stored = {}
+    if restart:
+        try:
+            stored = CustomNEB._parse_parameters_file(
+                output_dir / "neb_parameters.txt")
+        except (OSError, ValueError):
+            pass  # the restart handler reports the missing or broken file
+    verify_ts = verify_ts or stored.get("verify_ts")
+    if verify_ts is None:
+        return None
+    if verify_ts not in CHECKS_BY_CHOICE:
+        typer.echo(f"Error: --verify-ts must be one of "
+                   f"{', '.join(CHECKS_BY_CHOICE)}; got {verify_ts!r}")
+        raise typer.Exit(code=1)
+    if climb is None:
+        climb = stored.get("climb", True)
+    if not climb:
+        typer.echo("Error: --verify-ts needs a climbing image, because only "
+                   "a climbing image is driven to the saddle. Drop "
+                   "--no-climb, or drop --verify-ts.")
+        raise typer.Exit(code=1)
+    reject_aqcat_unsupported(mlip or stored.get("mlip"), "neb --verify-ts")
+    return verify_ts
+
+
+def _verify_ts_after_neb(neb_obj, choice, output_dir):
+    """Verify the highest image of a converged band; never fails the NEB."""
+    try:
+        if not neb_obj.converged:
+            typer.echo("TS verification skipped: the NEB did not converge.")
+            return
+        images = neb_obj.images
+        energies = [image.get_potential_energy() for image in images]
+        ts_index = int(np.argmax(energies))
+        if ts_index in (0, len(images) - 1):
+            typer.echo("TS verification skipped: the highest image is an "
+                       "endpoint, so the band has no interior maximum.")
+            return
+        # The tangent needs the energies, which the copies below do not carry.
+        tangent = neb_tangent(images, ts_index)
+        initial, ts_atoms, final = (images[0].copy(), images[ts_index].copy(),
+                                    images[-1].copy())
+        ts_dir = output_dir / "ts_verify"
+        typer.echo(f"Verifying image {ts_index} as a transition state "
+                   f"(check={choice})...")
+        results = verify_ts(
+            ts_atoms, initial, final,
+            calculator_factory=neb_obj.setup_calculator,
+            checks=CHECKS_BY_CHOICE[choice],
+            reference_direction=tangent,
+            reference_label="neb_tangent",
+            output_dir=ts_dir,
+            model_name=neb_obj.mlip,
+            provenance={
+                "device_requested": neb_obj.device,
+                "device_resolved": resolve_device(neb_obj.device),
+                "uma_task": neb_obj.uma_task,
+                "mace_head": getattr(neb_obj, "mace_head", None),
+                "sevennet_task": getattr(neb_obj, "sevennet_task", None),
+            },
+            extra_inputs={
+                "neb_dir": str(output_dir.resolve()),
+                "ts_image_index": ts_index,
+                "n_images": len(images),
+            },
+            run_context=RunContext(command="ts-verify", mode="one-off"),
+        )
+        echo_ts_verification(results, ts_dir)
+    except Exception as exc:
+        typer.echo(f"TS verification failed: {exc}")
+
+
 @app.command()
 def run(
     ctx: typer.Context,
@@ -399,6 +489,7 @@ def run(
     log: str = typer.Option(None, help="Name for the NEB iteration log file (default: neb.log)"),
     k: float = typer.Option(None, help="Spring constant for NEB"),
     climb: bool = typer.Option(None, help="Enable climbing image NEB"),
+    verify_ts: str = typer.Option(None, "--verify-ts", help="After a converged climbing-image NEB, verify the highest image as a transition state: 'overlap' (imaginary mode vs the NEB tangent), 'relax' (displace along the mode and relax both ways) or 'both'. Written to ts_verify/. Needs a climbing image."),
     dyneb: bool = typer.Option(None, "--dyneb/--no-dyneb", help="Use DyNEB (dynamic NEB): freeze images already converged below fmax to save force calls (default: off)"),
     scale_fmax: float = typer.Option(None, help="DyNEB only: loosen per-image convergence with distance from the highest-energy image (0 = uniform criterion)"),
     neb_optimizer: str = typer.Option(None, help="NEB optimizer: 'fire', 'mdmin', 'bfgs', or 'lbfgs'"),
@@ -414,6 +505,8 @@ def run(
 ):
     """Run Nudged Elastic Band (NEB) calculation."""
     output_dir = Path.cwd()
+
+    verify_ts = _check_verify_ts_options(output_dir, restart, verify_ts, climb, mlip)
 
     if restart:
         # Validate forbidden parameters
@@ -435,6 +528,7 @@ def run(
             neb_optimizer=neb_optimizer,
             neb_max_steps=neb_max_steps, device=device,
             aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity,
+            verify_ts=verify_ts,
         )
         typer.echo("Skipping interpolation (loaded from restart)")
     else:
@@ -451,6 +545,7 @@ def run(
             endpoint_max_steps=endpoint_max_steps,
             relax_atoms_str=relax_atoms, device=device,
             aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity,
+            verify_ts=verify_ts,
         )
 
     # ---- Run NEB optimization ----
@@ -493,6 +588,9 @@ def run(
         typer.echo(f" - {output_dir / f}")
     for i in range(total):
         typer.echo(f" - {output_dir / f'{i:02d}' / 'POSCAR'}")
+
+    if params.get("verify_ts"):
+        _verify_ts_after_neb(neb_obj, params["verify_ts"], output_dir)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ from mliprun.cli.utils import (
 )
 from mliprun.core.run_record import RunContext
 from mliprun.core.ts_verify import (
+    CHECKS_BY_CHOICE,
     load_neb_for_verification,
     neb_tangent,
     verify_ts,
@@ -32,11 +33,32 @@ from mliprun.core.vibrations import (
 
 app = typer.Typer(help="Transition-state tools.")
 
-_CHECKS = {
-    "overlap": ("overlap",),
-    "relax": ("relax",),
-    "both": ("overlap", "relax"),
-}
+
+def echo_ts_verification(results: dict, output_dir: Path) -> None:
+    """Print the verdict, its reason, the checks and the report path."""
+    typer.echo(f"\nTS verification: {results['verdict']}")
+    typer.echo(f"   Reason: {results['reason']}")
+    typer.echo(f"   Imaginary modes: {results['n_imaginary']}"
+               + (" (" + ", ".join(f"{f:.1f}i cm⁻¹" for f
+                                   in results["imaginary_frequencies_cm-1"])
+                  + ")" if results["n_imaginary"] else ""))
+    typer.echo(f"   TS fmax (free components): "
+               f"{results['ts_fmax_free_eV_per_A']:.4f} eV/Å "
+               f"(limit {results['ts_fmax_limit_eV_per_A']:.4f})")
+    overlap = results.get("overlap")
+    if overlap is not None:
+        value = ("not computed" if overlap["value"] is None
+                 else f"{overlap['value']:.4f}")
+        typer.echo(f"   Overlap with {overlap['reference']}: {value} "
+                   f"(threshold {overlap['threshold']:.2f}) -> "
+                   f"{overlap['status']}")
+    relax = results.get("relax")
+    if relax is not None:
+        typer.echo(f"   Displace-and-relax: "
+                   f"{relax['result'] or relax['status']}")
+        if "note" in relax:
+            typer.echo(f"   Note: {relax['note']}")
+    typer.echo(f"\n📄 {(output_dir / 'ts_verify.txt').resolve()}")
 
 
 @app.callback()
@@ -126,8 +148,8 @@ def verify(
         missing = [name for name, value in files.items() if value is None]
         _fail(f"--ts, --initial and --final go together; missing "
               f"{', '.join(missing)}.")
-    if check not in _CHECKS:
-        _fail(f"--check must be one of {', '.join(_CHECKS)}; got {check!r}.")
+    if check not in CHECKS_BY_CHOICE:
+        _fail(f"--check must be one of {', '.join(CHECKS_BY_CHOICE)}; got {check!r}.")
     if nfree not in VALID_NFREE:
         _fail(f"--nfree must be 2 or 4, got {nfree}.")
 
@@ -213,7 +235,7 @@ def verify(
         results = verify_ts(
             ts_atoms, initial_atoms, final_atoms,
             calculator_factory=calculator_factory,
-            checks=_CHECKS[check],
+            checks=CHECKS_BY_CHOICE[check],
             reference_direction=reference_direction,
             reference_label=reference_label,
             output_dir=output_dir,
@@ -242,30 +264,7 @@ def verify(
     except (FrequencyCacheError, ValueError) as exc:
         _fail(str(exc))
 
-    typer.echo(f"\nTS verification: {results['verdict']}")
-    typer.echo(f"   Reason: {results['reason']}")
-    typer.echo(f"   Imaginary modes: {results['n_imaginary']}"
-               + (" (" + ", ".join(f"{f:.1f}i cm⁻¹" for f
-                                   in results["imaginary_frequencies_cm-1"])
-                  + ")" if results["n_imaginary"] else ""))
-    typer.echo(f"   TS fmax (free components): "
-               f"{results['ts_fmax_free_eV_per_A']:.4f} eV/Å "
-               f"(limit {results['ts_fmax_limit_eV_per_A']:.4f})")
-    overlap = results.get("overlap")
-    if overlap is not None:
-        value = ("not computed" if overlap["value"] is None
-                 else f"{overlap['value']:.4f}")
-        typer.echo(f"   Overlap with {overlap['reference']}: {value} "
-                   f"(threshold {overlap['threshold']:.2f}) -> "
-                   f"{overlap['status']}")
-    relax = results.get("relax")
-    if relax is not None:
-        typer.echo(f"   Displace-and-relax: "
-                   f"{relax['result'] or relax['status']}")
-        if "note" in relax:
-            typer.echo(f"   Note: {relax['note']}")
-    typer.echo(f"\n📄 {(output_dir / 'ts_verify.txt').resolve()}")
-
+    echo_ts_verification(results, output_dir)
 
 if __name__ == "__main__":
     app()

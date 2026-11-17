@@ -23,6 +23,12 @@ from mliprun.core.utils import calc_fmax
 from mliprun.core.vibrations import IMAGINARY_FLOOR_CM1, run_frequencies, select_indices
 
 _KNOWN_CHECKS = ("overlap", "relax")
+# The checks behind each user-facing choice (``--check`` and ``--verify-ts``).
+CHECKS_BY_CHOICE = {
+    "overlap": ("overlap",),
+    "relax": ("relax",),
+    "both": ("overlap", "relax"),
+}
 _OPTIMIZERS = {"bfgs": BFGS, "lbfgs": LBFGS, "fire": FIRE}  # same map as CustomNEB.optimize_endpoints
 _FREQ_PROVENANCE_KEYS = ("device_requested", "device_resolved", "uma_task", "mace_head", "sevennet_task")
 
@@ -268,7 +274,7 @@ def _format_report(results: dict, settings: dict) -> str:
             if "note" in relax:
                 lines.append(f"  Note: {relax['note']}")
             lines.append(
-                f"  fmax of IS{relax['initial_fmax_eV_per_A']:.4f} eV/A, of FS {relax['final_fmax_eV_per_A']:.4f} eV/A"
+                f"  fmax of IS {relax['initial_fmax_eV_per_A']:.4f} eV/A, of FS {relax['final_fmax_eV_per_A']:.4f} eV/A"
             )
             if not relax["endpoints_relaxed"]:
                 lines.append(
