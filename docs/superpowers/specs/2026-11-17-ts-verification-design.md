@@ -303,6 +303,12 @@ In the output directory:
   reasons unrelated to the TS. The report prints the fmax of IS and FS (one
   force call each) with a note when it exceeds the relax fmax.
 
+- **The NEB directory's record is not modified** (settled while planning).
+  Completing an appended stage rewrites the record's top-level status, so it
+  would replace the NEB's `converged`. The verification record is always at
+  `<neb-dir>/ts_verify/mliprun_run.json`, and docs/OUTPUTS.md states that
+  location.
+
 ## Left to the builder
 
 - Internal structure of `ts_verify.py` and its helper names.
