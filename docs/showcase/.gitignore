@@ -1,0 +1,20 @@
+# Run outputs: keep only small, reviewable files; never trajectories.
+# These rules override the repository-root .gitignore (which ignores *.log,
+# *_energy.csv, opt_final.vasp, ...) for this folder.
+data/runs/**
+!data/runs/**/
+!data/runs/**/*.csv
+!data/runs/**/*.json
+!data/runs/**/*_final.vasp
+!data/runs/**/*.txt
+# TS-verification output. mliprun writes it to a folder named ts_verify/
+# (ts_verify.txt, ts_structure.vasp, ts_freq_vibrations.json); verify_ts* is
+# kept as well for any file named that way.
+!data/runs/**/verify_ts*
+!data/runs/**/verify_ts*/**
+!data/runs/**/ts_verify*
+!data/runs/**/ts_verify*/**
+# Never commit trajectories, even inside the folders re-included above.
+data/runs/**/*.traj
+# .txt logs: commit only files of 1 MB or less. Git cannot test file size;
+# check with `find data/runs -name '*.txt' -size +1M` before committing.
