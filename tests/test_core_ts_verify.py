@@ -336,6 +336,68 @@ def test_constraints_are_carried_into_the_relaxations(tmp_path):
 
 
 
+def _pair_with_fixed_spectator(position):
+    atoms = Atoms("H2", positions=[position, [8.0, 8.0, 8.0]], cell=[10.0, 10.0, 10.0], pbc=False)
+    atoms.set_constraint(FixAtoms(indices=[1]))
+    return atoms
+
+
+def test_explicit_indices_that_include_a_fixed_atom_still_displace_the_free_atom_fully(tmp_path):
+    r = verify_ts(_pair_with_fixed_spectator(CENTRE), _pair_with_fixed_spectator(CENTRE - X),
+                  _pair_with_fixed_spectator(CENTRE + X), calculator_factory=_WithSpectator,
+                  checks=("relax",), indices=[0, 1], output_dir=tmp_path)
+    assert r["displaced_indices"] == [0, 1]
+    first = ase_read(str(tmp_path / "ts_relax_plus.traj"), index=0)
+    assert np.linalg.norm(first.get_positions()[0] - CENTRE) == pytest.approx(0.1, abs=1e-6)
+
+
+def test_a_mode_component_on_a_fixed_atom_does_not_shrink_the_displacement(tmp_path, monkeypatch):
+    # The fixed atom 1 carries the largest component: before the fix the free atom moved only 0.05 A.
+    mode = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
+    monkeypatch.setattr("mliprun.core.ts_verify._read_imaginary_mode", lambda *a, **k: mode)
+    verify_ts(_pair_with_fixed_spectator(CENTRE), _pair_with_fixed_spectator(CENTRE - X),
+              _pair_with_fixed_spectator(CENTRE + X), calculator_factory=_WithSpectator,
+              checks=("relax",), indices=[0, 1], output_dir=tmp_path)
+    first = ase_read(str(tmp_path / "ts_relax_plus.traj"), index=0)
+    assert np.linalg.norm(first.get_positions()[0] - CENTRE) == pytest.approx(0.1, abs=1e-6)
+
+
+def test_a_mode_with_no_free_component_makes_the_relax_check_inconclusive(tmp_path, monkeypatch):
+    mode = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    monkeypatch.setattr("mliprun.core.ts_verify._read_imaginary_mode", lambda *a, **k: mode)
+    r = verify_ts(_pair_with_fixed_spectator(CENTRE), _pair_with_fixed_spectator(CENTRE - X),
+                  _pair_with_fixed_spectator(CENTRE + X), calculator_factory=_WithSpectator,
+                  checks=("relax",), indices=[0, 1], output_dir=tmp_path)
+    assert r["relax"]["status"] == "inconclusive" and r["relax"]["result"] == "inconclusive"
+    assert r["relax"]["note"] == "the imaginary mode has no component on the free atoms"
+    assert r["verdict"] == "inconclusive"
+    assert not (tmp_path / "ts_relax_plus.traj").exists()
+    assert "Note: the imaginary mode has no component on the free atoms" in (tmp_path / "ts_verify.txt").read_text()
+
+
+CONSTRAINT_WARNING = "constraints differ between the TS and the initial/final structures"
+
+
+def test_constraints_that_differ_between_ts_and_endpoints_are_a_warning(tmp_path):
+    def free_pair(position):
+        return Atoms("H2", positions=[position, [8.0, 8.0, 8.0]], cell=[10.0, 10.0, 10.0], pbc=False)
+
+    r = verify_ts(_pair_with_fixed_spectator(CENTRE), free_pair(CENTRE - X), free_pair(CENTRE + X),
+                  calculator_factory=_WithSpectator, output_dir=tmp_path)
+    assert r["warnings"] == [CONSTRAINT_WARNING]
+    assert f"Warning: {CONSTRAINT_WARNING}" in (tmp_path / "ts_verify.txt").read_text()
+    record = json.loads((tmp_path / "mliprun_run.json").read_text())
+    assert record["stages"][-1]["results"]["warnings"] == [CONSTRAINT_WARNING]
+
+
+def test_matching_constraints_give_no_warning_key(tmp_path):
+    r = verify_ts(_pair_with_fixed_spectator(CENTRE), _pair_with_fixed_spectator(CENTRE - X),
+                  _pair_with_fixed_spectator(CENTRE + X), calculator_factory=_WithSpectator,
+                  output_dir=tmp_path)
+    assert "warnings" not in r
+    assert "Warning:" not in (tmp_path / "ts_verify.txt").read_text()
+
+
 def test_freq_run_record_command_is_unchanged_by_default(tmp_path):
     atoms = molecule("N2")
     atoms.calc = EMT()

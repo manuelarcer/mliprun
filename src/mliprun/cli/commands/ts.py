@@ -82,6 +82,16 @@ def _fail(message: str) -> None:
     raise typer.Exit(1)
 
 
+def _read_structure(option: str, path: Path):
+    """Read one structure file, or stop with a clear message (no traceback)."""
+    if not path.is_file():
+        _fail(f"{option} file not found: {path}")
+    try:
+        return read(path)
+    except Exception as exc:  # ASE raises many types for a bad file
+        _fail(f"cannot read the {option} file {path}: {exc}")
+
+
 @app.command()
 def verify(
     ctx: typer.Context,
@@ -199,9 +209,8 @@ def verify(
         }
         default_output = neb_dir / "ts_verify"
     else:
-        ts_atoms = read(ts)
-        initial_atoms = read(initial)
-        final_atoms = read(final)
+        ts_atoms, initial_atoms, final_atoms = (
+            _read_structure(name, path) for name, path in files.items())
         mlip = mlip or "auto"
         device = device or "auto"
         extra_inputs = {
@@ -272,6 +281,7 @@ def verify(
         _fail(str(exc))
 
     echo_ts_verification(results, output_dir)
+
 
 if __name__ == "__main__":
     app()

@@ -10,6 +10,7 @@ import json
 import re
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from ase.build import add_adsorbate, fcc100
 from ase.calculators.emt import EMT
@@ -66,6 +67,11 @@ def test_a_converged_neb_is_verified(workdir):
     assert results["n_imaginary"] == 1 and results["overlap"]["reference"] == "neb_tangent"
     assert results["overlap"]["value"] > 0.7 and results["verdict"] == "verified"
     assert "TS verification: verified" in result.stdout
+    # These three numbers are quoted in the worked example of docs/TS_VERIFICATION.md.
+    assert results["imaginary_frequencies_cm-1"][0] == pytest.approx(64.5, abs=1.0)
+    assert results["overlap"]["value"] == pytest.approx(0.998, abs=0.002)
+    neb_data = pd.read_csv("neb_data.csv")
+    assert neb_data["relative_energy"].max() == pytest.approx(0.238, abs=0.005)
     assert results["inputs"]["neb_last_stage_status"] == "converged"
     assert results["inputs"]["neb_last_stage_climb"] is True
     assert "Note: the NEB band" not in result.stdout
@@ -104,6 +110,34 @@ def test_a_restart_that_moves_the_ts_verifies_again_and_archives_the_old_record(
     assert "moved to previous_1/" in new_text
     assert "moved to previous_1/" in restarted.stdout
     assert _last_stage_results("ts_verify/mliprun_run.json")["verdict"] == "verified"
+
+
+def test_none_on_restart_turns_a_stored_verification_off(workdir):
+    assert _neb("--verify-ts", "overlap").exit_code == 0
+    (workdir / "ts_verify" / "ts_verify.txt").unlink()
+
+    restarted = runner.invoke(app, ["--restart", "--verify-ts", "none"])
+    assert restarted.exit_code == 0, restarted.stdout
+    assert "Verify TS:" not in Path("neb_parameters.txt").read_text()
+    assert not (workdir / "ts_verify" / "ts_verify.txt").exists()
+    assert "TS verification" not in restarted.stdout
+
+
+def test_none_on_restart_removes_the_reason_to_refuse_no_climb(workdir):
+    assert _neb("--verify-ts", "overlap").exit_code == 0
+    refused = runner.invoke(app, ["--restart", "--no-climb"])
+    assert refused.exit_code == 1 and "climbing" in refused.stdout
+
+    accepted = runner.invoke(app, ["--restart", "--no-climb", "--verify-ts", "none"])
+    assert accepted.exit_code == 0, accepted.stdout
+    assert "Verify TS:" not in Path("neb_parameters.txt").read_text()
+
+
+def test_none_on_a_new_run_means_off(workdir):
+    result = _neb("--verify-ts", "none")
+    assert result.exit_code == 0, result.stdout
+    assert "Verify TS:" not in Path("neb_parameters.txt").read_text()
+    assert not (workdir / "ts_verify").exists()
 
 
 def test_a_value_given_on_restart_overrides_the_stored_one(workdir):

@@ -204,7 +204,8 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         "fmax": fmax if fmax is not None else loaded_params["fmax"],
         "k": k if k is not None else loaded_params.get("k", 0.1),
         "climb": climb if climb is not None else loaded_params.get("climb", True),
-        "verify_ts": verify_ts or loaded_params.get("verify_ts"),
+        "verify_ts": (None if verify_ts == "none"
+                      else verify_ts or loaded_params.get("verify_ts")),
         "dyneb": dyneb if dyneb is not None else loaded_params.get("dyneb", False),
         "scale_fmax": scale_fmax if scale_fmax is not None else loaded_params.get("scale_fmax", 0.0),
         "neb_optimizer": neb_optimizer or loaded_params.get("neb_optimizer", "fire"),
@@ -397,8 +398,12 @@ def _check_verify_ts_options(output_dir, restart, verify_ts, climb, mlip):
 
     On ``--restart`` the stored value, climb setting and model count as if
     they had been given, unless the command line overrides them. Returns
-    the ``--verify-ts`` value that applies (``None`` when unset).
+    the ``--verify-ts`` value that applies (``None`` when unset). An explicit
+    ``none`` switches verification off; it is returned as ``"none"`` so that
+    a restart does not fall back to the stored value.
     """
+    if verify_ts == "none":
+        return "none"
     stored = {}
     if restart:
         try:
@@ -411,7 +416,7 @@ def _check_verify_ts_options(output_dir, restart, verify_ts, climb, mlip):
         return None
     if verify_ts not in CHECKS_BY_CHOICE:
         typer.echo(f"Error: --verify-ts must be one of "
-                   f"{', '.join(CHECKS_BY_CHOICE)}; got {verify_ts!r}")
+                   f"{', '.join((*CHECKS_BY_CHOICE, 'none'))}; got {verify_ts!r}")
         raise typer.Exit(code=1)
     if climb is None:
         climb = stored.get("climb", True)
@@ -493,7 +498,7 @@ def run(
     log: str = typer.Option(None, help="Name for the NEB iteration log file (default: neb.log)"),
     k: float = typer.Option(None, help="Spring constant for NEB"),
     climb: bool = typer.Option(None, help="Enable climbing image NEB"),
-    verify_ts: str = typer.Option(None, "--verify-ts", help="After a converged climbing-image NEB, verify the highest image as a transition state: 'overlap' (imaginary mode vs the NEB tangent), 'relax' (displace along the mode and relax both ways) or 'both'. Written to ts_verify/. Needs a climbing image."),
+    verify_ts: str = typer.Option(None, "--verify-ts", help="After a converged climbing-image NEB, verify the highest image as a transition state: 'overlap' (imaginary mode vs the NEB tangent), 'relax' (displace along the mode and relax both ways) or 'both'. Written to ts_verify/. Needs a climbing image. 'none' switches it off (on --restart this overrides a stored value)."),
     dyneb: bool = typer.Option(None, "--dyneb/--no-dyneb", help="Use DyNEB (dynamic NEB): freeze images already converged below fmax to save force calls (default: off)"),
     scale_fmax: float = typer.Option(None, help="DyNEB only: loosen per-image convergence with distance from the highest-energy image (0 = uniform criterion)"),
     neb_optimizer: str = typer.Option(None, help="NEB optimizer: 'fire', 'mdmin', 'bfgs', or 'lbfgs'"),
@@ -511,6 +516,8 @@ def run(
     output_dir = Path.cwd()
 
     verify_ts = _check_verify_ts_options(output_dir, restart, verify_ts, climb, mlip)
+    if verify_ts == "none" and not restart:
+        verify_ts = None  # off on a new run: nothing stored, nothing written
 
     if restart:
         # Validate forbidden parameters

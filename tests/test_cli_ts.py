@@ -289,6 +289,48 @@ def test_the_unconverged_band_warning_says_not_converged_once(tmp_path):
     assert "status: not_converged" in warning
 
 
+def test_a_missing_ts_file_is_reported_without_a_traceback(three_files):
+    three_files["ts"].unlink()
+    result = runner.invoke(app, _three_file_args(three_files))
+    assert result.exit_code == 1
+    assert "--ts" in _plain(result.stdout)
+    assert str(three_files["ts"]) in _plain(result.stdout)
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_an_unreadable_initial_file_is_reported_without_a_traceback(three_files):
+    three_files["initial"].write_text("this is not a structure\n")
+    result = runner.invoke(app, _three_file_args(three_files))
+    assert result.exit_code == 1
+    assert "--initial" in _plain(result.stdout)
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_a_band_image_without_a_stored_energy_is_reported(tmp_path):
+    neb_dir = _make_neb_dir(tmp_path)
+    with Trajectory(str(neb_dir / "A2B.traj"), "w") as traj:
+        for x in (-1.0, 0.0, 1.0):
+            traj.write(single_atom(CENTRE + x * X))  # no calculator, no energy
+    result = runner.invoke(app, ["verify", "--neb-dir", str(neb_dir)])
+    assert result.exit_code == 1
+    assert "energy" in _plain(result.stdout)
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+
+
+def test_the_console_summary_prints_warnings(capsys, tmp_path):
+    from mliprun.cli.commands.ts import echo_ts_verification
+
+    results = {
+        "verdict": "verified", "reason": "r", "n_imaginary": 1,
+        "imaginary_frequencies_cm-1": [64.5], "ts_fmax_free_eV_per_A": 0.01,
+        "ts_fmax_limit_eV_per_A": 0.03,
+        "warnings": ["constraints differ between the TS and the initial/final structures"],
+    }
+    echo_ts_verification(results, tmp_path)
+    assert ("Warning: constraints differ between the TS and the initial/final "
+            "structures") in capsys.readouterr().out
+
+
 def test_the_console_summary_names_the_archive(capsys, tmp_path):
     from mliprun.cli.commands.ts import echo_ts_verification
 

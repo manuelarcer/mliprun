@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+from ase.constraints import FixAtoms
 from ase.geometry import find_mic
 from ase.io import read as ase_read
 from ase.io import write as ase_write
@@ -147,6 +148,15 @@ def decide_verdict(n_imaginary, ts_fmax, ts_fmax_limit, check_statuses: dict) ->
     if unclear:
         return "inconclusive", "one imaginary mode, but check inconclusive: " + ", ".join(unclear)
     return "verified", "one imaginary mode and every requested check passed"
+
+
+def _fixed_indices(atoms) -> set[int]:
+    """Indices held by ``FixAtoms`` constraints."""
+    fixed: set[int] = set()
+    for constraint in atoms.constraints:
+        if isinstance(constraint, FixAtoms):
+            fixed.update(int(i) for i in constraint.index)
+    return fixed
 
 
 def check_same_system(ts_atoms, initial, final) -> None:
@@ -286,7 +296,7 @@ def report_notes(results: dict) -> list[str]:
 
     Shared by ``ts_verify.txt`` and the console summary so both say the same.
     """
-    notes = []
+    notes = [f"Warning: {text}" for text in results.get("warnings", ())]
     if results.get("ts_fmax_above_limit"):
         notes.append("Note: the TS fmax is above the limit; the geometry is loosely converged.")
     inputs = results.get("inputs") or {}
@@ -331,6 +341,8 @@ def _format_report(results: dict, settings: dict) -> str:
         )
         if relax["status"] == "not_run":
             lines.append("  not run: it needs exactly one imaginary mode")
+        elif "plus" not in relax:
+            lines.append(f"  Note: {relax['note']}")
         else:
             for side in ("plus", "minus"):
                 row = relax[side]
@@ -515,18 +527,27 @@ def verify_ts(
             }
             if n_imaginary == 1:
                 mode = _read_imaginary_mode(output_path / "ts_freq_vibrations.json", int(np.flatnonzero(mask)[0]))
-                relax.update(
-                    _displace_and_relax(
-                        work, initial, final, scale_mode(mode, displacement),
-                        calculator_factory=calculator_factory,
-                        output_path=output_path,
-                        optimizer_class=optimizer_class,
-                        fmax=relax_fmax,
-                        max_steps=relax_max_steps,
-                        match_tolerance=match_tolerance,
+                # Constrained components would be dropped by set_positions after the scaling,
+                # so the free atoms would move less than ``displacement``: zero them first.
+                free_mask, _ = free_component_mask(work)
+                mode = mode * free_mask
+                if np.linalg.norm(mode) < _ZERO_NORM:
+                    relax["status"] = "inconclusive"
+                    relax["result"] = "inconclusive"
+                    relax["note"] = "the imaginary mode has no component on the free atoms"
+                else:
+                    relax.update(
+                        _displace_and_relax(
+                            work, initial, final, scale_mode(mode, displacement),
+                            calculator_factory=calculator_factory,
+                            output_path=output_path,
+                            optimizer_class=optimizer_class,
+                            fmax=relax_fmax,
+                            max_steps=relax_max_steps,
+                            match_tolerance=match_tolerance,
+                        )
                     )
-                )
-                if relax["plus"]["returned_to_ts"] or relax["minus"]["returned_to_ts"]:
+                if "plus" in relax and (relax["plus"]["returned_to_ts"] or relax["minus"]["returned_to_ts"]):
                     # A relaxation that ends on the TS did not test the connection.
                     relax["result"] = "inconclusive"
                     relax["status"] = "inconclusive"
@@ -555,6 +576,8 @@ def verify_ts(
             results["inputs"] = dict(extra_inputs)
         if archived_previous is not None:
             results["archived_previous"] = archived_previous
+        if _fixed_indices(initial) != _fixed_indices(work) or _fixed_indices(final) != _fixed_indices(work):
+            results["warnings"] = ["constraints differ between the TS and the initial/final structures"]
 
         (output_path / "ts_verify.txt").write_text(_format_report(results, settings))
     except Exception as exc:
@@ -588,10 +611,21 @@ def load_neb_for_verification(neb_dir) -> dict:
     if not params_path.exists():
         raise ValueError(f"{params_path} not found: it names the model the NEB used")
 
-    images = ase_read(str(traj_path), index=":")
+    try:
+        images = ase_read(str(traj_path), index=":")
+    except Exception as exc:
+        raise ValueError(f"cannot read {traj_path}: {exc}") from exc
     params = CustomNEB._parse_parameters_file(params_path)
 
-    energies = [image.get_potential_energy() for image in images]
+    energies = []
+    for number, image in enumerate(images):
+        try:
+            energies.append(image.get_potential_energy())
+        except Exception as exc:
+            raise ValueError(
+                f"image {number} of {traj_path} has no stored energy ({exc}); "
+                "the band must be written by the NEB, with energies"
+            ) from exc
     ts_index = int(np.argmax(energies))
     if ts_index == 0 or ts_index == len(images) - 1:
         raise ValueError(

@@ -143,9 +143,9 @@ If you run `ts verify` again into a directory that holds a frequency cache made 
 
 ## Worked example
 
-The numbers below come from the test suite. The system is an Al adatom hopping between neighbouring hollow sites on Al(100): a 2x2 cell, 2 layers, bottom layer fixed. The potential is EMT, a simple test potential built into ASE. It is used here only to illustrate the output, and the numbers have no physical meaning for a real MLIP calculation.
+The imaginary frequency, the overlap and the barrier below are pinned by a test in the test suite. The system is an Al adatom hopping between neighbouring hollow sites on Al(100): a 2x2 cell, 2 layers, bottom layer fixed. The potential is EMT, a simple test potential built into ASE. It is used here only to illustrate the output, and the numbers have no physical meaning for a real MLIP calculation.
 
-The NEB used 3 intermediate images and default settings. It converged in 25 FIRE steps. The barrier is 0.238 eV. The verification then reported:
+The NEB used 3 intermediate images and default settings. It converged in about 25 FIRE steps. The barrier is 0.238 eV. The verification then reported:
 
 - Imaginary modes: 1, at 64.5i cm^-1.
 - Overlap of the imaginary mode with the NEB tangent: 0.998, above the threshold 0.7.
