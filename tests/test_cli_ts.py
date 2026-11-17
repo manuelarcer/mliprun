@@ -206,3 +206,34 @@ def test_mlip_ts_is_registered():
     result = runner.invoke(main.app, ["ts", "--help"])
     assert result.exit_code == 0
     assert "verify" in result.stdout
+
+
+def test_a_missing_parameter_file_is_reported(tmp_path):
+    neb_dir = _make_neb_dir(tmp_path)
+    (neb_dir / "neb_parameters.txt").unlink()
+    result = runner.invoke(app, ["verify", "--neb-dir", str(neb_dir)])
+    assert result.exit_code == 1
+    assert "neb_parameters.txt" in _plain(result.stdout)
+
+
+def test_an_unreadable_neb_record_does_not_stop_the_verification(tmp_path):
+    neb_dir = _make_neb_dir(tmp_path)
+    (neb_dir / "mliprun_run.json").write_text("{ not json")
+    result = runner.invoke(app, ["verify", "--neb-dir", str(neb_dir)])
+    assert result.exit_code == 0, result.stdout
+    assert "TS verification: verified" in _plain(result.stdout)
+
+
+def test_the_console_summary_prints_the_relax_note(capsys, tmp_path):
+    from mliprun.cli.commands.ts import echo_ts_verification
+
+    results = {
+        "verdict": "inconclusive", "reason": "r", "n_imaginary": 1,
+        "imaginary_frequencies_cm-1": [64.5], "ts_fmax_free_eV_per_A": 0.01,
+        "ts_fmax_limit_eV_per_A": 0.03,
+        "relax": {"result": "inconclusive", "status": "inconclusive",
+                  "note": "a relaxation returned to the TS; use a larger "
+                          "displacement or another optimizer"},
+    }
+    echo_ts_verification(results, tmp_path)
+    assert "Note: a relaxation returned to the TS" in capsys.readouterr().out

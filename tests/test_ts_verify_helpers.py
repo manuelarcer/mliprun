@@ -197,3 +197,13 @@ def test_check_same_system_names_a_different_symbol_order():
 def test_check_same_system_names_a_different_cell():
     with pytest.raises(ValueError, match=r"initial.*cell"):
         check_same_system(_ts(), _ts(cell=(10, 10, 11)), _ts())
+
+
+def test_a_zero_mode_is_an_error_not_nan():
+    with pytest.raises(ValueError, match="mode vector is zero"):
+        mode_overlap(np.zeros((1, 3)), np.ones((1, 3)), [0])
+
+
+def test_scaling_a_zero_mode_is_an_error():
+    with pytest.raises(ValueError, match="cannot be scaled"):
+        scale_mode(np.zeros((2, 3)), 0.1)

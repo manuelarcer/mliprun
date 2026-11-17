@@ -13,6 +13,7 @@ The CLI commands wrap a small set of pure-Python functions and one class. This p
 | `mliprun.core.optimize` | `OPTIMIZER_MAP` | dict of supported ASE optimizers |
 | `mliprun.core.singlepoint` | `run_singlepoint(atoms, ...)` | Evaluate a structure once: energy, per-atom forces, stress — no relaxation |
 | `mliprun.core.vibrations` | `run_frequencies(atoms, ...)` | Vibrational frequencies, imaginary-mode count and ZPE by finite differences of forces; per-member frequencies and mode-overlap diagnostics with `committee=` |
+| `mliprun.core.ts_verify` | `verify_ts(ts_atoms, initial, final, ...)` | Verify a TS: one imaginary mode, and that mode points along the reaction path (overlap check, displace-and-relax check) |
 | `mliprun.core.committee.config` | `load_committee(path)` | Parse and validate a `committee.yaml` into a `CommitteeConfig` |
 | `mliprun.core.committee.remote` | `RemoteMember(name, python_exe, ...)` | One committee member's worker subprocess, addressed as a calculator |
 | `mliprun.core.committee.calculator` | `CommitteeCalculator(members, ...)` | ASE calculator over N members: mean force drives the relaxation, their spread is reported |
@@ -497,6 +498,51 @@ for delta in (0.01, 0.02):
 Before this check existed that loop silently reported the second delta's
 frequencies a factor `sqrt(delta_2 / delta_1)` too low. See
 [OUTPUTS.md#the-displacement-cache-and-what-it-is-checked-against](OUTPUTS.md#the-displacement-cache-and-what-it-is-checked-against).
+
+---
+
+## Transition-state verification
+
+`verify_ts` runs a frequency calculation on a TS structure, counts the imaginary modes and, when there is exactly one, tests that it points along the reaction path. It works for a TS from any method. What the checks mean is in [TS_VERIFICATION.md](TS_VERIFICATION.md); the files and result keys are in [OUTPUTS.md](OUTPUTS.md#ts-verify).
+
+```python
+verify_ts(
+    ts_atoms, initial, final, *,
+    calculator_factory,            # callable returning a fresh calculator
+    checks=("overlap",),           # at least one of "overlap", "relax"
+    reference_direction=None,      # (N, 3) array, or None for the IS-to-FS line
+    reference_label=None,          # name of that direction; required with it
+    output_dir="ts_verify",
+    model_name="mlip",
+    indices=None,                  # default: every atom not held by FixAtoms
+    delta=0.01, nfree=2, imaginary_floor=10.0,
+    ts_fmax_limit=0.03,            # eV/A
+    overlap_threshold=0.7,
+    displacement=0.1, match_tolerance=0.3,        # A
+    relax_fmax=0.01, relax_optimizer="bfgs", relax_max_steps=200,
+    provenance=None, extra_inputs=None, run_context=None,
+) -> dict
+```
+
+`ts_atoms`, `initial` and `final` must hold the same atoms in the same order and the same cell; a mismatch raises `ValueError` before any force call. `checks` cannot be empty. `reference_direction` and `reference_label` go together: passing one without the other raises `ValueError`. With neither, the overlap check uses the IS-to-FS displacement and labels it `is_to_fs`. The returned dict is the `results` of the `ts-verify` stage (see [OUTPUTS.md](OUTPUTS.md#the-ts-verify-stage)); the key `verdict` is `verified`, `not_verified` or `inconclusive`.
+
+```python
+from ase.io import read
+from mliprun.cli.utils import build_calculator
+from mliprun.core.ts_verify import verify_ts
+
+results = verify_ts(
+    read("ts.vasp"), read("is.vasp"), read("fs.vasp"),
+    calculator_factory=lambda: build_calculator("uma-s-1p2", "oc20"),
+    checks=("overlap", "relax"),
+    output_dir="ts_verify",
+    model_name="uma-s-1p2",
+    provenance={"uma_task": "oc20"},
+)
+print(results["verdict"], results["overlap"]["value"], results["relax"]["result"])
+```
+
+The factory is a callable and not a calculator, because the frequency run and each of the two relaxations need their own fresh calculator. A dimer or other TS method can pass its own final mode as `reference_direction`, with its own `reference_label`.
 
 ---
 

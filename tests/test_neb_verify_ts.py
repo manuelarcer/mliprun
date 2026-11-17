@@ -136,3 +136,24 @@ def test_a_failure_inside_verification_does_not_fail_the_neb(workdir, monkeypatc
     assert result.exit_code == 0, result.stdout
     assert "TS verification failed: boom" in result.stdout
     assert json.loads(Path("mliprun_run.json").read_text())["status"] == "converged"
+
+
+def test_a_band_with_its_maximum_at_an_endpoint_skips_verification(tmp_path, capsys):
+    from types import SimpleNamespace
+
+    from ase import Atoms
+    from ase.calculators.singlepoint import SinglePointCalculator
+
+    from mliprun.cli.commands.neb import _verify_ts_after_neb
+
+    images = []
+    for x, energy in ((0.0, 1.0), (0.5, 0.5), (1.0, 0.0)):
+        atoms = Atoms("H", positions=[[x, 0.0, 0.0]])
+        atoms.calc = SinglePointCalculator(atoms, energy=energy)
+        images.append(atoms)
+    neb_obj = SimpleNamespace(converged=True, images=images)
+
+    _verify_ts_after_neb(neb_obj, "overlap", tmp_path)
+
+    assert "no interior maximum" in capsys.readouterr().out
+    assert not (tmp_path / "ts_verify").exists()

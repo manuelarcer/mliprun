@@ -15,6 +15,7 @@ Canonical list of every file each CLI command writes. Search this page to find w
 | `benchmark run` | Nothing on disk by default; `--output bench.json` writes a JSON file there |
 | `singlepoint run` | Directory containing `--structure`, unless `--output-dir` is given |
 | `freq run` | Directory containing `--structure`, unless `--output-dir` is given |
+| `ts verify` | `<neb-dir>/ts_verify/` with `--neb-dir`, otherwise `ts_verify/` beside `--ts`, unless `--output-dir` is given |
 
 This is not always the same directory the user is sitting in. `optimize` and `md` write *next to the input structure*; `neb` and `autoneb` write *into the cwd*. Set up the working directory accordingly before running NEB / AutoNEB.
 
@@ -498,6 +499,7 @@ NEB run:
 | `neb_parameters.txt` | plain text | Echo of run parameters; required for `--restart` |
 | `mliprun_run.json` | JSON | Canonical run record: every resolved parameter with the source of its value, provenance (versions, device, host, timings), and per-stage outcome. See [The run record](#the-run-record). |
 | `00/POSCAR`, `01/POSCAR`, ... | VASP POSCAR | One directory per image, including endpoints |
+| `ts_verify/` | directory | **Only with `--verify-ts`**, after a converged climbing-image run. See [`ts verify`](#ts-verify). |
 
 Restart side-effect:
 
@@ -915,6 +917,48 @@ shared reporter `optimize` uses at a relaxation's final geometry.
 
 ---
 
+## `ts verify`
+
+Verifies a transition state (TS): one imaginary mode, and that mode points along the reaction path. Written by `ts verify` and by `neb run --verify-ts`. See [TS_VERIFICATION.md](TS_VERIFICATION.md) for what the checks mean.
+
+| File | Format | Contents |
+|------|--------|----------|
+| `ts_verify.txt` | plain text | The report: verdict and reason, imaginary modes, TS fmax and its limit, overlap and its threshold, the per-side table of the relax check, and the settings |
+| `ts_structure.vasp` | VASP POSCAR | The structure that was analysed |
+| `ts_freq_frequencies.csv`, `ts_freq_summary.txt`, `ts_freq_vibrations.json` | CSV, text, JSON | The ordinary `freq run` outputs under the prefix `ts_freq` (see [`freq run`](#freq-run)) |
+| `ts_freq.0.traj`, `ts_freq_cache.json`, `ts_freq/` | trajectory, JSON, directory | The imaginary-mode animation and the displacement cache of the frequency run |
+| `ts_relax_plus.traj`, `ts_relax_plus.log`, `ts_relax_plus.vasp` | trajectory, text, POSCAR | Relaxation from the TS plus the mode vector. **Only with the relax check.** |
+| `ts_relax_minus.traj`, `ts_relax_minus.log`, `ts_relax_minus.vasp` | trajectory, text, POSCAR | Relaxation from the TS minus the mode vector. **Only with the relax check.** |
+| `mliprun_run.json` | JSON | The verification record. Top-level `command` is `ts-verify`; the stages are `freq`, then `ts-verify`. |
+
+**The NEB directory's own record is never modified.** After `neb run --verify-ts` or `ts verify --neb-dir`, the NEB's `mliprun_run.json` still says what the NEB said, including its `converged` status. Appending a stage there would rewrite its top-level status. The verification record is always at `<neb-dir>/ts_verify/mliprun_run.json`.
+
+### The `ts-verify` stage
+
+The stage `parameters` are the settings (checks, delta, nfree, imaginary floor, TS fmax limit, overlap threshold, displacement, match tolerance, relax fmax, relax optimizer, relax maximum steps). The `results` keys are:
+
+| Key | Meaning |
+|-----|---------|
+| `verdict` | `verified`, `not_verified` or `inconclusive` |
+| `reason` | One sentence that says why |
+| `checks_requested` | List drawn from `overlap` and `relax` |
+| `n_imaginary` | Number of imaginary modes above the floor |
+| `imaginary_frequencies_cm-1` | Magnitudes of the imaginary frequencies (positive numbers) |
+| `ts_fmax_free_eV_per_A` | fmax of the TS structure over the free force components |
+| `ts_fmax_limit_eV_per_A` | The limit that was applied |
+| `ts_fmax_above_limit` | `true` when the fmax is above the limit. With exactly one imaginary mode this does not change the verdict. |
+| `displaced_indices` | Atoms displaced for the frequencies |
+| `n_force_calls_frequencies` | Force calls of the frequency run |
+| `overlap` | Present with the overlap check: `status` (`pass`, `fail` or `not_run`), `value` (null when not run), `threshold`, `reference` (`neb_tangent`, `is_to_fs` or the label a caller supplied) |
+| `relax` | Present with the relax check: `status` (`pass`, `fail`, `inconclusive` or `not_run`), `result` (`connects`, `one_side`, `same_side`, `neither`, `inconclusive`, or null when not run), the settings used (`displacement_A`, `match_tolerance_A`, `fmax_eV_per_A`, `optimizer`, `max_steps`), `initial_fmax_eV_per_A`, `final_fmax_eV_per_A`, `endpoints_relaxed`, the two sides `plus` and `minus`, and a `note` when a relaxation returned to the TS |
+| `inputs` | What was verified. With a NEB folder: `neb_dir`, `ts_image_index`, `n_images`. With three files: `ts`, `initial`, `final` (absolute paths). |
+
+Each side of `relax` (`plus`, `minus`) holds `converged`, `steps`, `distance_to_initial_A`, `distance_to_final_A`, `distance_to_ts_A`, `matched` (`initial`, `final` or null), `returned_to_ts` and `energy_difference_eV` (relative to the matched endpoint, null when none matched).
+
+A requested check that did not run, because the mode count was not 1, has status `not_run`. It is never reported as a pass.
+
+---
+
 ## Parameter file conventions
 
 `*_params.txt` and `*_parameters.txt` are written by `mliprun.core.params_io.write_parameters_file`. Same two-column layout (`{key:<23}{value}`) for every command. The keys include their trailing colon. These files are plain text and intended to be diffed across runs.
@@ -934,9 +978,9 @@ layer — so a script that calls `run_optimization` directly gets one too.
 
 | Key | Meaning |
 |-----|---------|
-| `schema_version` | Currently `6`. Check it before parsing. Version 6 added `provenance.aqcat_spin` and `provenance.aqcat_fidelity` for the AQCat25-EV2 models (see [The AQCat25-EV2 fields](#the-aqcat25-ev2-fields)); a schema-5 record simply lacks both keys, and appending a stage to one reports them under `stage_provenance_new_fields`, never as a change. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. The `singlepoint` and `freq` stage kinds are additive and do not bump the schema: `provenance` is untouched, and no existing field changes meaning. |
-| `command` | `optimize`, `md`, `neb`, `autoneb`, `singlepoint` or `freq`. |
-| `status` | Status of the **latest** stage: `running`, `converged`, `not_converged`, `completed` (a `singlepoint` or `freq` stage: there is nothing to converge) or `failed`. A record left saying `running` means the job died without reporting back. |
+| `schema_version` | Currently `6`. Check it before parsing. Version 6 added `provenance.aqcat_spin` and `provenance.aqcat_fidelity` for the AQCat25-EV2 models (see [The AQCat25-EV2 fields](#the-aqcat25-ev2-fields)); a schema-5 record simply lacks both keys, and appending a stage to one reports them under `stage_provenance_new_fields`, never as a change. Version 2 added `provenance.uma_task` and `provenance.mace_head` (a version-1 record simply lacks those keys, which is not the same as null); version 3 added `provenance.sevennet_task`; version 4 added `provenance.committee` and `provenance.committee_config_sha256`, present only on a committee run (see [Committee outputs](#committee-outputs)); version 5 changed the *meaning* of `results.committee_uncertainty`'s reported disagreement (constrained force components excluded, see [Constraint masking](#constraint-masking)), renamed every sigma key so that meaning is on the key itself (`sigma_max_final_eV_per_A` → `sigma_max_free_final_eV_per_A`, and so on), and made `--uncertainty-threshold` opt-in (`threshold_source` is now `"explicit"` or `"none"`; `"fmax"` can no longer be produced). A schema-4 record predates all three changes. The `singlepoint`, `freq` and `ts-verify` stage kinds are additive and do not bump the schema: `provenance` is untouched, and no existing field changes meaning. |
+| `command` | `optimize`, `md`, `neb`, `autoneb`, `singlepoint`, `freq` or `ts-verify`. |
+| `status` | Status of the **latest** stage: `running`, `converged`, `not_converged`, `completed` (a `singlepoint`, `freq` or `ts-verify` stage: there is nothing to converge) or `failed`. A record left saying `running` means the job died without reporting back. |
 | `run.mode` | `one-off` or `batch`. |
 | `run.batch` | `null` for one-off runs; otherwise `batch_id`, `driver`, `argv`, `root`, `config_file`. Every run of one batch shares a `batch_id`. |
 | `inputs` | For `optimize` and `md`: structure filename and absolute path, atom count, formula. For `neb` and `autoneb`: `n_images` and `n_atoms` (there is no single input structure). |
@@ -1010,7 +1054,7 @@ Two caveats about the numbers these models produce, which no field states:
 directory — most commonly a plain NEB followed by a CI-NEB restart, or an MD
 run extended with `--resume`. Each stage records its own `kind`
 (`optimize`, `md`, `md-resume`, `neb`, `neb-restart`, `autoneb`,
-`singlepoint`, `freq`), `status`, `steps`, `walltime_s`, any `parameters`
+`singlepoint`, `freq`, `ts-verify`), `status`, `steps`, `walltime_s`, any `parameters`
 that stage changed, and its `results`.
 A stage's terminal status is never rewritten, so a converged stage 0 followed
 by a failed stage 1 keeps both facts.
@@ -1100,6 +1144,10 @@ frequencies](#committee-frequencies) above) and `committee_uncertainty`
 here measured at the **input geometry** of the displacement sweep; see
 [`freq run --committee`](#freq-run---committee) below). Status is always
 `completed` on success — there is nothing to converge — or `failed`.
+
+**ts-verify**: the keys listed under [`ts verify`](#the-ts-verify-stage). The
+verdict is a result, not a status: a `not_verified` run still has status
+`completed`. The record also holds the `freq` stage of the same run.
 
 ### Failure behavior
 

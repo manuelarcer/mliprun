@@ -350,3 +350,9 @@ def test_freq_run_record_command_can_be_overridden(tmp_path):
     run_frequencies(atoms, output_dir=tmp_path, record_command="ts-verify")
     record = json.loads((tmp_path / "mliprun_run.json").read_text())
     assert record["command"] == "ts-verify"
+
+
+def test_an_unknown_check_is_refused_before_any_force_call(tmp_path):
+    with pytest.raises(ValueError, match="unknown check"):
+        _verify(tmp_path, checks=("overlap", "bogus"))
+    assert not (tmp_path / "mliprun_run.json").exists()

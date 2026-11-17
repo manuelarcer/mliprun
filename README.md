@@ -10,6 +10,7 @@ A modular CLI toolkit for evaluating Machine Learning Interatomic Potentials (ML
 - **Vibrational frequencies** — finite-difference frequencies, imaginary-mode count, and zero-point energy, with per-member spread from a committee
 - **Molecular Dynamics (MD)** with NVE, NVT, and NPT ensembles
 - **Nudged Elastic Band (NEB) simulations** with restart support
+- **Transition-state verification**: one imaginary mode, and that mode points along the reaction path (`ts verify`, or `neb run --verify-ts`); see [TS_VERIFICATION.md](docs/TS_VERIFICATION.md)
 - **AutoNEB** with dynamic image insertion
 - **Benchmarking**
 
@@ -50,7 +51,7 @@ CSV, per step and per atom. See
 
 ## Key Features
 
-- Unified CLI commands: `optimize run`, `singlepoint run`, `freq run`, `md run`, `neb run`, `autoneb run`
+- Unified CLI commands: `optimize run`, `singlepoint run`, `freq run`, `md run`, `neb run`, `autoneb run`, `ts verify`
 - Auto-detection of available MLIP models (UMA > MACE > SevenNet > CHGNet)
 - UMA model support with multiple task types (OMat, OC20, OMol, ODAC)
 - MACE multi-head foundation models (`mace-mh-*`) with selectable heads (`omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, …)
@@ -162,7 +163,7 @@ For detailed Windows installation instructions, see: [Windows Setup Guide](docs/
 The package installs the following entry points:
 
 - `mlip` — top-level namespace; `mlip --help` lists every subcommand (including `mlip doctor`, the environment self-check)
-- `optimize`, `singlepoint`, `freq`, `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark` — standalone aliases
+- `optimize`, `singlepoint`, `freq`, `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark`: standalone aliases (`ts verify` is available only as `mlip ts verify`)
 
 `mlip <subcmd>` is equivalent to running `<subcmd>` directly. For example, `mlip md run --structure POSCAR` and `md run --structure POSCAR` do the same thing. The examples below use the standalone form for brevity. All commands support `--help`.
 
@@ -375,6 +376,7 @@ neb run --initial path/to/initial.vasp --final path/to/final.vasp
 - `--mlip`: Model choice (default: `auto`)
 - `--k`: Spring constant (default: 0.1)
 - `--climb / --no-climb`: Climbing image NEB (default: enabled)
+- `--verify-ts overlap|relax|both`: After a converged climbing-image NEB, verify the highest image as a transition state and write the result to `ts_verify/` (default: off). Needs a climbing image. To verify a finished NEB later, or a TS from another method, use `mlip ts verify --neb-dir .` or `mlip ts verify --ts ts.vasp --initial is.vasp --final fs.vasp`. See [TS_VERIFICATION.md](docs/TS_VERIFICATION.md).
 - `--dyneb / --no-dyneb`: Use ASE's DyNEB (dynamic NEB) instead of plain NEB (default: off). Images whose forces are already below `--fmax` are frozen — not recomputed — until a neighbouring image moves them out of convergence, which saves force calls in the serial image loop. Same tangent method and climbing-image handling as plain NEB.
 - `--scale-fmax`: DyNEB only. Loosens the per-image convergence criterion with distance from the highest-energy image (default: 0 = one uniform criterion). Values > 0 trade accuracy of far-from-barrier images for speed — decide per project.
 - `--neb-optimizer`: Optimizer for NEB (`fire`, `mdmin`, `bfgs`, `lbfgs`)

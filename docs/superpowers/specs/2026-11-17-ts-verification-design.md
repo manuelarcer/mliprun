@@ -317,3 +317,10 @@ In the output directory:
 - How the NEB directory's record points to the verification result.
 - The test systems, provided the assertions are numerical and need no MLIP.
 - Wording of console messages, following the style of the existing commands.
+
+## Changes made during implementation
+
+- **A relaxation that returns to the TS is inconclusive.** If a relaxed structure matches no endpoint and lies within the match tolerance of the TS, the displace-and-relax result is `inconclusive` with a note. Each side reports `distance_to_ts_A` and `returned_to_ts`. Seen with `lbfgs` on a test potential; `bfgs` and `fire` reached the minima.
+- **The NEB directory's record is never modified.** The verification record is always `<neb-dir>/ts_verify/mliprun_run.json`, with top-level `command: "ts-verify"` and the stages `freq` then `ts-verify`. The inputs (NEB folder and TS image index, or the three file paths) are in `results["inputs"]`.
+- **Argument rules of `verify_ts`.** `checks` cannot be empty, and a reference direction must be passed together with its label.
+- **With one imaginary mode the verdict does not depend on the TS fmax.** The fmax and whether it exceeds the limit are still reported. A NEB converged at the default fmax of 0.05 eV/A will usually show a TS fmax above 0.03 eV/A; this matters only when the mode count is not 1.

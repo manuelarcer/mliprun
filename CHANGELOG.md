@@ -6,6 +6,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Transition-state verification: `mlip ts verify` and
+  `neb run --verify-ts overlap|relax|both`.** Tests that a candidate TS has
+  exactly one imaginary mode and that the mode connects the initial and
+  final states. Two connection checks: the overlap of the mode with the
+  reaction direction (NEB tangent, or the initial-to-final line for three
+  structure files), and a displace-and-relax check that relaxes both ways
+  from the TS and compares the results with the endpoints. The verdict is
+  `verified`, `not_verified` or `inconclusive`; a TS above `--ts-fmax-limit`
+  (0.03 eV/Å) with the wrong mode count is `inconclusive`, with advice to
+  restart the NEB at a tighter fmax. Works from a finished NEB folder
+  (`--neb-dir`) or from any three structure files, so later TS search
+  methods can reuse it; the Python entry point is
+  `mliprun.core.ts_verify.verify_ts`. Outputs go to `ts_verify/`, with a new
+  `ts-verify` run-record stage (additive, no schema bump); the NEB
+  directory's own record is not modified. AQCat25-EV2 models, committees and
+  the web app are not supported. See `docs/TS_VERIFICATION.md`.
 - **AQCat25-EV2 models: `--mlip aqcat25-ev2-midfilm` and
   `--mlip aqcat25-ev2-infilm`.** SandboxAQ's EquiformerV2 checkpoints
   (Allam et al., npj Comput. Mater. 12, 226 (2026)), run on a patched
