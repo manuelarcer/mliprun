@@ -113,7 +113,14 @@ def test_bilayer():
         waters[o_idx[int(np.argmin(d))]].append(h)
     assert all(len(v) == 2 for v in waters.values())
 
+    # Every H at least 2.0 A from every Pt (minimum image).
+    pt_idx = [a.index for a in wet if a.symbol == "Pt"]
+    min_h_pt = min(wet.get_distance(h, p, mic=True)
+                   for h in h_idx for p in pt_idx)
+    assert min_h_pt >= 2.0
+
     n_flat = n_down = 0
+    flat_z, down_z = [], []
     for o, (h1, h2) in waters.items():
         v1 = find_mic(wet.positions[h1] - wet.positions[o], wet.cell,
                       pbc=[True, True, False])[0]
@@ -124,11 +131,15 @@ def test_bilayer():
         tilt = np.degrees(np.arccos(abs(normal[2]) / np.linalg.norm(normal)))
         if tilt <= 15.0:
             n_flat += 1
+            flat_z.append(wet.positions[o, 2])
         elif min(v1[2], v2[2]) < 0:
             n_down += 1
+            down_z.append(wet.positions[o, 2])
     # (3x3) cell = three sqrt(3) cells; one flat and one H-down water each.
     assert n_flat == 3
     assert n_down == 3
+    # In the H-down bilayer the H-down water sits higher than the flat one.
+    assert min(down_z) > max(flat_z)
 
     # No H-H closer than 1.4 A between different waters.
     owner = {h: o for o, hs in waters.items() for h in hs}

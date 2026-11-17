@@ -27,7 +27,8 @@ from ase.io import read, write
 
 O_HEIGHT = 1.2          # initial O height above the top-layer mean z (A)
 FLAT_HEIGHT = 2.35      # flat water O height above the top layer (A)
-DOWN_HEIGHT = 2.70      # H-down water O height above the top layer (A)
+DOWN_HEIGHT = 3.10      # H-down water O height above the top layer (A);
+                        # higher than the flat water so the down H stays >= 2 A from Pt
 OH = 0.97               # O-H bond length (A)
 HOH = 104.5             # H-O-H angle (deg)
 N_FIXED = 18            # two bottom layers of the (3x3) slab
