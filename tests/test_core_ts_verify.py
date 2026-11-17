@@ -4,8 +4,12 @@ import json
 
 import numpy as np
 import pytest
+from ase import Atoms
+from ase.calculators.calculator import all_changes
 from ase.calculators.emt import EMT
 from ase.build import molecule
+from ase.constraints import FixAtoms
+from ase.io import read as ase_read
 
 from mliprun.core.ts_verify import verify_ts
 from mliprun.core.vibrations import run_frequencies
@@ -140,18 +144,165 @@ def test_a_reference_of_the_wrong_shape_is_refused_before_any_force_call(tmp_pat
     assert not (tmp_path / "mliprun_run.json").exists()
 
 
-def test_the_relax_check_is_not_available_yet(tmp_path):
+def test_an_empty_checks_is_refused_before_any_force_call(tmp_path):
     calls = []
 
     def factory():
         calls.append(1)
         return DoubleWell()
 
-    ts, initial, final = _structures()
-    with pytest.raises(NotImplementedError):
-        verify_ts(ts, initial, final, calculator_factory=factory,
-                  checks=("overlap", "relax"), output_dir=tmp_path)
+    with pytest.raises(ValueError, match="checks"):
+        _verify(tmp_path, factory=factory, checks=())
     assert calls == []
+    assert not (tmp_path / "mliprun_run.json").exists()
+
+
+def test_a_reference_label_without_a_direction_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="reference_label"):
+        _verify(tmp_path, reference_label="neb_tangent")
+    assert not (tmp_path / "mliprun_run.json").exists()
+
+
+def test_a_reference_direction_without_a_label_is_refused(tmp_path):
+    with pytest.raises(ValueError, match="reference_label"):
+        _verify(tmp_path, reference_direction=np.array([[1.0, 0.0, 0.0]]))
+    assert not (tmp_path / "mliprun_run.json").exists()
+
+
+def test_a_true_saddle_connects_both_minima(tmp_path):
+    r = _verify(tmp_path, checks=("overlap", "relax"))
+    assert r["relax"]["result"] == "connects" and r["relax"]["status"] == "pass"
+    assert r["verdict"] == "verified"
+    sides = {r["relax"]["plus"]["matched"], r["relax"]["minus"]["matched"]}
+    assert sides == {"initial", "final"}
+    for side in ("plus", "minus"):
+        assert r["relax"][side]["converged"] is True
+        assert r["relax"][side]["energy_difference_eV"] == pytest.approx(0.0, abs=1e-4)
+        assert r["relax"][side]["distance_to_initial_A"] + r["relax"][side]["distance_to_final_A"] == pytest.approx(2.0, abs=1e-2)
+    assert r["relax"]["endpoints_relaxed"] is True
+    assert r["relax"]["initial_fmax_eV_per_A"] == pytest.approx(0.0, abs=1e-8)
+    assert r["relax"]["optimizer"] == "bfgs" and r["relax"]["max_steps"] == 200
+    assert r["relax"]["displacement_A"] == 0.1 and r["relax"]["match_tolerance_A"] == 0.3
+    assert r["relax"]["fmax_eV_per_A"] == 0.01
+    for name in ("ts_relax_plus.traj", "ts_relax_minus.traj", "ts_relax_plus.log",
+                 "ts_relax_minus.log", "ts_relax_plus.vasp", "ts_relax_minus.vasp"):
+        assert (tmp_path / name).exists()
+    report = (tmp_path / "ts_verify.txt").read_text()
+    assert "Displace-and-relax check: connects" in report
+    record = json.loads((tmp_path / "mliprun_run.json").read_text())
+    assert record["stages"][1]["results"]["relax"]["result"] == "connects"
+
+
+def test_relax_only_does_not_report_an_overlap(tmp_path):
+    r = _verify(tmp_path, checks=("relax",))
+    assert "overlap" not in r and r["verdict"] == "verified"
+
+
+def test_a_wrong_final_state_is_one_side(tmp_path):
+    ts, initial, _ = _structures()
+    final = single_atom(CENTRE + np.array([0.0, 3.0, 0.0]))  # not a minimum
+    r = verify_ts(ts, initial, final, calculator_factory=DoubleWell,
+                  checks=("relax",), output_dir=tmp_path)
+    assert r["relax"]["result"] == "one_side" and r["verdict"] == "not_verified"
+    assert r["relax"]["endpoints_relaxed"] is False
+    assert r["relax"]["final_fmax_eV_per_A"] == pytest.approx(12.0, abs=1e-6)
+    assert "Unrelaxed IS or FS" in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_an_unconverged_relaxation_is_inconclusive(tmp_path):
+    r = _verify(tmp_path, checks=("relax",), relax_max_steps=1)
+    assert r["relax"]["result"] == "inconclusive" and r["relax"]["status"] == "inconclusive"
+    assert r["relax"]["plus"]["converged"] is False
+    assert r["verdict"] == "inconclusive"
+
+
+def test_the_match_tolerance_decides_the_match(tmp_path):
+    ts = single_atom(CENTRE)
+    initial = single_atom(CENTRE - X)
+    final = single_atom(CENTRE + 1.2 * X)  # 0.2 A from the true minimum
+    loose = verify_ts(ts, initial, final, calculator_factory=DoubleWell,
+                      checks=("relax",), output_dir=tmp_path / "a")
+    tight = verify_ts(ts, initial, final, calculator_factory=DoubleWell,
+                      checks=("relax",), match_tolerance=0.1, output_dir=tmp_path / "b")
+    assert loose["relax"]["result"] == "connects"
+    assert tight["relax"]["result"] == "one_side"
+
+
+def test_the_displacement_size_is_applied(tmp_path):
+    for size in (0.1, 0.25):
+        out = tmp_path / str(size)
+        _verify(out, checks=("relax",), displacement=size)
+        first = ase_read(str(out / "ts_relax_plus.traj"), index=0)
+        assert np.linalg.norm(first.get_positions()[0] - CENTRE) == pytest.approx(size, abs=1e-6)
+
+
+def test_an_unknown_optimizer_stops_before_any_force_call(tmp_path):
+    calls = []
+
+    def factory():
+        calls.append(1)
+        return DoubleWell()
+
+    with pytest.raises(ValueError, match="optimizer"):
+        _verify(tmp_path, factory=factory, checks=("relax",), relax_optimizer="newton")
+    assert calls == []
+    assert not (tmp_path / "mliprun_run.json").exists()
+
+
+@pytest.mark.parametrize("name", ["LBFGS", "Fire"])
+def test_the_other_optimizers_are_accepted_in_any_case(tmp_path, name):
+    # Only the name handling is tested: a quasi-Newton optimizer such as LBFGS may
+    # converge onto the saddle itself on this one-atom surface, so the result is not asserted.
+    r = _verify(tmp_path, checks=("relax",), relax_optimizer=name, relax_max_steps=400)
+    assert r["relax"]["optimizer"] == name.lower()
+    assert r["relax"]["status"] != "not_run"
+    assert (tmp_path / "ts_relax_plus.traj").exists()
+
+
+def test_the_relax_check_is_not_run_without_exactly_one_imaginary_mode(tmp_path):
+    calls = []
+
+    def factory():
+        calls.append(1)
+        return DoubleWell(by=-2.0)
+
+    r = _verify(tmp_path, factory=factory, checks=("relax",))
+    assert r["n_imaginary"] == 2
+    assert r["relax"]["status"] == "not_run"
+    assert r["relax"]["optimizer"] == "bfgs" and r["relax"]["max_steps"] == 200
+    for key in ("plus", "minus", "endpoints_relaxed", "initial_fmax_eV_per_A"):
+        assert key not in r["relax"]
+    assert len(calls) == 1  # the frequency run only: no relaxation, no endpoint force call
+    assert not (tmp_path / "ts_relax_plus.traj").exists()
+
+
+class _WithSpectator(DoubleWell):
+    """Adds a harmonic pull on atom 1 towards the origin."""
+
+    def calculate(self, atoms=None, properties=("energy",), system_changes=all_changes):
+        super().calculate(atoms, properties, system_changes)
+        pos = self.atoms.positions[1]
+        self.results["energy"] += float(pos @ pos)
+        self.results["forces"][1] = -2.0 * pos
+
+
+def test_constraints_are_carried_into_the_relaxations(tmp_path):
+    spectator = np.array([8.0, 8.0, 8.0])
+
+    def pair(position):
+        atoms = Atoms("H2", positions=[position, spectator], cell=[10.0, 10.0, 10.0], pbc=False)
+        atoms.set_constraint(FixAtoms(indices=[1]))
+        return atoms
+
+    r = verify_ts(pair(CENTRE), pair(CENTRE - X), pair(CENTRE + X),
+                  calculator_factory=_WithSpectator, checks=("relax",), output_dir=tmp_path)
+    assert r["relax"]["result"] == "connects"
+    for name in ("ts_relax_plus.vasp", "ts_relax_minus.vasp"):
+        relaxed = ase_read(str(tmp_path / name))
+        assert np.allclose(relaxed.get_positions()[1], spectator, atol=1e-6)
+
+
+
 
 
 def test_freq_run_record_command_is_unchanged_by_default(tmp_path):

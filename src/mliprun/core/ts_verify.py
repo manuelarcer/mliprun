@@ -1,7 +1,8 @@
-"""Pure geometry and verdict helpers for transition-state (TS) verification.
+"""Transition-state (TS) verification: geometry and verdict helpers, and ``verify_ts``.
 
-Nothing here runs a calculation. The functions take structures, vectors and
-check results and return numbers, vectors or verdict strings.
+The helpers take structures, vectors and check results and return numbers,
+vectors or verdict strings. ``verify_ts`` runs the calculations (frequencies,
+and the displace-and-relax check when requested).
 """
 
 from __future__ import annotations
@@ -13,10 +14,15 @@ from ase.geometry import find_mic
 from ase.io import write as ase_write
 from ase.vibrations import VibrationsData
 
+from ase.optimize import BFGS, FIRE, LBFGS
+
+from mliprun.core.committee.calculator import free_component_mask
 from mliprun.core.run_record import RunRecord, collect_provenance
+from mliprun.core.utils import calc_fmax
 from mliprun.core.vibrations import IMAGINARY_FLOOR_CM1, run_frequencies, select_indices
 
 _KNOWN_CHECKS = ("overlap", "relax")
+_OPTIMIZERS = {"bfgs": BFGS, "lbfgs": LBFGS, "fire": FIRE}  # same map as CustomNEB.optimize_endpoints
 _FREQ_PROVENANCE_KEYS = ("device_requested", "device_resolved", "uma_task", "mace_head", "sevennet_task")
 
 _ZERO_NORM = 1e-12
@@ -163,6 +169,60 @@ def _read_imaginary_mode(vibrations_json: Path, mode_index: int) -> np.ndarray:
     return np.asarray(data.get_modes(all_atoms=True)[mode_index], dtype=float)
 
 
+def _endpoint_state(endpoint, free_mask, calculator_factory) -> tuple[float, float]:
+    """Energy and free-component fmax of a structure, from one force call."""
+    probe = endpoint.copy()
+    probe.calc = calculator_factory()
+    energy = float(probe.get_potential_energy())
+    fmax = calc_fmax(probe.get_forces(apply_constraint=False) * free_mask)
+    return energy, fmax
+
+
+def _displace_and_relax(
+    work, initial, final, vector, *, calculator_factory, output_path, optimizer_class, fmax, max_steps, match_tolerance
+) -> dict:
+    """Relax TS plus and minus ``vector``; compare both with the endpoints."""
+    free_mask, _ = free_component_mask(work)
+    endpoints = {}
+    for label, endpoint in (("initial", initial), ("final", final)):
+        energy, endpoint_fmax = _endpoint_state(endpoint, free_mask, calculator_factory)
+        endpoints[label] = {"structure": endpoint, "energy": energy, "fmax": endpoint_fmax}
+
+    sides = {}
+    for side, sign in (("plus", 1.0), ("minus", -1.0)):
+        atoms = work.copy()
+        atoms.set_positions(work.get_positions() + sign * vector)
+        atoms.calc = calculator_factory()
+        prefix = output_path / f"ts_relax_{side}"
+        optimizer = optimizer_class(atoms, trajectory=str(prefix) + ".traj", logfile=str(prefix) + ".log")
+        converged = bool(optimizer.run(fmax=fmax, steps=max_steps))
+        relaxed_energy = float(atoms.get_potential_energy())
+        ase_write(str(prefix) + ".vasp", atoms, format="vasp")
+
+        distances = {label: endpoint_distance(atoms, info["structure"]) for label, info in endpoints.items()}
+        nearest = min(distances, key=distances.get)
+        matched = nearest if distances[nearest] <= match_tolerance else None
+        sides[side] = {
+            "converged": converged,
+            "steps": int(optimizer.nsteps),
+            "distance_to_initial_A": distances["initial"],
+            "distance_to_final_A": distances["final"],
+            "matched": matched,
+            "energy_difference_eV": None if matched is None else relaxed_energy - endpoints[matched]["energy"],
+        }
+
+    result = classify_connection(sides["plus"], sides["minus"])
+    return {
+        "status": {"connects": "pass", "inconclusive": "inconclusive"}.get(result, "fail"),
+        "result": result,
+        "initial_fmax_eV_per_A": endpoints["initial"]["fmax"],
+        "final_fmax_eV_per_A": endpoints["final"]["fmax"],
+        "endpoints_relaxed": bool(max(endpoints["initial"]["fmax"], endpoints["final"]["fmax"]) <= fmax),
+        "plus": sides["plus"],
+        "minus": sides["minus"],
+    }
+
+
 def _format_report(results: dict, settings: dict) -> str:
     lines = [
         f"TS verification: {results['verdict']}",
@@ -182,6 +242,32 @@ def _format_report(results: dict, settings: dict) -> str:
         lines.append(f"Overlap check: {overlap['status']}")
         lines.append(f"  reference: {overlap['reference']}")
         lines.append(f"  overlap: {value} (threshold {overlap['threshold']:.2f})")
+    relax = results.get("relax")
+    if relax is not None:
+        lines.append(f"Displace-and-relax check: {relax['result'] or relax['status']}")
+        lines.append(
+            f"  displacement {relax['displacement_A']} A, match tolerance {relax['match_tolerance_A']} A, "
+            f"{relax['optimizer']} to fmax {relax['fmax_eV_per_A']} eV/A in at most {relax['max_steps']} steps"
+        )
+        if relax["status"] == "not_run":
+            lines.append("  not run: it needs exactly one imaginary mode")
+        else:
+            for side in ("plus", "minus"):
+                row = relax[side]
+                energy = "n/a" if row["energy_difference_eV"] is None else f"{row['energy_difference_eV']:.4f} eV"
+                lines.append(
+                    f"  {side:5s}: matched {row['matched']}, distance to IS {row['distance_to_initial_A']:.3f} A, "
+                    f"to FS {row['distance_to_final_A']:.3f} A, energy difference {energy}, "
+                    f"{'converged' if row['converged'] else 'not converged'} in {row['steps']} steps"
+                )
+            lines.append(
+                f"  fmax of IS {relax['initial_fmax_eV_per_A']:.4f} eV/A, of FS {relax['final_fmax_eV_per_A']:.4f} eV/A"
+            )
+            if not relax["endpoints_relaxed"]:
+                lines.append(
+                    f"  Note: Unrelaxed IS or FS (fmax above {relax['fmax_eV_per_A']} eV/A); "
+                    "a failed match can then reflect the endpoints, not the TS"
+                )
     lines.append("")
     lines.append("Settings:")
     lines.extend(f"  {key}: {value}" for key, value in settings.items())
@@ -226,11 +312,19 @@ def verify_ts(
     the ``results`` of the ``ts-verify`` stage in ``mliprun_run.json``.
     """
     checks = tuple(checks)
+    if not checks:
+        raise ValueError(f"checks is empty; choose at least one of {list(_KNOWN_CHECKS)}")
     unknown = [c for c in checks if c not in _KNOWN_CHECKS]
     if unknown:
         raise ValueError(f"unknown check(s) {unknown}; choose from {list(_KNOWN_CHECKS)}")
-    if "relax" in checks:
-        raise NotImplementedError("the relax check is not implemented yet")
+    if (reference_direction is None) != (reference_label is None):
+        raise ValueError(
+            "reference_direction and reference_label go together: a supplied direction must be named, "
+            "and a label needs the direction it names (the default is the initial-to-final direction)"
+        )
+    optimizer_class = _OPTIMIZERS.get(str(relax_optimizer).lower())
+    if optimizer_class is None:
+        raise ValueError(f"unknown relax optimizer {relax_optimizer!r}; choose from {sorted(_OPTIMIZERS)}")
 
     check_same_system(ts_atoms, initial, final)
 
@@ -242,10 +336,10 @@ def verify_ts(
     if "overlap" in checks:
         if reference_direction is None:
             reference = is_to_fs_direction(initial, final)
-            reference_name = reference_label or "is_to_fs"
+            reference_name = "is_to_fs"
         else:
             reference = np.asarray(reference_direction, dtype=float)
-            reference_name = reference_label or "custom"
+            reference_name = reference_label
         if reference.shape != (len(work), 3):
             raise ValueError(f"reference direction has shape {reference.shape}; expected {(len(work), 3)}")
         if np.linalg.norm(reference[list(chosen)]) < _ZERO_NORM:
@@ -320,6 +414,32 @@ def verify_ts(
                 overlap["status"] = "pass" if value >= overlap_threshold else "fail"
             statuses["overlap"] = overlap["status"]
 
+        relax = None
+        if "relax" in checks:
+            relax = {
+                "status": "not_run",
+                "result": None,
+                "displacement_A": displacement,
+                "match_tolerance_A": match_tolerance,
+                "fmax_eV_per_A": relax_fmax,
+                "optimizer": str(relax_optimizer).lower(),
+                "max_steps": relax_max_steps,
+            }
+            if n_imaginary == 1:
+                mode = _read_imaginary_mode(output_path / "ts_freq_vibrations.json", int(np.flatnonzero(mask)[0]))
+                relax.update(
+                    _displace_and_relax(
+                        work, initial, final, scale_mode(mode, displacement),
+                        calculator_factory=calculator_factory,
+                        output_path=output_path,
+                        optimizer_class=optimizer_class,
+                        fmax=relax_fmax,
+                        max_steps=relax_max_steps,
+                        match_tolerance=match_tolerance,
+                    )
+                )
+            statuses["relax"] = relax["status"]
+
         verdict, reason = decide_verdict(n_imaginary, ts_fmax, ts_fmax_limit, statuses)
 
         results = {
@@ -336,6 +456,8 @@ def verify_ts(
         }
         if overlap is not None:
             results["overlap"] = overlap
+        if relax is not None:
+            results["relax"] = relax
         if extra_inputs:
             results["inputs"] = dict(extra_inputs)
 
