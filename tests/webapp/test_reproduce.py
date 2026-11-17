@@ -13,6 +13,7 @@ import pytest
 import typer.main
 
 from mliprun.cli.main import app
+from mliprun.core.optimize import resolve_cell_mode
 from mliprun.webapp import schema
 from mliprun.webapp.reproduce import build_reproduce, write_reproduce
 
@@ -87,7 +88,10 @@ def test_argv_parses_with_the_cli(calc_type, params):
     p = job["params"]
     if calc_type == "optimize":
         assert leaf.params["fmax"] == p["fmax"]
-        assert leaf.params["relax_cell"] == p["relax_cell"]
+        # --relax-cell takes all|volume|shape; the web app's true/false maps
+        # to a bare flag (= "all") or to no option at all.
+        assert resolve_cell_mode(leaf.params["relax_cell"]) == (
+            "all" if p["relax_cell"] else None)
         assert leaf.params["plot"] == p["plot"]
     if calc_type == "md":
         assert leaf.params["ensemble"] == p["ensemble"]

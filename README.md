@@ -194,8 +194,7 @@ optimize run --structure path/to/structure.vasp
 - `--optimizer`: Algorithm (default: `bfgs`; also `fire`, `lbfgs`, `bfgsls`, `gpmin`, `mdmin`)
 - `--fmax`: Force convergence threshold in eV/Å (default: `0.05`)
 - `--max-steps`: Maximum optimization steps (default: `200`)
-- `--relax-cell`: Also relax the simulation cell (VASP ISIF=3-equivalent), wrapping the atoms in ASE's `FrechetCellFilter`. Off by default (positions only).
-- `--cell-mode all|volume|shape`: Choose what the cell relaxation optimizes. Atomic positions relax in every mode. Giving this option turns cell relaxation on, so `--cell-mode volume` needs no `--relax-cell`; `--relax-cell` alone is the same as `--cell-mode all`, and `--relax-cell --cell-mode volume` means `volume`. Like `--relax-cell`, it needs a model that predicts stress. An unknown value exits with an error before any model loads.
+- `--relax-cell [all|volume|shape]`: Also relax the simulation cell, wrapping the atoms in ASE's `FrechetCellFilter`. Off by default (positions only). The value chooses what the cell relaxation optimizes; a bare `--relax-cell` means `all` (VASP ISIF=3-equivalent). Atomic positions relax in every mode. Every mode needs a model that predicts stress. An unknown value exits with an error before any model loads.
 
   | Mode | What relaxes | What is fixed | VASP analogue |
   |------|--------------|---------------|---------------|
@@ -216,7 +215,7 @@ optimize run --structure POSCAR --relax-cell --optimizer fire --fmax 0.02
 
 **Example (positions + volume, cell shape fixed):**
 ```bash
-optimize run --structure POSCAR --cell-mode volume --optimizer fire --fmax 0.02
+optimize run --structure POSCAR --relax-cell volume --optimizer fire --fmax 0.02
 ```
 
 **Outputs:** `opt.traj`, `opt.log`, `opt_convergence.csv`, `opt_final.vasp`, `CONTCAR`, `opt_params.txt` (plus `opt_convergence.png` with `--plot`)

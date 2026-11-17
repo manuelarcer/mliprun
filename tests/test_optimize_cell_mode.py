@@ -1,7 +1,8 @@
-"""``--cell-mode all|volume|shape``: what the cell relaxation optimizes.
+"""``--relax-cell all|volume|shape``: what the cell relaxation optimizes.
 
 `all` relaxes volume and shape (VASP ISIF=3), `volume` keeps the shape fixed
-(ISIF=8-comparable), `shape` keeps the volume fixed (ISIF=4). The physics
+(ISIF=8-comparable), `shape` keeps the volume fixed (ISIF=4). A bare
+``--relax-cell`` (and ``relax_cell=True`` in Python) means `all`. The physics
 tests use ASE's EMT on a deliberately non-cubic, off-volume copper cell, so no
 MLIP is needed.
 """
@@ -22,8 +23,8 @@ from mliprun.core.run_record import RECORD_FILENAME
 runner = CliRunner()
 
 
-def _bad(value):
-    return f"--cell-mode must be one of all, volume, shape; got '{value}'."
+def _bad(value, name="--relax-cell"):
+    return f"{name} must be one of all, volume, shape; got '{value}'."
 
 
 def _strip_ansi(text):
@@ -70,24 +71,47 @@ def _report(label, v0, c0, atoms):
 
 
 class TestResolveCellMode:
-    @pytest.mark.parametrize("relax_cell, cell_mode, expected", [
-        (False, None, None),
-        (True, None, "all"),
-        (False, "all", "all"),
-        (False, "volume", "volume"),
-        (False, "shape", "shape"),
-        (True, "volume", "volume"),
-        (True, "shape", "shape"),
-        (True, "all", "all"),
+    @pytest.mark.parametrize("relax_cell, expected", [
+        (False, None),
+        (None, None),
+        (True, "all"),
+        ("all", "all"),
+        ("volume", "volume"),
+        ("shape", "shape"),
+        (np.bool_(True), "all"),
+        (np.bool_(False), None),
     ])
-    def test_truth_table(self, relax_cell, cell_mode, expected):
-        assert resolve_cell_mode(relax_cell, cell_mode) == expected
+    def test_truth_table(self, relax_cell, expected):
+        assert resolve_cell_mode(relax_cell) == expected
 
-    @pytest.mark.parametrize("relax_cell", [False, True])
-    def test_invalid_value_raises(self, relax_cell):
+    @pytest.mark.parametrize("value", ["cubic", "", "Volume", "true"])
+    def test_invalid_value_raises(self, value):
         with pytest.raises(ValueError) as exc:
-            resolve_cell_mode(relax_cell, "cubic")
+            resolve_cell_mode(value)
+        assert str(exc.value) == _bad(value, name="relax_cell")
+
+    def test_the_message_names_the_parameter_as_asked(self):
+        with pytest.raises(ValueError) as exc:
+            resolve_cell_mode("cubic", name="--relax-cell")
         assert str(exc.value) == _bad("cubic")
+
+
+class TestFillBareRelaxCell:
+    @pytest.mark.parametrize("args, expected", [
+        (["--structure", "P"], ["--structure", "P"]),
+        (["--relax-cell"], ["--relax-cell", "all"]),
+        (["--structure", "P", "--relax-cell"],
+         ["--structure", "P", "--relax-cell", "all"]),
+        (["--relax-cell", "--fmax", "0.01"],
+         ["--relax-cell", "all", "--fmax", "0.01"]),
+        (["--relax-cell", "volume", "--fmax", "0.01"],
+         ["--relax-cell", "volume", "--fmax", "0.01"]),
+        (["--relax-cell", "shape"], ["--relax-cell", "shape"]),
+        (["--relax-cell=volume"], ["--relax-cell=volume"]),
+        (["--relax-cell", "cubic"], ["--relax-cell", "cubic"]),
+    ])
+    def test_only_a_bare_flag_gets_a_value(self, args, expected):
+        assert opt_cmd.fill_bare_relax_cell(args) == expected
 
 
 class TestCoreCellModes:
@@ -95,7 +119,7 @@ class TestCoreCellModes:
         atoms = _start()
         v0 = atoms.get_volume()
         b0, c0, ang0 = _shape(atoms)
-        _run(atoms, tmp_path, cell_mode="volume")
+        _run(atoms, tmp_path, relax_cell="volume")
         b1, c1, ang1 = _shape(atoms)
         assert b1 == pytest.approx(b0, abs=1e-6)
         assert c1 == pytest.approx(c0, abs=1e-6)
@@ -109,7 +133,7 @@ class TestCoreCellModes:
         atoms = _start()
         v0 = atoms.get_volume()
         _, c0, _ = _shape(atoms)
-        _run(atoms, tmp_path, cell_mode="shape")
+        _run(atoms, tmp_path, relax_cell="shape")
         _, c1, _ = _shape(atoms)
         assert atoms.get_volume() == pytest.approx(v0, rel=1e-6)
         assert abs(c1 / c0 - 1.0) > 0.01
@@ -118,24 +142,29 @@ class TestCoreCellModes:
         assert abs(aniso) < 0.01
         assert abs(pressure) > 0.01
 
-    def test_all_mode_equals_relax_cell(self, tmp_path):
+    def test_all_mode_equals_relax_cell_true(self, tmp_path):
         v0 = _start().get_volume()
         _, c0, _ = _shape(_start())
         a = _start()
         b = _start()
-        _run(a, tmp_path / "a", cell_mode="all")
+        _run(a, tmp_path / "a", relax_cell="all")
         _run(b, tmp_path / "b", relax_cell=True)
         assert np.allclose(a.cell.array, b.cell.array, atol=1e-6)
         assert abs(a.get_volume() / v0 - 1.0) > 0.01
         assert abs(_shape(a)[1] / c0 - 1.0) > 0.01
         _report("all", v0, c0, a)
 
-    def test_relax_cell_with_volume_mode_means_volume(self, tmp_path):
-        a = _start()
-        b = _start()
-        _run(a, tmp_path / "a", relax_cell=True, cell_mode="volume")
-        _run(b, tmp_path / "b", cell_mode="volume")
-        assert np.allclose(a.cell.array, b.cell.array, atol=1e-6)
+    @pytest.mark.parametrize("value, in_record", [
+        (True, None), ("all", None), ("volume", "volume"), ("shape", "shape")])
+    def test_the_record_keeps_relax_cell_a_boolean(self, tmp_path, value,
+                                                   in_record):
+        _run(_start(), tmp_path, relax_cell=value)
+        params = json.loads((tmp_path / RECORD_FILENAME).read_text())["parameters"]
+        assert params["relax_cell"]["value"] is True
+        if in_record is None:
+            assert "cell_mode" not in params
+        else:
+            assert params["cell_mode"]["value"] == in_record
 
     def test_no_cell_relaxation_keeps_the_cell(self, tmp_path):
         atoms = _start()
@@ -145,8 +174,8 @@ class TestCoreCellModes:
 
     def test_invalid_mode_raises_before_writing(self, tmp_path):
         with pytest.raises(ValueError) as exc:
-            _run(_start(), tmp_path, cell_mode="cubic")
-        assert str(exc.value) == _bad("cubic")
+            _run(_start(), tmp_path, relax_cell="cubic")
+        assert str(exc.value) == _bad("cubic", name="relax_cell")
         assert not (tmp_path / RECORD_FILENAME).exists()
 
 
@@ -178,8 +207,8 @@ def _run_cli(tmp_path, *extra):
 
 
 class TestCliCellMode:
-    def test_volume_mode_alone_turns_cell_relaxation_on(self, tmp_path, emt_cli):
-        r = _run_cli(tmp_path, "--cell-mode", "volume")
+    def test_volume_mode(self, tmp_path, emt_cli):
+        r = _run_cli(tmp_path, "--relax-cell", "volume")
         assert r.exit_code == 0, r.output
         lines = (tmp_path / "opt_params.txt").read_text().splitlines()
         i = lines.index("Relax cell:        True")
@@ -188,16 +217,42 @@ class TestCliCellMode:
         assert params["cell_mode"]["value"] == "volume"
         assert params["relax_cell"]["value"] is True
 
-    def test_relax_cell_alone_output_is_unchanged(self, tmp_path, emt_cli):
+    def test_bare_relax_cell_output_is_unchanged(self, tmp_path, emt_cli):
         r = _run_cli(tmp_path, "--relax-cell")
         assert r.exit_code == 0, r.output
         text = (tmp_path / "opt_params.txt").read_text()
         assert "Relax cell:        True" in text
         assert not any(l.startswith("Cell mode") for l in text.splitlines())
-        assert "cell_mode" not in _record(tmp_path)["parameters"]
+        params = _record(tmp_path)["parameters"]
+        assert "cell_mode" not in params
+        assert params["relax_cell"]["value"] is True
+
+    def test_bare_relax_cell_before_another_option(self, tmp_path, emt_cli):
+        r = runner.invoke(opt_cmd.app, [
+            "run", "--relax-cell", "--structure", str(_structure(tmp_path)),
+            "--mlip", "emt-test", "--fmax", "0.1", "--max-steps", "30"])
+        assert r.exit_code == 0, r.output
+        assert "Relax cell:        True" in (
+            tmp_path / "opt_params.txt").read_text()
+
+    def test_the_equals_form(self, tmp_path, emt_cli):
+        r = _run_cli(tmp_path, "--relax-cell=shape")
+        assert r.exit_code == 0, r.output
+        assert "Cell mode:         shape" in (
+            tmp_path / "opt_params.txt").read_text()
+
+    def test_bare_relax_cell_through_the_mlip_entry_point(self, tmp_path,
+                                                          emt_cli):
+        from mliprun.cli.main import app as main_app
+        r = runner.invoke(main_app, [
+            "optimize", "run", "--structure", str(_structure(tmp_path)),
+            "--mlip", "emt-test", "--fmax", "0.1", "--max-steps", "30",
+            "--relax-cell"])
+        assert r.exit_code == 0, r.output
+        assert _record(tmp_path)["parameters"]["relax_cell"]["value"] is True
 
     def test_all_mode_writes_no_cell_mode_line(self, tmp_path, emt_cli):
-        r = _run_cli(tmp_path, "--cell-mode", "all")
+        r = _run_cli(tmp_path, "--relax-cell", "all")
         assert r.exit_code == 0, r.output
         text = (tmp_path / "opt_params.txt").read_text()
         assert "Relax cell:        True" in text
@@ -217,7 +272,7 @@ class TestCliCellMode:
         monkeypatch.setattr(opt_cmd, "validate_mlip", lambda *a, **k: None)
         monkeypatch.setattr(opt_cmd, "setup_calculator",
                             lambda *a, **k: seen.update(setup=True))
-        r = _run_cli(tmp_path, "--cell-mode", "cubic")
+        r = _run_cli(tmp_path, "--relax-cell", "cubic")
         assert r.exit_code == 1
         assert "❌ " + _bad("cubic") in _flat(r.output)
         assert "setup" not in seen
@@ -232,7 +287,7 @@ class TestCliCellMode:
         _structure(sub)
         r = runner.invoke(opt_cmd.app, [
             "batch", "--parent", str(tmp_path), "--input-name", "POSCAR",
-            "--mlip", "emt-test", "--cell-mode", "cubic"])
+            "--mlip", "emt-test", "--relax-cell", "cubic"])
         assert r.exit_code == 1
         assert _bad("cubic") in _flat(r.output)
         assert "build" not in seen
@@ -249,9 +304,10 @@ class TestCliCellMode:
         _structure(sub)
         r = runner.invoke(opt_cmd.app, [
             "batch", "--parent", str(tmp_path), "--input-name", "POSCAR",
-            "--mlip", "emt-test", "--cell-mode", "shape"])
+            "--mlip", "emt-test", "--relax-cell", "shape"])
         assert r.exit_code == 0, r.output
-        assert seen["run"]["cell_mode"] == "shape"
+        assert seen["run"]["relax_cell"] == "shape"
+        assert "cell_mode" not in seen["run"]
         params = (sub / "opt_params.txt").read_text()
         assert "Relax cell:        True" in params
         assert "Cell mode:         shape" in params
@@ -279,7 +335,7 @@ class TestAqcatRefusesCellMode:
         with patch("mliprun.cli.utils.AQCAT_AVAILABLE", True):
             r = runner.invoke(opt_cmd.app, [
                 *args, "--mlip", _AQ, "--aqcat-spin", "on",
-                "--cell-mode", "volume"])
+                "--relax-cell", "volume"])
         return r, seen
 
     @pytest.mark.parametrize("command", ["run", "batch"])
@@ -292,6 +348,6 @@ class TestAqcatRefusesCellMode:
     def test_core_refuses_before_writing(self, tmp_path):
         with pytest.raises(ValueError, match="stress"):
             run_optimization(_start(), output_dir=tmp_path,
-                             model_name=_AQ, cell_mode="volume",
+                             model_name=_AQ, relax_cell="volume",
                              aqcat_spin="on")
         assert not (tmp_path / RECORD_FILENAME).exists()

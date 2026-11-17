@@ -58,7 +58,7 @@ Rules that are easy to get wrong:
    several eV); `--aqcat-fidelity` defaults to `high`. Only `singlepoint`,
    `optimize` and `neb` accept the tags; `md`, `freq`, `autoneb`,
    `benchmark`, committees and the web app refuse them. No stress, so no
-   `--relax-cell` and `--cell-mode`; forces are a direct output head, so no `bfgsls`/`gpmin`.
+   `--relax-cell` in any mode (`all`, `volume`, `shape`); forces are a direct output head, so no `bfgsls`/`gpmin`.
    The energy is an OC20-style referenced adsorption energy. One
    (spin, fidelity) pair per Python process. Gated HF repo, CC BY-NC-SA 4.0;
    recipe: `docs/install/aqcat25.md`.

@@ -92,11 +92,11 @@ converged = run_optimization(
     optimizer="bfgs",   # or "fire", "lbfgs", "bfgsls", "gpmin", "mdmin"
     fmax=0.05,
     max_steps=200,
-    relax_cell=False,   # True → also relax the cell (VASP ISIF=3-equivalent)
-    cell_mode=None,     # "all" (= relax_cell, ISIF=3) | "volume" (shape fixed, ISIF=8) |
-                        # "shape" (volume fixed, ISIF=4). Turns cell relaxation on by itself and
-                        # wins over relax_cell; other values raise ValueError.
-                        # mliprun.core.optimize.resolve_cell_mode(relax_cell, cell_mode) gives the result.
+    relax_cell=False,   # False → positions only. True or "all" → also relax the cell,
+                        # volume and shape (VASP ISIF=3-equivalent). "volume" → volume only,
+                        # shape fixed (ISIF=8). "shape" → shape only, volume fixed (ISIF=4).
+                        # Any other string raises ValueError.
+                        # mliprun.core.optimize.resolve_cell_mode(relax_cell) gives the mode.
     output_dir="./relaxed",
     model_name="uma-s-1p2",
     uma_task="omat",    # or mace_head="omat_pbe" — see "Run-record keywords"
