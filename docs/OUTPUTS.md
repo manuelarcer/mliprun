@@ -951,7 +951,19 @@ The stage `parameters` are the settings (checks, delta, nfree, imaginary floor, 
 | `n_force_calls_frequencies` | Force calls of the frequency run |
 | `overlap` | Present with the overlap check: `status` (`pass`, `fail` or `not_run`), `value` (null when not run), `threshold`, `reference` (`neb_tangent`, `is_to_fs` or the label a caller supplied) |
 | `relax` | Present with the relax check: `status` (`pass`, `fail`, `inconclusive` or `not_run`), `result` (`connects`, `one_side`, `same_side`, `neither`, `inconclusive`, or null when not run), the settings used (`displacement_A`, `match_tolerance_A`, `fmax_eV_per_A`, `optimizer`, `max_steps`), `initial_fmax_eV_per_A`, `final_fmax_eV_per_A`, `endpoints_relaxed`, the two sides `plus` and `minus`, and a `note` when a relaxation returned to the TS |
-| `inputs` | What was verified. With a NEB folder: `neb_dir`, `ts_image_index`, `n_images`. With three files: `ts`, `initial`, `final` (absolute paths). |
+| `inputs` | What was verified. With a NEB folder: `neb_dir`, `ts_image_index`, `n_images`, and `neb_last_stage_status` and `neb_last_stage_climb` (the state of the NEB's last stage; null when the NEB record is missing; `neb run --verify-ts` always writes `converged` and `true`). With three files: `ts`, `initial`, `final` (absolute paths). `ts_verify.txt` lists every entry under "Inputs:". |
+| `archived_previous` | Present only when a verification of a different TS geometry was found in the output directory: the name of the subdirectory (`previous_<n>`) it was moved to. |
+| `warnings` | Present only when there is a warning: a list of strings. Currently `constraints differ between the TS and the initial/final structures`, when the set of `FixAtoms` indices of the TS differs from that of the initial or final structure. |
+
+A stage that failed has `status: "failed"` and `results = {"error": "<message>"}`; none of the keys above are present then.
+
+`ts_verify.txt` (and the console) add these note lines when they apply:
+
+- `Note: the TS fmax is above the limit; the geometry is loosely converged.` when `ts_fmax_above_limit` is true.
+- `Note: the NEB band was not a converged climbing-image run.` when `neb_last_stage_status` is present and not `converged`, or `neb_last_stage_climb` is false.
+- `Warning: <text>` for each entry of `warnings`.
+- `A verification of a different TS geometry was found here and moved to previous_<n>/.` when `archived_previous` is present.
+- In the relax check, `Note: the imaginary mode has no component on the free atoms` (status and result `inconclusive`, no relaxation run) when the mode is zero on every free atom. The displacement is applied to free atoms only, so the largest free-atom displacement equals `displacement_A` even when `--indices` includes a fixed atom.
 
 Each side of `relax` (`plus`, `minus`) holds `converged`, `steps`, `distance_to_initial_A`, `distance_to_final_A`, `distance_to_ts_A`, `matched` (`initial`, `final` or null), `returned_to_ts` and `energy_difference_eV` (relative to the matched endpoint, null when none matched).
 

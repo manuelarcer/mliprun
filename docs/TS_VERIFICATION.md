@@ -47,7 +47,7 @@ The two forms cannot be mixed. `--neb-dir` cannot be combined with `--ts`, `--in
 neb run --initial POSCAR_A --final POSCAR_B --mlip uma-s-1p2 --verify-ts both
 ```
 
-`--verify-ts` takes `overlap`, `relax` or `both`. It is off by default and is stored in `neb_parameters.txt`, so `neb run --restart` uses it again. It needs a climbing image: with `--no-climb` the command stops at the start, before any model loads. The verification runs only when the NEB stage ends converged. Otherwise a message says it was skipped. A problem inside the verification never turns a finished NEB into a failed one: the error is printed and the NEB result stays as it was. This path uses the default settings listed below. For other settings, run `mlip ts verify --neb-dir` afterwards.
+`--verify-ts` takes `overlap`, `relax`, `both` or `none` (off). It is off by default and is stored in `neb_parameters.txt`, so `neb run --restart` uses it again. It needs a climbing image: with `--no-climb` the command stops at the start, before any model loads. The verification runs only when the NEB stage ends converged. Otherwise a message says it was skipped. A problem inside the verification never turns a finished NEB into a failed one: the error is printed and the NEB result stays as it was. This path uses the default settings listed below. For other settings, run `mlip ts verify --neb-dir` afterwards.
 
 ---
 
@@ -137,7 +137,17 @@ Options of `mlip ts verify`, with defaults:
 
 `neb run --verify-ts` takes the same three choices as `--check` and uses all other settings at the defaults above.
 
-If you run `ts verify` again into a directory that holds a frequency cache made with other settings, the command refuses it with the same message as `freq run`. It does not delete a cache silently.
+---
+
+## Running the verification again
+
+Running into a directory that already holds a verification (for example after `neb run --restart --fmax 0.02` moved the TS) follows three rules. Nothing is deleted silently.
+
+- **The TS geometry changed** (different atoms, cell, or any position by more than 1e-6 A). Every entry of the output directory is moved into a new subdirectory `previous_<n>/` (`n` = 1, 2, ... the first unused number), and the verification starts on an empty directory. `results["archived_previous"]` holds the name, and `ts_verify.txt` and the console say: "A verification of a different TS geometry was found here and moved to previous_<n>/." Earlier `previous_*` directories stay where they are.
+- **The geometry is the same.** The directory stays and the displacement cache is reused, so the frequencies cost no new force calls. The old `ts_verify.txt` and any `ts_relax_plus.*` and `ts_relax_minus.*` files are removed first, so that a run that fails, or that asks for fewer checks, never leaves an older verdict or older relaxation files beside the new record.
+- **The geometry is the same but the settings are not** (for example another `--delta`). The command refuses the cache with the same message as `freq run`. Use `--output-dir` to give the new run its own directory.
+
+To switch off a stored `--verify-ts` on a restart, give `neb run --restart --verify-ts none`. This also removes the reason to refuse `--no-climb`. On a new run `none` means off, and no `Verify TS:` line is written.
 
 ---
 
@@ -166,5 +176,5 @@ Use `overlap` for routine screening of many NEBs. It costs nothing beyond the fr
 - The three-file form uses the straight IS-to-FS line as reference. When the real path is curved, the overlap with this line can be low for a correct TS. The report states which reference was used (`neb_tangent` or `is_to_fs`).
 - Symmetry-equivalent minima can fail the match. A relaxed structure can be the same minimum as an endpoint, but with equivalent atoms exchanged. The largest single-atom distance is then large, and the check reports `neither` or `one_side`.
 - The overlap check is a local test. It does not show where the system ends.
-- AQCat25-EV2 models are refused, because their forces are not the energy gradient. Committees (`--committee`) and the web app are not supported. A finished AutoNEB can still be checked with the three-file form.
+- AQCat25-EV2 models are refused, because their forces are a direct output head and not the gradient of the energy (see the item "Forces" in [install/aqcat25.md](install/aqcat25.md)). Committees (`--committee`) and the web app are not supported. A finished AutoNEB can still be checked with the three-file form.
 - This is not an intrinsic reaction coordinate calculation. The relax check is a plain minimisation from two displaced structures.
