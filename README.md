@@ -175,7 +175,7 @@ These apply to `optimize`, `singlepoint`, `freq`, `md`, `neb`, `autoneb`, and `b
 - `--uma-task`: Task head for UMA models. **No default and required for every `uma-*` model** — the heads are independent fine-tunes with independent energy zeros, so a guessed head silently changes the level of theory. One of `omat` (bulk inorganic), `omc` (molecular crystals), `omol` (molecules), `oc20` (catalysis/surfaces), `oc22`, `oc25`, `odac`. Ignored for non-UMA models.
 - `--mace-head`: Head for multi-head MACE models (`mace-mh-*`). **No default and required for those models**, for the same reason as `--uma-task`. One of `omat_pbe`, `oc20_usemppbe`, `matpes_r2scan`, `mp_pbe_refit_add`, `omol`, `spice_wB97M`. Rejected for plain `mace`, which is single-head.
 - `--sevennet-task`: Inference task for SevenNet models (`modal` in SevenNet's API). **No default** — a multi-task tag without one is an error listing the valid tasks, because the tasks are independent fine-tunes with independent energy zeros. `7net-omni`/`-i8`/`-i12`: `mpa` (PBE+U, general), `oc20` (RPBE, surfaces), `oc22`, `omat24`, `matpes_pbe`, `odac23`, `omol25_low`, `omol25_high`, `spice`, `qcml`, `pet_mad`, `mp_r2scan`, `matpes_r2scan`. `7net-mf-ompa`: `omat24`, `mpa`. `7net-mf-0`: `PBE`, `R2SCAN` (uppercase; names are matched exactly). Rejected for single-task tags (`7net-omat`, `7net-l3i5`, `7net-0`). Ignored for non-SevenNet models.
-- `--aqcat-spin on|off` and `--aqcat-fidelity high|low` (`singlepoint`, `optimize`, `neb` only): for the AQCat25-EV2 tags. **`--aqcat-spin` has no default and is required**: spin on versus off changes the predicted energy by up to several eV. `--aqcat-fidelity` defaults to `high` (AQCat25 settings, RPBE 500 eV); `low` is the OC20 settings (RPBE 350 eV). Both are rejected for every other model. These models predict no stress, so `optimize --relax-cell` is refused, and so are the `bfgsls` and `gpmin` optimizers, because the forces are a direct model output rather than the energy gradient. The energy is an OC20-style referenced adsorption energy, not a DFT total energy.
+- `--aqcat-spin on|off` and `--aqcat-fidelity high|low` (`singlepoint`, `optimize`, `neb` only): for the AQCat25-EV2 tags. **`--aqcat-spin` has no default and is required**: spin on versus off changes the predicted energy by up to several eV. `--aqcat-fidelity` defaults to `high` (AQCat25 settings, RPBE 500 eV); `low` is the OC20 settings (RPBE 350 eV). Both are rejected for every other model. These models predict no stress, so `optimize --relax-cell` and `--cell-mode` are refused, and so are the `bfgsls` and `gpmin` optimizers, because the forces are a direct model output rather than the energy gradient. The energy is an OC20-style referenced adsorption energy, not a DFT total energy.
 - `--device`: `auto` (default; cuda if available, else cpu), `cuda`, or `cpu`. On multi-GPU nodes set `CUDA_VISIBLE_DEVICES` to choose the GPU. (`neb` is the exception: it defaults to `cpu`, so pass `--device cuda` explicitly for GPU NEB runs. Rejected together with `--committee`: see [Committee evaluation](#committee-evaluation) below.)
 - `--plot / --no-plot`: write PNG figures of the results. **Off by default** (plotting is opt-in) — the CSV data is always written, so pass `--plot` only when you want the figures. Applies to `optimize`, `md`, and `neb`.
 
@@ -195,6 +195,13 @@ optimize run --structure path/to/structure.vasp
 - `--fmax`: Force convergence threshold in eV/Å (default: `0.05`)
 - `--max-steps`: Maximum optimization steps (default: `200`)
 - `--relax-cell`: Also relax the simulation cell (VASP ISIF=3-equivalent), wrapping the atoms in ASE's `FrechetCellFilter`. Off by default (positions only).
+- `--cell-mode all|volume|shape`: Choose what the cell relaxation optimizes. Atomic positions relax in every mode. Giving this option turns cell relaxation on, so `--cell-mode volume` needs no `--relax-cell`; `--relax-cell` alone is the same as `--cell-mode all`, and `--relax-cell --cell-mode volume` means `volume`. Like `--relax-cell`, it needs a model that predicts stress. An unknown value exits with an error before any model loads.
+
+  | Mode | What relaxes | What is fixed | VASP analogue |
+  |------|--------------|---------------|---------------|
+  | `all` | positions, cell volume and cell shape | nothing | ISIF=3 |
+  | `volume` | positions and cell volume | cell shape (a:b:c ratios and angles) | ISIF=8 |
+  | `shape` | positions and cell shape | cell volume | ISIF=4 |
 - `--plot`: also write the `*_convergence.png` figure (off by default; the `*_convergence.csv` is always written). The plot is per-structure IO that dominates short relaxations, so it is opt-in.
 
 **Example (positions only):**
@@ -205,6 +212,11 @@ optimize run --structure POSCAR --mlip uma-s-1p2 --optimizer fire --fmax 0.05
 **Example (full cell + positions relaxation):**
 ```bash
 optimize run --structure POSCAR --relax-cell --optimizer fire --fmax 0.02
+```
+
+**Example (positions + volume, cell shape fixed):**
+```bash
+optimize run --structure POSCAR --cell-mode volume --optimizer fire --fmax 0.02
 ```
 
 **Outputs:** `opt.traj`, `opt.log`, `opt_convergence.csv`, `opt_final.vasp`, `CONTCAR`, `opt_params.txt` (plus `opt_convergence.png` with `--plot`)

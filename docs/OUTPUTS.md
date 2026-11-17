@@ -31,8 +31,8 @@ This is not always the same directory the user is sitting in. `optimize` and `md
 | `opt_convergence.png` | PNG | Energy and fmax vs step — **only with `--plot`** (plotting is opt-in; the CSV is always written) |
 | `opt_final.vasp` | VASP POSCAR (vasp5, direct) | Final relaxed structure |
 | `CONTCAR` | VASP POSCAR (vasp5, direct) | Copy of the final relaxed structure, named so a follow-up DFT run (e.g. managed by asetools) can restart from this directory |
-| `opt_params.txt` | plain text, key/value | Echo of run parameters (MLIP, optimizer, fmax, max_steps, etc.) |
-| `mliprun_run.json` | JSON | Canonical run record: every resolved parameter with the source of its value, provenance (versions, device, host, timings), and per-stage outcome. See [The run record](#the-run-record). |
+| `opt_params.txt` | plain text, key/value | Echo of run parameters (MLIP, optimizer, fmax, max_steps, etc.). With `--cell-mode volume` or `shape`, the `Relax cell:` line reads `True` and a `Cell mode:         volume` (or `shape`) line follows it; the line is absent for `all`, for `--relax-cell` alone and for no cell relaxation. |
+| `mliprun_run.json` | JSON | Canonical run record: every resolved parameter with the source of its value, provenance (versions, device, host, timings), and per-stage outcome. See [The run record](#the-run-record). With `--cell-mode volume` or `shape`, `parameters.cell_mode` is `"volume"` or `"shape"` and `parameters.relax_cell` is `true`; the `cell_mode` key is absent otherwise. |
 
 If you change `--logfile <name>.log`, the convergence CSV / PNG and final POSCAR are renamed accordingly: `<name>.log`, `<name>_convergence.csv`, `<name>_convergence.png`, `<name>_final.vasp`. The `CONTCAR` filename is fixed (it does not follow `--logfile`). The trajectory filename comes from `--trajectory`. **Two relaxations launched in the same directory will overwrite each other** unless you set `--logfile` and `--trajectory` to different names.
 

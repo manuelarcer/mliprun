@@ -24,6 +24,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `ts-verify` run-record stage (additive, no schema bump); the NEB
   directory's own record is not modified. AQCat25-EV2 models, committees and
   the web app are not supported. See `docs/TS_VERIFICATION.md`.
+- **`optimize run --cell-mode all|volume|shape` and `optimize batch
+  --cell-mode ...` (Python: `run_optimization(cell_mode=...)`).** Chooses
+  what the cell relaxation optimizes. `all` relaxes volume and shape and is
+  the same as `--relax-cell` (like VASP ISIF=3); `volume` relaxes positions
+  and volume with the shape (a:b:c ratios and angles) fixed (comparable to
+  VASP ISIF=8), using ASE's cell filter with `hydrostatic_strain=True`;
+  `shape` relaxes positions and shape with the volume fixed (VASP ISIF=4),
+  using `constant_volume=True`. Giving `--cell-mode` turns cell relaxation
+  on by itself; `--relax-cell` keeps its meaning, and `--relax-cell
+  --cell-mode volume` means `volume`. An unknown value exits 1 before any
+  model loads (Python: `ValueError`). Like `--relax-cell`, it needs stress,
+  so the AQCat25-EV2 models refuse it. Only for `volume` and `shape`,
+  `opt_params.txt` gains a `Cell mode:` line after `Relax cell:` and the run
+  record gains `parameters.cell_mode`; every existing output is unchanged.
 - **AQCat25-EV2 models: `--mlip aqcat25-ev2-midfilm` and
   `--mlip aqcat25-ev2-infilm`.** SandboxAQ's EquiformerV2 checkpoints
   (Allam et al., npj Comput. Mater. 12, 226 (2026)), run on a patched
