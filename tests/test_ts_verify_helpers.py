@@ -173,7 +173,11 @@ def test_decide_verdict(n_imag, fmax, statuses, expected):
 
 
 def test_the_d9_reason_names_convergence():
-    assert "not converged enough" in decide_verdict(2, 0.05, 0.03, {"overlap": "not_run"})[1]
+    reason = decide_verdict(2, 0.05, 0.03, {"overlap": "not_run"})[1]
+    assert "not converged enough" in reason
+    assert reason.endswith(
+        "(fmax 0.050 > 0.030 eV/A); restart the NEB with a tighter fmax, "
+        "or relax the TS further, and verify again")
 
 
 def _ts(symbols="HO", cell=(10, 10, 10)):

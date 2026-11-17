@@ -102,7 +102,8 @@ Only `connects` passes. The other results, except `inconclusive`, fail the check
 A NEB usually stops at fmax 0.05 eV/A. That can be too loose for a clean Hessian, so a real TS can show zero, or two or more, imaginary modes. Calling this "not verified" would read as "this is not a TS". The honest statement is "this TS is not converged enough to test". Therefore:
 
 - The fmax of the TS structure over its free force components is always reported.
-- If the mode count is not 1 and the TS fmax is above `--ts-fmax-limit` (default 0.03 eV/A), the verdict is `inconclusive`. The advice is to restart the NEB with a tighter fmax, for example `neb run --restart --fmax 0.02`, and verify again.
+- If the mode count is not 1 and the TS fmax is above `--ts-fmax-limit` (default 0.03 eV/A), the verdict is `inconclusive`. The printed reason ends with the advice "restart the NEB with a tighter fmax, or relax the TS further, and verify again", for example `neb run --restart --fmax 0.02`.
+- When the TS fmax is above the limit, `ts_verify.txt` and the console add the note "the TS fmax is above the limit; the geometry is loosely converged", whatever the verdict.
 - If the mode count is not 1 and the TS fmax is at or below the limit, the verdict is `not_verified`.
 - If the mode count is 1, the verdict does not depend on the TS fmax. The fmax and whether it is above the limit are still reported.
 

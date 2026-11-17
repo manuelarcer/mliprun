@@ -132,7 +132,8 @@ def decide_verdict(n_imaginary, ts_fmax, ts_fmax_limit, check_statuses: dict) ->
             return (
                 "inconclusive",
                 f"{n_imaginary} imaginary modes and the TS is not converged enough "
-                f"(fmax {ts_fmax:.3f} > {ts_fmax_limit:.3f} eV/A); relax it further and repeat",
+                f"(fmax {ts_fmax:.3f} > {ts_fmax_limit:.3f} eV/A); "
+                "restart the NEB with a tighter fmax, or relax the TS further, and verify again",
             )
         return (
             "not_verified",
@@ -280,6 +281,21 @@ def _prepare_output_dir(output_path: Path, work) -> str | None:
     return archive.name
 
 
+def report_notes(results: dict) -> list[str]:
+    """Note lines for a loose TS or a band that was not a converged climbing run.
+
+    Shared by ``ts_verify.txt`` and the console summary so both say the same.
+    """
+    notes = []
+    if results.get("ts_fmax_above_limit"):
+        notes.append("Note: the TS fmax is above the limit; the geometry is loosely converged.")
+    inputs = results.get("inputs") or {}
+    status = inputs.get("neb_last_stage_status")
+    if (status is not None and status != "converged") or inputs.get("neb_last_stage_climb") is False:
+        notes.append("Note: the NEB band was not a converged climbing-image run.")
+    return notes
+
+
 def _format_report(results: dict, settings: dict) -> str:
     lines = [
         f"TS verification: {results['verdict']}",
@@ -299,7 +315,8 @@ def _format_report(results: dict, settings: dict) -> str:
         f"TS fmax (free components): {results['ts_fmax_free_eV_per_A']:.4f} eV/A "
         f"(limit {results['ts_fmax_limit_eV_per_A']:.4f} eV/A)"
     )
-    overlap = results.get("overlap")
+    lines.extend(report_notes(results))
+    overlap =results.get("overlap")
     if overlap is not None:
         value = "not computed" if overlap["value"] is None else f"{overlap['value']:.4f}"
         lines.append(f"Overlap check: {overlap['status']}")
@@ -334,6 +351,10 @@ def _format_report(results: dict, settings: dict) -> str:
                     f"  Note: Unrelaxed IS or FS (fmax above {relax['fmax_eV_per_A']} eV/A); "
                     "a failed match can then reflect the endpoints, not the TS"
                 )
+    if results.get("inputs"):
+        lines.append("")
+        lines.append("Inputs:")
+        lines.extend(f"  {key}: {value}" for key, value in results["inputs"].items())
     lines.append("")
     lines.append("Settings:")
     lines.extend(f"  {key}: {value}" for key, value in settings.items())

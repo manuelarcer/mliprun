@@ -14,8 +14,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
   structure files), and a displace-and-relax check that relaxes both ways
   from the TS and compares the results with the endpoints. The verdict is
   `verified`, `not_verified` or `inconclusive`; a TS above `--ts-fmax-limit`
-  (0.03 eV/Å) with the wrong mode count is `inconclusive`, with advice to
-  restart the NEB at a tighter fmax. Works from a finished NEB folder
+  (0.03 eV/Å) with the wrong mode count is `inconclusive`, and the reason
+  says to restart the NEB with a tighter fmax, or relax the TS further, and
+  verify again. A TS above the limit is also flagged in the report whatever
+  the verdict. Works from a finished NEB folder
   (`--neb-dir`) or from any three structure files, so later TS search
   methods can reuse it; the Python entry point is
   `mliprun.core.ts_verify.verify_ts`. Outputs go to `ts_verify/`, with a new

@@ -66,6 +66,9 @@ def test_a_converged_neb_is_verified(workdir):
     assert results["n_imaginary"] == 1 and results["overlap"]["reference"] == "neb_tangent"
     assert results["overlap"]["value"] > 0.7 and results["verdict"] == "verified"
     assert "TS verification: verified" in result.stdout
+    assert results["inputs"]["neb_last_stage_status"] == "converged"
+    assert results["inputs"]["neb_last_stage_climb"] is True
+    assert "Note: the NEB band" not in result.stdout
     # The NEB's own record is not touched by the verification.
     stages = json.loads(Path("mliprun_run.json").read_text())["stages"]
     assert "ts-verify" not in json.dumps(stages)

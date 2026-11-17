@@ -22,6 +22,7 @@ from mliprun.core.ts_verify import (
     CHECKS_BY_CHOICE,
     load_neb_for_verification,
     neb_tangent,
+    report_notes,
     verify_ts,
 )
 from mliprun.core.vibrations import (
@@ -48,7 +49,9 @@ def echo_ts_verification(results: dict, output_dir: Path) -> None:
     typer.echo(f"   TS fmax (free components): "
                f"{results['ts_fmax_free_eV_per_A']:.4f} eV/Å "
                f"(limit {results['ts_fmax_limit_eV_per_A']:.4f})")
-    overlap = results.get("overlap")
+    for note in report_notes(results):
+        typer.echo(f"   {note}")
+    overlap =results.get("overlap")
     if overlap is not None:
         value = ("not computed" if overlap["value"] is None
                  else f"{overlap['value']:.4f}")
@@ -171,10 +174,9 @@ def verify(
         typer.echo(f"📂 NEB band: {len(images)} images in {neb_dir}; "
                    f"TS is image {ts_index}")
         if loaded["last_stage_status"] not in (None, "converged"):
-            typer.echo(f"⚠️  The last NEB stage did not finish converged "
-                       f"(status: {loaded['last_stage_status']}; not "
-                       f"converged): the highest image may not be a saddle. "
-                       f"Continuing.")
+            typer.echo(f"⚠️  The last NEB stage is not converged "
+                       f"(status: {loaded['last_stage_status']}): the "
+                       f"highest image may not be a saddle. Continuing.")
         if loaded["last_stage_climb"] is False:
             typer.echo("⚠️  The last NEB stage was not climbing: the highest "
                        "image is not driven to the saddle. Continuing.")
@@ -192,6 +194,8 @@ def verify(
             "neb_dir": str(neb_dir.resolve()),
             "ts_image_index": ts_index,
             "n_images": len(images),
+            "neb_last_stage_status": loaded["last_stage_status"],
+            "neb_last_stage_climb": loaded["last_stage_climb"],
         }
         default_output = neb_dir / "ts_verify"
     else:

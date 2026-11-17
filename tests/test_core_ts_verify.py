@@ -358,6 +358,45 @@ def test_an_unknown_check_is_refused_before_any_force_call(tmp_path):
     assert not (tmp_path / "mliprun_run.json").exists()
 
 
+FMAX_NOTE = "Note: the TS fmax is above the limit; the geometry is loosely converged."
+BAND_NOTE = "Note: the NEB band was not a converged climbing-image run."
+
+
+def test_a_loose_ts_is_flagged_in_the_report_even_when_verified(tmp_path):
+    # Displaced 0.05 A: one imaginary mode, overlap passes, but fmax 0.17 > 0.03 eV/A.
+    r = _verify(tmp_path, ts_shift=0.05)
+    assert r["verdict"] == "verified" and r["ts_fmax_above_limit"] is True
+    assert FMAX_NOTE in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_a_tight_ts_has_no_fmax_note(tmp_path):
+    _verify(tmp_path)
+    assert "loosely converged" not in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_the_report_lists_the_inputs(tmp_path):
+    _verify(tmp_path, extra_inputs={"neb_dir": "/some/neb", "n_images": 5})
+    report = (tmp_path / "ts_verify.txt").read_text()
+    assert "Inputs:\n  neb_dir: /some/neb\n  n_images: 5\n" in report
+    assert "not a converged climbing-image run" not in report
+
+
+@pytest.mark.parametrize("inputs", [
+    {"neb_last_stage_status": "not_converged", "neb_last_stage_climb": True},
+    {"neb_last_stage_status": "converged", "neb_last_stage_climb": False},
+])
+def test_an_unconverged_or_non_climbing_band_is_noted_in_the_report(tmp_path, inputs):
+    _verify(tmp_path, extra_inputs=inputs)
+    assert BAND_NOTE in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_a_converged_climbing_band_and_unknown_status_have_no_band_note(tmp_path):
+    _verify(tmp_path / "a", extra_inputs={"neb_last_stage_status": "converged", "neb_last_stage_climb": True})
+    _verify(tmp_path / "b", extra_inputs={"neb_last_stage_status": None, "neb_last_stage_climb": None})
+    for name in ("a", "b"):
+        assert BAND_NOTE not in (tmp_path / name / "ts_verify.txt").read_text()
+
+
 def test_a_changed_ts_geometry_archives_the_previous_verification(tmp_path):
     first = _verify(tmp_path)
     assert "archived_previous" not in first

@@ -463,6 +463,10 @@ def _verify_ts_after_neb(neb_obj, choice, output_dir):
                 "neb_dir": str(output_dir.resolve()),
                 "ts_image_index": ts_index,
                 "n_images": len(images),
+                # This function only runs on a converged band; climb is
+                # guaranteed by _check_verify_ts_options.
+                "neb_last_stage_status": "converged",
+                "neb_last_stage_climb": True,
             },
             run_context=RunContext(command="ts-verify", mode="one-off"),
         )

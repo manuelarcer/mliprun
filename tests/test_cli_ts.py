@@ -239,6 +239,56 @@ def test_the_console_summary_prints_the_relax_note(capsys, tmp_path):
     assert "Note: a relaxation returned to the TS" in capsys.readouterr().out
 
 
+def test_the_console_summary_prints_the_loose_ts_and_band_notes(capsys, tmp_path):
+    from mliprun.cli.commands.ts import echo_ts_verification
+
+    results = {
+        "verdict": "verified", "reason": "r", "n_imaginary": 1,
+        "imaginary_frequencies_cm-1": [64.5], "ts_fmax_free_eV_per_A": 0.05,
+        "ts_fmax_limit_eV_per_A": 0.03, "ts_fmax_above_limit": True,
+        "inputs": {"neb_last_stage_status": "not_converged",
+                   "neb_last_stage_climb": True},
+    }
+    echo_ts_verification(results, tmp_path)
+    out = capsys.readouterr().out
+    assert ("Note: the TS fmax is above the limit; the geometry is loosely "
+            "converged.") in out
+    assert "Note: the NEB band was not a converged climbing-image run." in out
+
+
+def test_a_neb_dir_run_records_the_band_state_and_notes_a_loose_band(tmp_path):
+    neb_dir = _make_neb_dir(tmp_path, status="not_converged")
+    result = runner.invoke(app, ["verify", "--neb-dir", str(neb_dir)])
+    assert result.exit_code == 0, result.stdout
+    record = json.loads((neb_dir / "ts_verify" / "mliprun_run.json").read_text())
+    inputs = record["stages"][-1]["results"]["inputs"]
+    assert inputs["neb_last_stage_status"] == "not_converged"
+    assert inputs["neb_last_stage_climb"] is True
+    assert "not a converged climbing-image run" in (neb_dir / "ts_verify" / "ts_verify.txt").read_text()
+    assert "Note: the NEB band was not a converged climbing-image run." in result.stdout
+
+
+def test_a_neb_dir_without_a_record_stores_none_for_the_band_state(tmp_path):
+    neb_dir = _make_neb_dir(tmp_path)
+    (neb_dir / "mliprun_run.json").unlink()
+    result = runner.invoke(app, ["verify", "--neb-dir", str(neb_dir)])
+    assert result.exit_code == 0, result.stdout
+    record = json.loads((neb_dir / "ts_verify" / "mliprun_run.json").read_text())
+    inputs = record["stages"][-1]["results"]["inputs"]
+    assert inputs["neb_last_stage_status"] is None
+    assert inputs["neb_last_stage_climb"] is None
+    assert "not a converged climbing-image run" not in result.stdout
+
+
+def test_the_unconverged_band_warning_says_not_converged_once(tmp_path):
+    neb_dir = _make_neb_dir(tmp_path, status="not_converged")
+    result = runner.invoke(app, ["verify", "--neb-dir", str(neb_dir)])
+    warning = next(line for line in result.stdout.splitlines()
+                   if "status: not_converged" in line)
+    assert warning.count("not converged") == 1
+    assert "status: not_converged" in warning
+
+
 def test_the_console_summary_names_the_archive(capsys, tmp_path):
     from mliprun.cli.commands.ts import echo_ts_verification
 
