@@ -6,7 +6,9 @@ import traceback
 import typer
 from pathlib import Path
 from ase.io import read
-from mliprun.core.optimize import run_optimization, OPTIMIZER_MAP
+from typer.core import TyperCommand
+from mliprun.core.optimize import (
+    run_optimization, OPTIMIZER_MAP, resolve_cell_mode)
 from mliprun.core.run_record import BatchInfo, RunContext, new_batch_id
 from mliprun.core.committee.config import CommitteeConfigError, load_committee
 from mliprun.core.committee.remote import DEFAULT_CALC_TIMEOUT_S
@@ -62,6 +64,48 @@ def _find_input_structure(subdir: Path, pattern: str) -> Path:
     return candidates[0]
 
 
+RELAX_CELL_HELP = (
+    "Relax the simulation cell as well as the positions. Takes what to "
+    "relax: 'all' (volume and shape, VASP ISIF=3-equivalent), 'volume' "
+    "(shape fixed, like ISIF=8) or 'shape' (volume fixed, like ISIF=4). "
+    "A bare --relax-cell means 'all'. Wraps atoms in ASE's FrechetCellFilter "
+    "(or ExpCellFilter on older ASE).")
+
+
+def fill_bare_relax_cell(args: list) -> list:
+    """Give a bare ``--relax-cell`` its value ``all``.
+
+    Typer cannot declare one option that is both a flag and takes a value, and
+    every existing job script uses the bare flag. So before parsing, a
+    ``--relax-cell`` followed by nothing, or by another option, becomes
+    ``--relax-cell all``.
+    """
+    filled = []
+    for index, token in enumerate(args):
+        filled.append(token)
+        if token == "--relax-cell":
+            following = args[index + 1] if index + 1 < len(args) else None
+            if following is None or following.startswith("-"):
+                filled.append("all")
+    return filled
+
+
+class _RelaxCellCommand(TyperCommand):
+    """A command that accepts ``--relax-cell`` with or without a value."""
+
+    def parse_args(self, ctx, args):
+        return super().parse_args(ctx, fill_bare_relax_cell(list(args)))
+
+
+def _resolve_cell_mode_or_exit(relax_cell):
+    """Resolved cell mode, or exit 1 before anything loads on a bad value."""
+    try:
+        return resolve_cell_mode(relax_cell, name="--relax-cell")
+    except ValueError as exc:
+        typer.echo(f"❌ {exc}")
+        raise typer.Exit(1)
+
+
 def _refuse_aqcat_limits(mlip, optimizer, relax_cell) -> None:
     """Stop before any model loads if the AQCat model cannot do this run."""
     try:
@@ -71,7 +115,7 @@ def _refuse_aqcat_limits(mlip, optimizer, relax_cell) -> None:
         raise typer.Exit(1)
 
 
-@app.command()
+@app.command(cls=_RelaxCellCommand)
 def run(
     ctx: typer.Context,
     structure: Path = typer.Option(..., prompt=True, help="Structure file (.vasp)"),
@@ -103,12 +147,9 @@ def run(
     optimizer: str = typer.Option("bfgs", help=f"Optimizer algorithm: {', '.join(OPTIMIZER_MAP.keys())}"),
     fmax: float = typer.Option(0.05, help="Force convergence threshold (eV/Å)"),
     max_steps: int = typer.Option(200, help="Maximum optimization steps"),
-    relax_cell: bool = typer.Option(
-        False, "--relax-cell",
-        help=("Relax the simulation cell as well as positions (VASP "
-              "ISIF=3-equivalent). Wraps atoms in ASE's FrechetCellFilter "
-              "(or ExpCellFilter on older ASE)."),
-    ),
+    relax_cell: str = typer.Option(
+        None, "--relax-cell", metavar="[all|volume|shape]",
+        help=RELAX_CELL_HELP),
     trajectory: str = typer.Option("opt.traj", help="Trajectory filename"),
     logfile: str = typer.Option("opt.log", help="Log filename"),
     verbose: bool = typer.Option(True, help="Show optimization progress table (forces, energies)"),
@@ -127,6 +168,8 @@ def run(
 
     Optimizes atomic positions to minimize forces until fmax convergence is reached.
     """
+    resolved_mode = _resolve_cell_mode_or_exit(relax_cell)
+
     # Read structure
     atoms = read(structure)
     typer.echo(f"📂 Loaded structure: {structure.name}")
@@ -162,7 +205,7 @@ def run(
             validate_mlip(mlip, sevennet_task, uma_task, mace_head,
                           aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
             typer.echo(f"🧠 Using MLIP: {mlip}")
-        _refuse_aqcat_limits(mlip, optimizer, relax_cell)
+        _refuse_aqcat_limits(mlip, optimizer, resolved_mode is not None)
 
     # Rejected rather than ignored: a single model has no disagreement to
     # draw, and silently writing nothing leaves the user waiting for a figure
@@ -235,7 +278,7 @@ def run(
             output_dir=output_dir,
             model_name=mlip,
             verbose=verbose,
-            relax_cell=relax_cell,
+            relax_cell=resolved_mode or False,
             plot=plot,
             uncertainty_plot=uncertainty_plot,
             run_context=run_context,
@@ -253,12 +296,14 @@ def run(
 
     # Save parameters
     _write_params(output_dir / "opt_params.txt", mlip, uma_task, mace_head,
-                  device, relax_cell, structure.name, optimizer, fmax,
+                  device, resolved_mode is not None,
+                  structure.name, optimizer, fmax,
                   max_steps, converged, output_dir,
                   sevennet_task=sevennet_task,
                   committee_config=committee_config,
                   uncertainty_threshold=uncertainty_threshold,
-                  aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
+                  aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity,
+                  cell_mode=resolved_mode)
 
     # Print output summary
     typer.echo("\n✅ Optimization complete. Output files:")
@@ -296,7 +341,7 @@ def run(
     report_committee_uncertainty(committee_calc, "the final geometry")
 
 
-@app.command()
+@app.command(cls=_RelaxCellCommand)
 def batch(
     ctx: typer.Context,
     parent: Path = typer.Option(..., prompt=True,
@@ -314,9 +359,9 @@ def batch(
     optimizer: str = typer.Option("bfgs", help=f"Optimizer algorithm: {', '.join(OPTIMIZER_MAP.keys())}"),
     fmax: float = typer.Option(0.05, help="Force convergence threshold (eV/Å)"),
     max_steps: int = typer.Option(200, help="Maximum optimization steps"),
-    relax_cell: bool = typer.Option(
-        False, "--relax-cell",
-        help="Relax the simulation cell as well as positions (applied to every structure)."),
+    relax_cell: str = typer.Option(
+        None, "--relax-cell", metavar="[all|volume|shape]",
+        help=RELAX_CELL_HELP + " Applied to every structure."),
     trajectory: str = typer.Option("opt.traj", help="Trajectory filename (per subdirectory)"),
     logfile: str = typer.Option("opt.log", help="Log filename (per subdirectory)"),
     skip_existing: bool = typer.Option(
@@ -337,6 +382,8 @@ def batch(
     is logged and the batch continues. A ``batch_summary.csv`` is written into
     PARENT.
     """
+    resolved_mode = _resolve_cell_mode_or_exit(relax_cell)
+
     if not parent.is_dir():
         typer.echo(f"❌ Not a directory: {parent}")
         raise typer.Exit(1)
@@ -357,7 +404,7 @@ def batch(
         validate_mlip(mlip, sevennet_task, uma_task, mace_head,
                       aqcat_spin=aqcat_spin, aqcat_fidelity=aqcat_fidelity)
         typer.echo(f"🧠 Using MLIP: {mlip}")
-    _refuse_aqcat_limits(mlip, optimizer, relax_cell)
+    _refuse_aqcat_limits(mlip, optimizer, resolved_mode is not None)
 
     subdirs = sorted(d for d in parent.iterdir() if d.is_dir())
     if not subdirs:
@@ -435,7 +482,7 @@ def batch(
                 output_dir=subdir,
                 model_name=mlip,
                 verbose=verbose,
-                relax_cell=relax_cell,
+                relax_cell=resolved_mode or False,
                 plot=plot,
                 run_context=run_context,
                 device_requested=device,
@@ -450,11 +497,13 @@ def batch(
             energy = atoms.get_potential_energy()
 
             _write_params(subdir / "opt_params.txt", mlip, uma_task, mace_head,
-                          device, relax_cell, structure.name, optimizer, fmax,
+                          device, resolved_mode is not None,
+                          structure.name, optimizer, fmax,
                           max_steps, converged, subdir,
                           sevennet_task=sevennet_task,
                           aqcat_spin=aqcat_spin,
-                          aqcat_fidelity=aqcat_fidelity)
+                          aqcat_fidelity=aqcat_fidelity,
+                          cell_mode=resolved_mode)
 
             status = "converged" if converged else "not_converged"
             icon = "✅" if converged else "⚠️"
@@ -492,7 +541,7 @@ def _write_params(param_file, mlip, uma_task, mace_head, device, relax_cell,
                   structure_name, optimizer, fmax, max_steps, converged,
                   output_dir, sevennet_task=None, committee_config=None,
                   uncertainty_threshold=None, aqcat_spin=None,
-                  aqcat_fidelity=None):
+                  aqcat_fidelity=None, cell_mode=None):
     """Write the per-structure opt_params.txt (matches ``optimize run``)."""
     with open(param_file, "w", encoding="utf-8") as f:
         f.write("Geometry Optimization Parameters\n")
@@ -527,6 +576,9 @@ def _write_params(param_file, mlip, uma_task, mace_head, device, relax_cell,
                     f"{resolve_aqcat_fidelity(aqcat_fidelity)}\n")
         f.write(f"Device:            {device}\n")
         f.write(f"Relax cell:        {relax_cell}\n")
+        # Only when set, so existing parameter files stay byte-identical.
+        if cell_mode in ("volume", "shape"):
+            f.write(f"Cell mode:         {cell_mode}\n")
         f.write(f"Structure:         {structure_name}\n")
         f.write(f"Optimizer:         {optimizer.upper()}\n")
         f.write(f"fmax (eV/Å):       {fmax}\n")

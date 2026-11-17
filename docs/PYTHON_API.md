@@ -50,7 +50,7 @@ setup_calculator(atoms, mlip="uma-s-1p2", uma_task="omat")  # mutates atoms.calc
 - `mlip="7net-omni"` (or any `7net-*`) → SevenNet; `sevennet_task` selects the task, which SevenNet's API calls the `modal`. Required for multi-task checkpoints (`7net-omni`, `7net-omni-i8`, `7net-omni-i12`, `7net-mf-ompa`, `7net-mf-0`) and rejected for single-task ones (`7net-omat`, `7net-l3i5`, `7net-0`). No default: the tasks have independent energy zeros.
 - `mlip="uma-..."` → any FAIRChem UMA tag, with `uma_task` selecting the head and **required, with no default** (`omat`, `omc`, `omol`, `oc20`, `oc22`, `oc25`, `odac`)
 - `mlip="chgnet"` → CHGNet default model
-- `mlip="aqcat25-ev2-midfilm"` or `"aqcat25-ev2-infilm"` → SandboxAQ AQCat25-EV2 (needs the patched fairchem-core 1.10.0 env, [`docs/install/aqcat25.md`](install/aqcat25.md)). `aqcat_spin` (`"on"`/`"off"`) is **required, with no default**: spin on versus off changes the energy by up to several eV. `aqcat_fidelity` (`"high"`/`"low"`) defaults to `"high"`. Device must resolve to `cpu` or `cuda`. One (spin, fidelity) pair per Python process: upstream patches a class attribute on every build, so a second calculator with a different pair raises `ValueError`. No stress; the energy is an OC20-style referenced adsorption energy and the forces are a direct output, not the energy gradient. `run_optimization` raises `ValueError` for `relax_cell=True` or optimizer `bfgsls`/`gpmin` with these tags. Not supported in `run_md`, the frequency API, `run_autoneb` or committees.
+- `mlip="aqcat25-ev2-midfilm"` or `"aqcat25-ev2-infilm"` → SandboxAQ AQCat25-EV2 (needs the patched fairchem-core 1.10.0 env, [`docs/install/aqcat25.md`](install/aqcat25.md)). `aqcat_spin` (`"on"`/`"off"`) is **required, with no default**: spin on versus off changes the energy by up to several eV. `aqcat_fidelity` (`"high"`/`"low"`) defaults to `"high"`. Device must resolve to `cpu` or `cuda`. One (spin, fidelity) pair per Python process: upstream patches a class attribute on every build, so a second calculator with a different pair raises `ValueError`. No stress; the energy is an OC20-style referenced adsorption energy and the forces are a direct output, not the energy gradient. `run_optimization` raises `ValueError` for `relax_cell=True`, any `cell_mode` or optimizer `bfgsls`/`gpmin` with these tags. Not supported in `run_md`, the frequency API, `run_autoneb` or committees.
 
 `device` selects the compute device (`"auto"` → cuda if available else cpu, or force `"cuda"` / `"cpu"`). Each head argument is ignored for models outside its own family. None of the three has a default: a multi-head model with no head raises rather than picking one.
 
@@ -92,7 +92,11 @@ converged = run_optimization(
     optimizer="bfgs",   # or "fire", "lbfgs", "bfgsls", "gpmin", "mdmin"
     fmax=0.05,
     max_steps=200,
-    relax_cell=False,   # True → also relax the cell (VASP ISIF=3-equivalent)
+    relax_cell=False,   # False → positions only. True or "all" → also relax the cell,
+                        # volume and shape (VASP ISIF=3-equivalent). "volume" → volume only,
+                        # shape fixed (ISIF=8). "shape" → shape only, volume fixed (ISIF=4).
+                        # Any other string raises ValueError.
+                        # mliprun.core.optimize.resolve_cell_mode(relax_cell) gives the mode.
     output_dir="./relaxed",
     model_name="uma-s-1p2",
     uma_task="omat",    # or mace_head="omat_pbe" — see "Run-record keywords"

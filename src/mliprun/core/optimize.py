@@ -28,18 +28,47 @@ OPTIMIZER_MAP = {
 }
 
 
-def _wrap_for_cell_relaxation(atoms):
+CELL_MODES = ("all", "volume", "shape")
+
+
+def invalid_cell_mode_message(value, name: str = "relax_cell") -> str:
+    return (f"{name} must be one of {', '.join(CELL_MODES)}; "
+            f"got '{value}'.")
+
+
+def resolve_cell_mode(relax_cell, name: str = "relax_cell") -> Optional[str]:
+    """What the cell relaxation optimizes: None, ``'all'``, ``'volume'`` or ``'shape'``.
+
+    ``relax_cell`` is one parameter with five accepted values: ``False`` or
+    ``None`` (no cell relaxation), ``True`` (the same as ``'all'``), or one of
+    the strings ``'all'``, ``'volume'``, ``'shape'``. Anything else raises
+    ``ValueError``; ``name`` is how the parameter is called in that message.
+    """
+    if not isinstance(relax_cell, str):
+        # bool, None, or another truthy/falsy flag value (e.g. a numpy bool).
+        return "all" if relax_cell else None
+    if relax_cell in CELL_MODES:
+        return relax_cell
+    raise ValueError(invalid_cell_mode_message(relax_cell, name))
+
+
+def _wrap_for_cell_relaxation(atoms, mode: str = "all"):
     """Wrap atoms with a cell filter so the optimizer sees cell DOFs too.
 
     Prefers ASE 3.23+'s :class:`ase.filters.FrechetCellFilter` (better-behaved
     for soft modes); falls back to :class:`ase.constraints.ExpCellFilter` on
     older ASE.
+
+    ``mode='all'`` relaxes volume and shape. ``'volume'`` passes
+    ``hydrostatic_strain=True`` (the a:b:c ratios and angles stay fixed).
+    ``'shape'`` passes ``constant_volume=True`` (the volume stays fixed).
     """
     try:
         from ase.filters import FrechetCellFilter as _Filter
     except ImportError:
         from ase.constraints import ExpCellFilter as _Filter
-    return _Filter(atoms)
+    return _Filter(atoms, hydrostatic_strain=(mode == "volume"),
+                   constant_volume=(mode == "shape"))
 
 
 def _committee_parameters(committee, committee_config, threshold) -> dict:
@@ -326,7 +355,7 @@ def run_optimization(
     output_dir: str | Path = ".",
     model_name: str = "mlip",
     verbose: bool = True,
-    relax_cell: bool = False,
+    relax_cell=False,
     plot: bool = False,
     uncertainty_plot: bool = False,
     run_context: Optional[RunContext] = None,
@@ -367,10 +396,15 @@ def run_optimization(
         Name of MLIP model for parameter file.
     verbose : bool
         If True, show optimization progress table.
-    relax_cell : bool
-        If True, also relax the simulation cell (positions + cell, like VASP
-        ISIF=3). Uses ``ase.filters.FrechetCellFilter`` when available,
-        otherwise ``ase.constraints.ExpCellFilter``.
+    relax_cell : bool or str
+        Whether and how to relax the simulation cell together with the
+        positions. ``False`` (default): positions only. ``True`` or ``'all'``:
+        volume and shape (like VASP ISIF=3). ``'volume'``: volume only, the
+        a:b:c ratios and angles stay fixed (``hydrostatic_strain=True``,
+        comparable to ISIF=8). ``'shape'``: shape only, the volume stays fixed
+        (``constant_volume=True``, ISIF=4). Uses
+        ``ase.filters.FrechetCellFilter`` when available, otherwise
+        ``ase.constraints.ExpCellFilter``. See ``resolve_cell_mode``.
     plot : bool
         If True, write the ``*_convergence.png`` figure. Defaults to False:
         the matplotlib figure/save is per-structure IO that dominates short
@@ -447,9 +481,10 @@ def run_optimization(
     Raises
     ------
     ValueError
-        If ``optimizer`` is not recognised, or if ``model_name`` is an
+        If ``optimizer`` is not recognised, if ``relax_cell`` is a string
+        other than ``all``, ``volume``, ``shape``, or if ``model_name`` is an
         AQCat25-EV2 tag and the run needs what that model cannot give: a
-        stress (``relax_cell``) or forces equal to the energy gradient
+        stress (cell relaxation in any mode) or forces equal to the energy gradient
         (``bfgsls``, ``gpmin``). Raised before the run record is written.
     """
     output_path = Path(output_dir)
@@ -490,9 +525,11 @@ def run_optimization(
 
     OptimizerClass = OPTIMIZER_MAP[optimizer_name]
 
+    resolved_mode = resolve_cell_mode(relax_cell)
+
     # Local import, as elsewhere in core: the AQCat tables live in cli.utils.
     from mliprun.cli.utils import check_aqcat_optimize
-    check_aqcat_optimize(model_name, optimizer_name, relax_cell)
+    check_aqcat_optimize(model_name, optimizer_name, resolved_mode is not None)
 
     if committee is not None:
         # A committee may be reused across structures (the docstring above
@@ -527,7 +564,10 @@ def run_optimization(
             "optimizer": optimizer_name,
             "fmax": fmax,
             "max_steps": max_steps,
-            "relax_cell": relax_cell,
+            "relax_cell": resolved_mode is not None,
+            # Only for volume/shape: existing records stay byte-identical.
+            **({"cell_mode": resolved_mode}
+               if resolved_mode in ("volume", "shape") else {}),
             "trajectory": trajectory,
             "logfile": logfile,
             "plot": plot,
@@ -555,7 +595,8 @@ def run_optimization(
 
     # When relax_cell, the optimizer sees the filtered object (atoms + cell
     # DOFs). Trajectory frames are still written from the underlying atoms.
-    opt_target = _wrap_for_cell_relaxation(atoms) if relax_cell else atoms
+    opt_target = (_wrap_for_cell_relaxation(atoms, resolved_mode)
+                  if resolved_mode is not None else atoms)
 
     # The optimizer owns opt.traj (via ``trajectory=`` below) and closes it
     # when its ``with`` block exits. No separate writer is opened here: one
