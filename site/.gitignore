@@ -1,0 +1,8 @@
+# Local tooling for the showcase site (not deployed)
+.venv/
+.cache/
+__pycache__/
+.pytest_cache/
+
+# Generated media and frame dumps from shared/capture.py test runs
+shared/fixtures/out/
