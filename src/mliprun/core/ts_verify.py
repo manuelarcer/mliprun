@@ -45,9 +45,10 @@ def neb_tangent(images: list, index: int) -> np.ndarray:
     d_next = abs(e_next - e_here)
     d_prev = abs(e_prev - e_here)
     d_max, d_min = max(d_next, d_prev), min(d_next, d_prev)
+    # Henkelman and Jonsson, Eq. 11: the segment toward the higher neighbour gets the larger weight.
     if e_next > e_prev:
-        return t_plus * d_min + t_minus * d_max
-    return t_plus * d_max + t_minus * d_min
+        return t_plus * d_max + t_minus * d_min
+    return t_plus * d_min + t_minus * d_max
 
 
 def is_to_fs_direction(initial, final) -> np.ndarray:
@@ -98,9 +99,8 @@ def classify_connection(plus: dict, minus: dict) -> str:
         return "connects"
     if plus["matched"] is not None and plus["matched"] == minus["matched"]:
         return "same_side"
-    if None in matched:
-        return "neither" if matched == {None} else "one_side"
-    return "neither"  # unreachable with valid labels
+    n_matched = sum(m is not None for m in (plus["matched"], minus["matched"]))
+    return "one_side" if n_matched == 1 else "neither"
 
 
 def decide_verdict(n_imaginary, ts_fmax, ts_fmax_limit, check_statuses: dict) -> tuple[str, str]:

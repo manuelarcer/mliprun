@@ -1,9 +1,12 @@
 """Unit tests for the pure geometry and verdict helpers of TS verification."""
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
+from ase.mep.neb import ImprovedTangentMethod
 
 from mliprun.core.ts_verify import (
     check_same_system,
@@ -78,18 +81,42 @@ def test_tangent_on_a_downhill_segment_is_the_backward_segment():
     assert neb_tangent(images, 1) == pytest.approx(np.array([[1.0, 0, 0]]))
 
 
-def test_tangent_at_an_asymmetric_maximum_is_weighted_toward_the_lower_neighbour():
-    # E(i+1) = 0.5 > E(i-1) = 0 : tangent = t_plus * dE_min + t_minus * dE_max
+def test_tangent_at_an_asymmetric_maximum_weights_the_segment_to_the_higher_neighbour_more():
+    # Henkelman and Jonsson, Eq. 11: E(i+1) = 0.5 > E(i-1) = 0 gives
+    # tangent = t_plus * dE_max + t_minus * dE_min
     images = [_image(0.0, 0.0), _image(1.0, 1.0), _image(3.0, 0.5)]
     # t_plus = 2, t_minus = 1, dE_max = 1.0, dE_min = 0.5
-    assert neb_tangent(images, 1) == pytest.approx(np.array([[2 * 0.5 + 1 * 1.0, 0, 0]]))
+    assert neb_tangent(images, 1) == pytest.approx(np.array([[2 * 1.0 + 1 * 0.5, 0, 0]]))
 
 
 def test_tangent_at_an_asymmetric_maximum_with_higher_backward_neighbour():
     images = [_image(0.0, 0.5), _image(1.0, 1.0), _image(3.0, 0.0)]
-    # E(i+1) = 0 < E(i-1) = 0.5 : tangent = t_plus * dE_max + t_minus * dE_min
+    # Eq. 11: E(i+1) = 0 < E(i-1) = 0.5 gives tangent = t_plus * dE_min + t_minus * dE_max
     # t_plus = 2, t_minus = 1, dE_max = 1.0, dE_min = 0.5
-    assert neb_tangent(images, 1) == pytest.approx(np.array([[2 * 1.0 + 1 * 0.5, 0, 0]]))
+    assert neb_tangent(images, 1) == pytest.approx(np.array([[2 * 0.5 + 1 * 1.0, 0, 0]]))
+
+
+@pytest.mark.parametrize("energies", [(0.0, 1.0, 0.5), (0.5, 1.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.5, 1.0), (1.0, 0.5, 0.0)])
+def test_tangent_matches_ase_for_non_parallel_segments(energies):
+    positions = [
+        [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        [[1.0, 0.5, 0.0], [2.0, 1.0, 0.3]],
+        [[2.5, 0.0, 1.0], [2.5, 2.0, 0.0]],
+    ]
+    images = []
+    for pos, energy in zip(positions, energies):
+        atoms = Atoms("H2", positions=pos)
+        atoms.calc = SinglePointCalculator(atoms, energy=energy)
+        images.append(atoms)
+
+    # Drive ASE's own tangent method with the same segments and energies.
+    spring1 = SimpleNamespace(t=images[1].positions - images[0].positions)
+    spring2 = SimpleNamespace(t=images[2].positions - images[1].positions)
+    state = SimpleNamespace(energies=list(energies))
+    expected = ImprovedTangentMethod(None).get_tangent(state, spring1, spring2, 1)
+
+    tangent = neb_tangent(images, 1)
+    assert tangent / np.linalg.norm(tangent) == pytest.approx(expected)
 
 
 def test_tangent_uses_the_minimum_image():
@@ -158,7 +185,7 @@ def test_check_same_system_accepts_matching_structures():
 
 
 def test_check_same_system_names_a_different_atom_count():
-    with pytest.raises(ValueError, match=r"initial.*(2|1)"):
+    with pytest.raises(ValueError, match="initial has 1 atoms, the TS has 2"):
         check_same_system(_ts(), _ts("H"), _ts())
 
 
