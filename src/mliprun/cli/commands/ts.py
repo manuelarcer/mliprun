@@ -38,6 +38,9 @@ def echo_ts_verification(results: dict, output_dir: Path) -> None:
     """Print the verdict, its reason, the checks and the report path."""
     typer.echo(f"\nTS verification: {results['verdict']}")
     typer.echo(f"   Reason: {results['reason']}")
+    if "archived_previous" in results:
+        typer.echo(f"   A verification of a different TS geometry was found "
+                   f"here and moved to {results['archived_previous']}/.")
     typer.echo(f"   Imaginary modes: {results['n_imaginary']}"
                + (" (" + ", ".join(f"{f:.1f}i cm⁻¹" for f
                                    in results["imaginary_frequencies_cm-1"])

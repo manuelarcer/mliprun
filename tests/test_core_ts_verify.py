@@ -356,3 +356,49 @@ def test_an_unknown_check_is_refused_before_any_force_call(tmp_path):
     with pytest.raises(ValueError, match="unknown check"):
         _verify(tmp_path, checks=("overlap", "bogus"))
     assert not (tmp_path / "mliprun_run.json").exists()
+
+
+def test_a_changed_ts_geometry_archives_the_previous_verification(tmp_path):
+    first = _verify(tmp_path)
+    assert "archived_previous" not in first
+    first_text = (tmp_path / "ts_verify.txt").read_text()
+
+    second = _verify(tmp_path, ts_shift=0.01)
+    assert second["archived_previous"] == "previous_1"
+    assert (tmp_path / "previous_1" / "ts_verify.txt").read_text() == first_text
+    assert (tmp_path / "previous_1" / "ts_structure.vasp").exists()
+    assert (tmp_path / "previous_1" / "ts_freq_vibrations.json").exists()
+    report = (tmp_path / "ts_verify.txt").read_text()
+    assert "A verification of a different TS geometry was found here and moved to previous_1/." in report
+    new_ts = ase_read(str(tmp_path / "ts_structure.vasp"))
+    assert new_ts.get_positions()[0][0] == pytest.approx(CENTRE[0] + 0.01, abs=1e-5)
+
+    third = _verify(tmp_path, ts_shift=0.02)
+    assert third["archived_previous"] == "previous_2"
+    assert (tmp_path / "previous_1").is_dir()  # earlier archives are never moved into the next one
+    assert not (tmp_path / "previous_2" / "previous_1").exists()
+    assert "A verification of a different TS geometry" in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_the_same_geometry_keeps_the_directory_and_reuses_the_cache(tmp_path):
+    first = _verify(tmp_path, checks=("overlap", "relax"))
+    assert first["n_force_calls_frequencies"] > 0
+    assert (tmp_path / "ts_relax_plus.traj").exists()
+
+    second = _verify(tmp_path, checks=("overlap",))
+    assert "archived_previous" not in second
+    assert not list(tmp_path.glob("previous_*"))
+    # The displacement cache was valid, so the sweep made no force call of its own.
+    assert second["n_force_calls_frequencies"] == 0
+    assert not list(tmp_path.glob("ts_relax_plus.*"))
+    assert not list(tmp_path.glob("ts_relax_minus.*"))
+    assert "Displace-and-relax" not in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_a_failed_rerun_on_the_same_geometry_leaves_no_old_verdict(tmp_path):
+    _verify(tmp_path, checks=("overlap", "relax"))
+    assert (tmp_path / "ts_verify.txt").exists()
+    with pytest.raises(RuntimeError, match="different settings"):
+        _verify(tmp_path, delta=0.02)
+    assert not (tmp_path / "ts_verify.txt").exists()
+    assert not list(tmp_path.glob("ts_relax_*"))

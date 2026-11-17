@@ -237,3 +237,16 @@ def test_the_console_summary_prints_the_relax_note(capsys, tmp_path):
     }
     echo_ts_verification(results, tmp_path)
     assert "Note: a relaxation returned to the TS" in capsys.readouterr().out
+
+
+def test_the_console_summary_names_the_archive(capsys, tmp_path):
+    from mliprun.cli.commands.ts import echo_ts_verification
+
+    results = {
+        "verdict": "verified", "reason": "r", "n_imaginary": 1,
+        "imaginary_frequencies_cm-1": [64.5], "ts_fmax_free_eV_per_A": 0.01,
+        "ts_fmax_limit_eV_per_A": 0.03, "archived_previous": "previous_2",
+    }
+    echo_ts_verification(results, tmp_path)
+    assert ("A verification of a different TS geometry was found here and "
+            "moved to previous_2/.") in capsys.readouterr().out

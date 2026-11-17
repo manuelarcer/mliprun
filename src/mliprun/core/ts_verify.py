@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 from ase.geometry import find_mic
+from ase.io import read as ase_read
 from ase.io import write as ase_write
 from ase.vibrations import VibrationsData
 
@@ -233,10 +234,62 @@ def _displace_and_relax(
     }
 
 
+_GEOMETRY_TOLERANCE = 1e-6  # Angstrom, for "the same TS geometry"
+
+
+def _same_geometry(structure_path: Path, atoms) -> bool:
+    """Whether a stored structure file holds ``atoms`` (plain coordinates, no minimum image)."""
+    try:
+        stored = ase_read(str(structure_path))
+    except Exception:  # an unreadable file cannot vouch for the cache beside it
+        return False
+    if len(stored) != len(atoms) or stored.get_chemical_symbols() != atoms.get_chemical_symbols():
+        return False
+    if not np.allclose(np.asarray(stored.cell), np.asarray(atoms.cell), rtol=0.0, atol=_GEOMETRY_TOLERANCE):
+        return False
+    return bool(np.allclose(stored.get_positions(), atoms.get_positions(), rtol=0.0, atol=_GEOMETRY_TOLERANCE))
+
+
+def _prepare_output_dir(output_path: Path, work) -> str | None:
+    """Make ``output_path`` ready for a new verification of ``work``.
+
+    A previous verification of a different TS geometry is moved, whole, into
+    ``previous_<n>/`` (returned as that name). For the same geometry the
+    directory stays, so its displacement cache is reused, but this command's
+    own regenerated outputs (the report and the relaxation files) are removed
+    so that no older verdict or relaxation lingers beside the new record.
+    """
+    structure = output_path / "ts_structure.vasp"
+    if not structure.exists():
+        return None
+    if _same_geometry(structure, work):
+        (output_path / "ts_verify.txt").unlink(missing_ok=True)
+        for side in ("plus", "minus"):
+            for stale in output_path.glob(f"ts_relax_{side}.*"):
+                stale.unlink()
+        return None
+    number = 1
+    while (output_path / f"previous_{number}").exists():
+        number += 1
+    archive = output_path / f"previous_{number}"
+    archive.mkdir()
+    for entry in list(output_path.iterdir()):
+        if entry == archive or (entry.name.startswith("previous_") and entry.is_dir()):
+            continue
+        entry.rename(archive / entry.name)
+    return archive.name
+
+
 def _format_report(results: dict, settings: dict) -> str:
     lines = [
         f"TS verification: {results['verdict']}",
         f"Reason: {results['reason']}",
+    ]
+    if "archived_previous" in results:
+        lines.append(
+            f"A verification of a different TS geometry was found here and moved to {results['archived_previous']}/."
+        )
+    lines += [
         "",
         f"Imaginary modes: {results['n_imaginary']}",
     ]
@@ -363,6 +416,7 @@ def verify_ts(
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    archived_previous = _prepare_output_dir(output_path, work)
     ase_write(str(output_path / "ts_structure.vasp"), work, format="vasp")
 
     prov_kwargs = {"mlip_model": model_name, "device_requested": "auto", "device_resolved": "auto"}
@@ -478,6 +532,8 @@ def verify_ts(
             results["relax"] = relax
         if extra_inputs:
             results["inputs"] = dict(extra_inputs)
+        if archived_previous is not None:
+            results["archived_previous"] = archived_previous
 
         (output_path / "ts_verify.txt").write_text(_format_report(results, settings))
     except Exception as exc:

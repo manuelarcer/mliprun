@@ -84,6 +84,25 @@ def test_the_option_is_written_and_read_back_on_restart(workdir):
     assert "Verify TS:" in Path("neb_parameters.txt").read_text()
 
 
+def test_a_restart_that_moves_the_ts_verifies_again_and_archives_the_old_record(workdir):
+    assert _neb("--verify-ts", "overlap").exit_code == 0
+    first_text = (workdir / "ts_verify" / "ts_verify.txt").read_text()
+    first_ts = (workdir / "ts_verify" / "ts_structure.vasp").read_text()
+
+    restarted = runner.invoke(app, ["--restart", "--fmax", "0.02"])
+    assert restarted.exit_code == 0, restarted.stdout
+    assert "TS verification failed" not in restarted.stdout
+    new_text = (workdir / "ts_verify" / "ts_verify.txt").read_text()
+    new_ts = (workdir / "ts_verify" / "ts_structure.vasp").read_text()
+    assert new_text.splitlines()[0].startswith("TS verification:")
+    # Measured: fmax 0.02 moves the TS, so the old verification is archived, not overwritten.
+    assert new_ts != first_ts
+    assert (workdir / "ts_verify" / "previous_1" / "ts_verify.txt").read_text() == first_text
+    assert "moved to previous_1/" in new_text
+    assert "moved to previous_1/" in restarted.stdout
+    assert _last_stage_results("ts_verify/mliprun_run.json")["verdict"] == "verified"
+
+
 def test_a_value_given_on_restart_overrides_the_stored_one(workdir):
     assert _neb("--verify-ts", "overlap").exit_code == 0
     restarted = runner.invoke(app, ["--restart", "--verify-ts", "both"])
