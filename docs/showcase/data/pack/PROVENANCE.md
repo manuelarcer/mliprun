@@ -33,6 +33,8 @@ is the run directory relative to the repository root.
 | `neb_seed.xyz` | `03_neb` | `idpp_seed.xyz` (the IDPP seed band, `idpp.traj`) | `docs/showcase/data/runs/03_neb` |
 | `ts_mode.xyz` | `03_neb/ts_verify` | `ts_freq_vibrations.json` (Hessian, imaginary mode), `ts_structure.vasp` | `docs/showcase/data/runs/03_neb` (ts_verify is a stage of the NEB run, not a separate prov node) |
 | `md.json` | `04_md/bilayer_relax` | `mliprun_run.json`, `opt.log`, `opt_final.vasp` | `docs/showcase/data/runs/04_md/bilayer_relax` |
+| `md_bilayer_built.xyz` | `04_md/bilayer_relax` | `POSCAR` (as built by `build_structures.py bilayer`) | `docs/showcase/data/runs/04_md/bilayer_relax` |
+| `md_bilayer_relaxed.xyz` | `04_md/bilayer_relax` | `opt_final.vasp` | `docs/showcase/data/runs/04_md/bilayer_relax` |
 
 ## Status of each use case
 
@@ -45,11 +47,14 @@ is the run directory relative to the repository root.
   connects both ways. Flag: ts_verify measured endpoint fmax 0.0134 (IS) and 0.0174 (FS)
   eV/Å, above its internal 0.01 eV/Å relax fmax; the verdict is unaffected. The band did
   not explode.
-- **md:** the MD did **not** run. The relaxed 6-H2O bilayer sits 4.7–5.2 Å above the top
-  Pt layer with uma-s-1p2/oc20 (water check limit 4.0 Å), so the run script stopped before
-  MD. This is likely underbinding of water at the OC20 (RPBE) level; the decision is Juan's.
+- **md:** status `pending`; the MD did **not** run. The 6-H2O bilayer relaxation with
+  uma-s-1p2/oc20 converged, and the intact water layer ended at O heights 4.7–5.2 Å above
+  the top Pt layer (water check limit 4.0 Å), so the run script stopped before MD. How to
+  proceed is pending the scientist's decision (flag `pending_scientist_decision`).
   `md.json` carries only the bilayer-relaxation facts, labelled as relaxation, with
-  `converged: false` and no frames. There is no `md.xyz`.
+  `converged: false` and no frames. There is no `md.xyz`. Two one-frame structures are in
+  the pack: `md_bilayer_built.xyz` (as built, the intended MD start) and
+  `md_bilayer_relaxed.xyz` (after the uma-s-1p2/oc20 relaxation).
 - `webapp.json` is not built here; Task 7 produces it.
 
 ## What was not pulled
@@ -58,4 +63,5 @@ Raw `*.traj` files, `*.png` plots, the ts_verify finite-difference cache
 (`ts_verify/ts_freq/`, its Hessian is in `ts_freq_vibrations.json`), the mliprun clone,
 `cluster.env`, `committee.yaml`, `scripts/` and `diagnostics/` stay on the cluster.
 Inputs without an extension (`POSCAR`, `CONTCAR`) were pulled but are not committed
-(`../../.gitignore`); prov recorded them.
+(`../../.gitignore`), except `04_md/bilayer_relax/POSCAR`, which the pack build reads; prov
+recorded them all.

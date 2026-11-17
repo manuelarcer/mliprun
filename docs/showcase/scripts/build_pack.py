@@ -631,12 +631,19 @@ def build_md(runs: Path, out: Path) -> dict:
         raise ValueError("md.xyz exists but the MD never ran; remove it")
     br = rd / "bilayer_relax"
     relax_ok, relax_flags = optimize_converged(br)
+    built = read(br / "POSCAR", format="vasp")
     fin = read(br / "opt_final.vasp")
+    for at in (built, fin):
+        if at.get_chemical_formula(mode="hill") != "H12O6Pt36":
+            raise ValueError(f"bilayer is {at.get_chemical_formula()}, expected H12O6Pt36")
+    write_frames(out / "md_bilayer_built.xyz", [built])
+    write_frames(out / "md_bilayer_relaxed.xyz", [fin])
     res = check_frame(fin, max_oh=MAX_OH, max_height=4.0)
     heights = [w["height"] for w in res["waters"]]
-    flags = ["md_not_run", "pending_decision_water_underbinding"]
+    flags = ["md_not_run", "pending_scientist_decision"]
     flags += [f"bilayer_relaxation_{f}" for f in relax_flags]
     flags += union_flags([fin])
+    intact = "water_dissociated" not in flags
     key = [
         kn("bilayer relaxation (not MD): highest water O above top Pt layer", max(heights), "Å"),
         kn("bilayer relaxation (not MD): lowest water O above top Pt layer", min(heights), "Å"),
@@ -647,13 +654,18 @@ def build_md(runs: Path, out: Path) -> dict:
     ]
     return make_record(
         "md", _command(br, "run_04_md.sh", "optimize run"), False, flags, key, {}, None,
-        run_dir="04_md/bilayer_relax",
-        notes=["The MD did NOT run. The 6-H2O bilayer relaxation converged "
-               f"({'converged' if relax_ok else 'NOT converged'}), but the relaxed water "
-               "layer sits 4.7–5.2 Å above the top Pt layer with uma-s-1p2/oc20, so the "
-               "water check (O height ≤ 4.0 Å) failed and the run script stopped before MD.",
-               "Likely underbinding of water at the OC20 (RPBE) level; how to proceed is "
-               "Juan's decision.",
+        status="pending", run_dir="04_md/bilayer_relax",
+        structures={
+            "built": {"file": "md_bilayer_built.xyz",
+                      "label": "6-H2O bilayer on Pt(111) as built (intended MD start)"},
+            "relaxed_oc20": {"file": "md_bilayer_relaxed.xyz",
+                             "label": "same bilayer after uma-s-1p2/oc20 relaxation"},
+        },
+        notes=[f"The 6-H2O bilayer relaxation {'converged' if relax_ok else 'did NOT converge'}"
+               f" with uma-s-1p2/oc20. The {'intact' if intact else 'partly dissociated'} "
+               f"water layer ended at O heights {min(heights):.1f}–{max(heights):.1f} Å above "
+               "the top Pt layer (water-check limit 4.0 Å).",
+               "The MD was not run. How to proceed is pending the scientist's decision.",
                "command is the bilayer relaxation that ran, not an MD command.",
                "converged refers to the MD (false: it never ran); frames and series are empty."])
 

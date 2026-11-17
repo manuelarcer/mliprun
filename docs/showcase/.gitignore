@@ -17,6 +17,8 @@ data/runs/**
 !data/runs/**/verify_ts*/**
 !data/runs/**/ts_verify*
 !data/runs/**/ts_verify*/**
+# The as-built bilayer: build_pack.py writes md_bilayer_built.xyz from it.
+!data/runs/04_md/bilayer_relax/POSCAR
 # Never commit trajectories, even inside the folders re-included above.
 data/runs/**/*.traj
 # $REMOTE also holds the mliprun clone and the cluster copies of cluster.env

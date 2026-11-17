@@ -4,7 +4,7 @@
  "converged": false,
  "flags": [
   "md_not_run",
-  "pending_decision_water_underbinding"
+  "pending_scientist_decision"
  ],
  "key_numbers": [
   {
@@ -35,10 +35,21 @@
  ],
  "series": {},
  "frames": null,
+ "status": "pending",
  "run_dir": "04_md/bilayer_relax",
+ "structures": {
+  "built": {
+   "file": "md_bilayer_built.xyz",
+   "label": "6-H2O bilayer on Pt(111) as built (intended MD start)"
+  },
+  "relaxed_oc20": {
+   "file": "md_bilayer_relaxed.xyz",
+   "label": "same bilayer after uma-s-1p2/oc20 relaxation"
+  }
+ },
  "notes": [
-  "The MD did NOT run. The 6-H2O bilayer relaxation converged (converged), but the relaxed water layer sits 4.7–5.2 Å above the top Pt layer with uma-s-1p2/oc20, so the water check (O height ≤ 4.0 Å) failed and the run script stopped before MD.",
-  "Likely underbinding of water at the OC20 (RPBE) level; how to proceed is Juan's decision.",
+  "The 6-H2O bilayer relaxation converged with uma-s-1p2/oc20. The intact water layer ended at O heights 4.7–5.2 Å above the top Pt layer (water-check limit 4.0 Å).",
+  "The MD was not run. How to proceed is pending the scientist's decision.",
   "command is the bilayer relaxation that ran, not an MD command.",
   "converged refers to the MD (false: it never ran); frames and series are empty."
  ]

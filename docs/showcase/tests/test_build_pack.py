@@ -181,10 +181,22 @@ def test_real_md_is_not_md():
     rec = _load("md")
     assert rec["converged"] is False
     assert rec["frames"] is None
-    assert {"md_not_run", "pending_decision_water_underbinding"} <= set(rec["flags"])
+    assert rec["status"] == "pending"
+    assert {"md_not_run", "pending_scientist_decision"} <= set(rec["flags"])
     assert rec["series"] == {}
     assert not (PACK / "md.xyz").exists()
     assert all("relaxation" in k["label"] for k in rec["key_numbers"])
+    from ase.io import read
+    assert set(rec["structures"]) == {"built", "relaxed_oc20"}
+    for entry in rec["structures"].values():
+        assert entry["label"]
+        f = PACK / entry["file"]
+        assert f.exists(), f
+        frames = read(f, index=":")
+        assert len(frames) == 1, f
+        sym = frames[0].get_chemical_symbols()
+        assert (sym.count("O"), sym.count("H"), sym.count("Pt")) == (6, 12, 36), f
+        assert "Lattice=" in f.read_text().splitlines()[1], f
 
 
 def test_real_frame_files_capped():
