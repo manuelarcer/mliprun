@@ -7,6 +7,9 @@ data/runs/**
 !data/runs/**/*.json
 !data/runs/**/*_final.vasp
 !data/runs/**/*.txt
+!data/runs/**/*.log
+# Subsampled trajectories in extended-XYZ form (raw .traj stays out).
+!data/runs/**/*.xyz
 # TS-verification output. mliprun writes it to a folder named ts_verify/
 # (ts_verify.txt, ts_structure.vasp, ts_freq_vibrations.json); verify_ts* is
 # kept as well for any file named that way.
@@ -16,5 +19,11 @@ data/runs/**
 !data/runs/**/ts_verify*/**
 # Never commit trajectories, even inside the folders re-included above.
 data/runs/**/*.traj
+# $REMOTE also holds the mliprun clone and the cluster copies of cluster.env
+# and committee.yaml; a pull of all of $REMOTE must not bring them back
+# (the clone's .git would be recorded as an embedded repository).
+data/runs/mliprun/
+data/runs/cluster.env
+data/runs/committee.yaml
 # .txt logs: commit only files of 1 MB or less. Git cannot test file size;
 # check with `find data/runs -name '*.txt' -size +1M` before committing.
