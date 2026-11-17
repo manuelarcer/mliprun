@@ -177,9 +177,12 @@ def test_a_true_saddle_connects_both_minima(tmp_path):
     assert sides == {"initial", "final"}
     for side in ("plus", "minus"):
         assert r["relax"][side]["converged"] is True
+        assert r["relax"][side]["returned_to_ts"] is False
+        assert r["relax"][side]["distance_to_ts_A"] == pytest.approx(1.0, abs=1e-2)
         assert r["relax"][side]["energy_difference_eV"] == pytest.approx(0.0, abs=1e-4)
         assert r["relax"][side]["distance_to_initial_A"] + r["relax"][side]["distance_to_final_A"] == pytest.approx(2.0, abs=1e-2)
     assert r["relax"]["endpoints_relaxed"] is True
+    assert "note" not in r["relax"]
     assert r["relax"]["initial_fmax_eV_per_A"] == pytest.approx(0.0, abs=1e-8)
     assert r["relax"]["optimizer"] == "bfgs" and r["relax"]["max_steps"] == 200
     assert r["relax"]["displacement_A"] == 0.1 and r["relax"]["match_tolerance_A"] == 0.3
@@ -249,14 +252,43 @@ def test_an_unknown_optimizer_stops_before_any_force_call(tmp_path):
     assert not (tmp_path / "mliprun_run.json").exists()
 
 
-@pytest.mark.parametrize("name", ["LBFGS", "Fire"])
-def test_the_other_optimizers_are_accepted_in_any_case(tmp_path, name):
-    # Only the name handling is tested: a quasi-Newton optimizer such as LBFGS may
-    # converge onto the saddle itself on this one-atom surface, so the result is not asserted.
-    r = _verify(tmp_path, checks=("relax",), relax_optimizer=name, relax_max_steps=400)
-    assert r["relax"]["optimizer"] == name.lower()
-    assert r["relax"]["status"] != "not_run"
-    assert (tmp_path / "ts_relax_plus.traj").exists()
+def test_the_optimizer_name_is_case_insensitive(tmp_path):
+    r = _verify(tmp_path, checks=("relax",), relax_optimizer="Fire", relax_max_steps=400)
+    assert r["relax"]["optimizer"] == "fire"
+    assert r["relax"]["result"] == "connects"
+
+
+def _assert_returned_to_ts(r):
+    relax = r["relax"]
+    assert relax["result"] == "inconclusive" and relax["status"] == "inconclusive"
+    assert r["verdict"] == "inconclusive"
+    assert any(relax[s]["returned_to_ts"] is True and relax[s]["distance_to_ts_A"] < 0.3
+               for s in ("plus", "minus"))
+    assert relax["note"] == "a relaxation returned to the TS; use a larger displacement or another optimizer"
+
+
+def test_lbfgs_converging_back_onto_the_saddle_is_inconclusive(tmp_path):
+    # On this surface LBFGS overshoots across the flat saddle and converges on it.
+    r = _verify(tmp_path, checks=("relax",), relax_optimizer="lbfgs")
+    _assert_returned_to_ts(r)
+    assert "a relaxation returned to the TS" in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_a_relaxation_that_starts_converged_on_the_ts_is_inconclusive(tmp_path):
+    # At the exact saddle the force is zero, so a tiny displacement converges at once.
+    r = _verify(tmp_path, checks=("relax",), displacement=1e-6)
+    _assert_returned_to_ts(r)
+    assert r["relax"]["plus"]["steps"] == 0 and r["relax"]["plus"]["matched"] is None
+
+
+def test_two_sides_matching_the_same_endpoint_is_same_side(tmp_path):
+    ts = single_atom(CENTRE)
+    initial = single_atom(CENTRE - X)
+    final = single_atom(CENTRE + np.array([0.0, 5.0, 0.0]))
+    r = verify_ts(ts, initial, final, calculator_factory=DoubleWell, checks=("relax",),
+                  match_tolerance=2.5, output_dir=tmp_path)
+    assert r["relax"]["result"] == "same_side" and r["verdict"] == "not_verified"
+    assert r["relax"]["plus"]["matched"] == r["relax"]["minus"]["matched"] == "initial"
 
 
 def test_the_relax_check_is_not_run_without_exactly_one_imaginary_mode(tmp_path):
@@ -300,8 +332,6 @@ def test_constraints_are_carried_into_the_relaxations(tmp_path):
     for name in ("ts_relax_plus.vasp", "ts_relax_minus.vasp"):
         relaxed = ase_read(str(tmp_path / name))
         assert np.allclose(relaxed.get_positions()[1], spectator, atol=1e-6)
-
-
 
 
 

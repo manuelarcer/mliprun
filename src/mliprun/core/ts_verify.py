@@ -202,12 +202,15 @@ def _displace_and_relax(
         distances = {label: endpoint_distance(atoms, info["structure"]) for label, info in endpoints.items()}
         nearest = min(distances, key=distances.get)
         matched = nearest if distances[nearest] <= match_tolerance else None
+        distance_to_ts = endpoint_distance(atoms, work)
         sides[side] = {
             "converged": converged,
             "steps": int(optimizer.nsteps),
             "distance_to_initial_A": distances["initial"],
             "distance_to_final_A": distances["final"],
+            "distance_to_ts_A": distance_to_ts,
             "matched": matched,
+            "returned_to_ts": bool(matched is None and distance_to_ts <= match_tolerance),
             "energy_difference_eV": None if matched is None else relaxed_energy - endpoints[matched]["energy"],
         }
 
@@ -257,11 +260,14 @@ def _format_report(results: dict, settings: dict) -> str:
                 energy = "n/a" if row["energy_difference_eV"] is None else f"{row['energy_difference_eV']:.4f} eV"
                 lines.append(
                     f"  {side:5s}: matched {row['matched']}, distance to IS {row['distance_to_initial_A']:.3f} A, "
-                    f"to FS {row['distance_to_final_A']:.3f} A, energy difference {energy}, "
+                    f"to FS {row['distance_to_final_A']:.3f} A, to TS {row['distance_to_ts_A']:.3f} A, "
+                    f"energy difference {energy}, "
                     f"{'converged' if row['converged'] else 'not converged'} in {row['steps']} steps"
                 )
+            if "note" in relax:
+                lines.append(f"  Note: {relax['note']}")
             lines.append(
-                f"  fmax of IS {relax['initial_fmax_eV_per_A']:.4f} eV/A, of FS {relax['final_fmax_eV_per_A']:.4f} eV/A"
+                f"  fmax of IS{relax['initial_fmax_eV_per_A']:.4f} eV/A, of FS {relax['final_fmax_eV_per_A']:.4f} eV/A"
             )
             if not relax["endpoints_relaxed"]:
                 lines.append(
@@ -438,6 +444,11 @@ def verify_ts(
                         match_tolerance=match_tolerance,
                     )
                 )
+                if relax["plus"]["returned_to_ts"] or relax["minus"]["returned_to_ts"]:
+                    # A relaxation that ends on the TS did not test the connection.
+                    relax["result"] = "inconclusive"
+                    relax["status"] = "inconclusive"
+                    relax["note"] = "a relaxation returned to the TS; use a larger displacement or another optimizer"
             statuses["relax"] = relax["status"]
 
         verdict, reason = decide_verdict(n_imaginary, ts_fmax, ts_fmax_limit, statuses)
