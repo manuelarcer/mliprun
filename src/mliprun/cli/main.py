@@ -10,6 +10,7 @@ from mliprun.cli.commands import (
     neb,
     optimize,
     singlepoint,
+    ts,
 )
 # Only typer is imported by this module; fastapi/uvicorn load inside the command.
 from mliprun.webapp.cli import webapp_command
@@ -26,6 +27,7 @@ app.add_typer(singlepoint.app, name="singlepoint",
               help="Evaluate a structure once: energy, forces, stress")
 app.add_typer(freq.app, name="freq",
               help="Vibrational frequencies by finite differences")
+app.add_typer(ts.app, name="ts", help="Transition-state verification")
 app.command("doctor")(doctor.doctor)
 app.command("webapp", help="Start the local web app (needs the 'webapp' extra)")(webapp_command)
 

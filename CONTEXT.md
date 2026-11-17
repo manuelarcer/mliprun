@@ -28,6 +28,18 @@ Two or more **Members** evaluated together against the same structure, reporting
 **Member**:
 One **MLIP tag** in one **MLIP env**, addressed by the driver process through a worker subprocess. A **Committee** needs at least two.
 
+**TS verification**:
+The test that a candidate transition-state structure is a transition state: it has exactly one imaginary vibrational mode, and that mode connects the initial and final states. Run by `mlip ts verify` or by `neb run --verify-ts`; independent of the method that found the structure. The result is a verdict (`verified`, `not_verified` or `inconclusive`) with every number behind it. See `docs/TS_VERIFICATION.md`.
+
+**Overlap check**:
+A **TS verification** check. The absolute cosine between the imaginary mode and a **Reference direction**, over the displaced atoms. Passes at or above a threshold (default 0.7). Costs no force calls beyond the frequencies.
+
+**Displace-and-relax check**:
+A **TS verification** check. The structure is displaced along the imaginary mode in both directions by a small step (default 0.1 Å) and both results are relaxed. It passes only when one side reaches the initial state and the other the final state (within a match tolerance, default 0.3 Å). Costs two geometry optimizations.
+
+**Reference direction**:
+The direction the **Overlap check** compares the imaginary mode with. From a NEB band it is the improved tangent at the highest image (`neb_tangent`). From three structure files it is the straight initial-to-final displacement (`is_to_fs`). A TS search method may supply its own, with its own label.
+
 **Level of theory**:
 The label a member's tag, together with its task or head, resolves to (a table in `src/mliprun/core/committee/config.py`). Members sharing one label are same-level; a tag/task combination the table does not recognise resolves to `unknown`, which counts as *possibly* mixed rather than assumed same-level.
 

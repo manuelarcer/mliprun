@@ -189,6 +189,7 @@ class CustomNEB:
             "Final fmax": ("fmax", float),
             "Spring constant (k)": ("k", lambda v: None if v == "None" else float(v)),
             "Climb": ("climb", lambda v: v.lower() == "true"),
+            "Verify TS": ("verify_ts", str),
             "Dynamic NEB": ("dyneb", lambda v: v.lower() == "true"),
             "Scale fmax": ("scale_fmax", float),
             "NEB optimizer": ("neb_optimizer", lambda v: v.lower() if v != "None" else None),
@@ -771,6 +772,7 @@ class CustomNEB:
         list[ase.Atoms]
             Optimized NEB images.
         """
+        self.converged = False
         aqcat_spin = getattr(self, "aqcat_spin", None)
         aqcat_fidelity = getattr(self, "aqcat_fidelity", None)
         # Only for an AQCat tag, so every other NEB record keeps its
@@ -881,6 +883,7 @@ class CustomNEB:
                 record.complete(status="failed", results={"error": str(exc)})
                 raise
 
+        self.converged = bool(converged)
         traj_writer.close()
 
         # Save convergence data

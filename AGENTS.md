@@ -71,7 +71,9 @@ MLIP is installed — script against its exit code.
 
 - Entry points: `mlip <subcmd>` or standalone `optimize`, `singlepoint`,
   `freq`, `md`, `neb`, `autoneb`, `autoneb-results`, `benchmark`. All
-  support `--help`.
+  support `--help`. `mlip ts verify` (TS verification) has no standalone
+  alias, because `ts` is a common Unix tool; `neb run --verify-ts` runs it
+  after a converged climbing-image NEB. Details: `docs/TS_VERIFICATION.md`.
 - Typical: `optimize run --structure POSCAR --fmax 0.05`. Model selection via
   `--mlip` (default `auto`), device via `--device` (note: `neb` defaults to
   CPU, the others to auto).
