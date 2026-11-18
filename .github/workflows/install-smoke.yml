@@ -1,6 +1,6 @@
 name: Fresh-install smoke test
 
-# Proves the README Quick Start works on a clean machine: base install,
+# Proves the docs/INSTALL.md Quick Start works on a clean machine: base install,
 # [neb] extra, MACE, `mlip doctor`, and a tiny CPU relaxation end-to-end.
 # Runs weekly, on demand, and whenever packaging files change.
 on:
@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Base install (exact README Quick Start path, venv included)
+      - name: Base install (exact docs/INSTALL.md Quick Start path, venv included)
         run: |
           python3 -m venv .venv
           source .venv/bin/activate

@@ -316,7 +316,7 @@ Your environment is now fully configured with:
 **Next steps:**
 - Keep the 'uma' virtual environment activated when working with mliprun
 - Use `mlip --help` to explore the full command namespace, or call any subcommand directly (e.g. `optimize --help`, `md --help`)
-- Refer to the [main README](../README.md) for usage examples and documentation
+- Refer to the [command reference](CLI.md) for usage examples and documentation
 - For UMA-specific examples, see [UMA Models Usage Guide](UMA_USAGE_GUIDE.md)
 
 **Troubleshooting tips:**

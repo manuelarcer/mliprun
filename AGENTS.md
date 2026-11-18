@@ -1,8 +1,8 @@
 # Agent guide — mliprun
 
 Orientation for AI coding assistants (Claude Code, Cursor, Codex, …) and new
-users driving this repo. Everything here is also human-readable; the README
-covers usage in more depth.
+users driving this repo. Everything here is also human-readable;
+[docs/CLI.md](docs/CLI.md) covers usage in more depth.
 
 ## What this is
 

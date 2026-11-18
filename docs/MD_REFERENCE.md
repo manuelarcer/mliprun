@@ -2,7 +2,7 @@
 
 Reference for the `md run` CLI command. Covers the three supported ensembles (NVE, NVT, NPT), every CLI flag, and the defaults used when nothing is passed.
 
-For a top-level overview of the CLI, see the [main README](../README.md). For UMA-specific examples, see [UMA_USAGE_GUIDE.md](UMA_USAGE_GUIDE.md).
+For a top-level overview of the CLI, see the [command reference](CLI.md). For UMA-specific examples, see [UMA_USAGE_GUIDE.md](UMA_USAGE_GUIDE.md).
 
 ---
 

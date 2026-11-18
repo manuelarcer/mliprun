@@ -265,9 +265,27 @@ def write_clip(page, stem, seq, fps, crop, out, labels) -> None:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def webapp_gif() -> None:
+    """The whole web app recording as a GIF for the repository README.
+
+    Original speed: the recording already carries its own on-screen speed-up
+    label, which a second speed-up here would make wrong.
+    """
+    vf = ("fps=8,scale=720:-1:flags=lanczos,split[a][b];"
+          "[a]palettegen=max_colors=96:stats_mode=diff[p];"
+          "[b][p]paletteuse=dither=bayer:bayer_scale=4:diff_mode=rectangle")
+    gif = MEDIA / "webapp.gif"
+    subprocess.run([FFMPEG, "-y", "-v", "error", "-i", str(DATA / "webapp.mp4"),
+                    "-filter_complex", vf, "-loop", "0", str(gif)], check=True)
+    print(f"webapp: {gif.relative_to(HERE)} {gif.stat().st_size / 1e6:.2f} MB")
+
+
 def main() -> int:
     if sys.argv[1:] == ["--clips-only"]:
         page_clips()
+        return 0
+    if sys.argv[1:] == ["--webapp-gif"]:
+        webapp_gif()
         return 0
     MEDIA.mkdir(exist_ok=True)
     charts()
@@ -305,7 +323,7 @@ def main() -> int:
     subprocess.run([FFMPEG, "-y", "-v", "error", "-ss", f"{t:.1f}", "-i", str(DATA / "webapp.mp4"),
                     "-frames:v", "1", "-vf", "crop=960:760:320:40", "-q:v", "3",
                     str(MEDIA / "webapp-result.jpg")], check=True)
-    (MEDIA / "webapp.gif").unlink(missing_ok=True)
+    webapp_gif()
     (MEDIA / "hero-light.gif").unlink(missing_ok=True)
     for f in sorted(MEDIA.iterdir()):
         print(f"{f.name:28s} {f.stat().st_size / 1e6:6.2f} MB")

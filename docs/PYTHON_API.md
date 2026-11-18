@@ -1,6 +1,6 @@
 # Python API Reference
 
-The CLI commands wrap a small set of pure-Python functions and one class. This page documents the public surface that you can call directly from a script or notebook. For CLI usage see the [main README](../README.md); for UMA-specific examples see [UMA_USAGE_GUIDE.md](UMA_USAGE_GUIDE.md).
+The CLI commands wrap a small set of pure-Python functions and one class. This page documents the public surface that you can call directly from a script or notebook. For CLI usage see the [command reference](CLI.md); for UMA-specific examples see [UMA_USAGE_GUIDE.md](UMA_USAGE_GUIDE.md).
 
 ## Module map
 
