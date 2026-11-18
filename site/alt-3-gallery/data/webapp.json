@@ -119,7 +119,7 @@
  "notes": [
   "Submitted from the local mliprun web app (mlip webapp); the calculation ran on cos-cluster (cosrnode01g), GPU card 0. The laptop only submitted.",
   "Input: 01_relax/o_fcc/POSCAR, byte-identical, with selective dynamics (bottom 2 Pt layers fixed, 18 atoms).",
-  "The energy difference to relax.json is GPU floating-point noise: same input, model, task, optimizer and fmax, same 12 BFGS steps.",
+  "The energy difference to relax.json is consistent with floating-point noise: same input, model, task, optimizer and fmax, same 12 BFGS steps.",
   "webapp.mp4: waiting part sped up x3 and labelled so; form and result parts at normal speed."
  ]
 }

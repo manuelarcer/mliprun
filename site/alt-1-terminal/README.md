@@ -20,10 +20,10 @@ Real runs of O on Pt(111), uma-s-1p2/oc20. **[Live page](https://manuelarcer.git
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="media/relax3d-dark.gif">
-  <img src="media/relax3d-light.gif" alt="The 13 BFGS steps of O settling into the fcc hollow on Pt(111)" width="520">
+  <img src="media/relax3d-light.gif" alt="The 13 BFGS steps of O relaxing in the fcc hollow on Pt(111)" width="520">
 </picture>
 
-E −192.469 eV · fmax 0.0134 eV/Å · 12 BFGS steps
+E −192.469 eV · fmax 0.0134 eV/Å · 12 BFGS steps · 3×3 periodic images
 
 ```bash
 …/uma/bin/mlip optimize run \

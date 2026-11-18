@@ -258,7 +258,7 @@ def readme():
     a(f"[![Fresh-install smoke test]({REPO}/actions/workflows/install-smoke.yml/badge.svg)]({REPO}/actions/workflows/install-smoke.yml)\n")
     a("## One system, from first relaxation to a run on your own GPU machine\n")
     a(f"O on Pt(111), {model}/{head}, fmax {q('relax', 'fmax target', 2)}. "
-      f"[Interactive version]({LANDING}). [Install](docs/INSTALL.md) (one MLIP per environment).\n")
+      f"[Interactive version]({LANDING}). [Install]({REPO}/blob/main/docs/INSTALL.md) (one MLIP per environment).\n")
 
     a(f"### 1. Relax ({state(r)})\n")
     a(pic("chart-relax", "svg", "Relaxation: energy and fmax per BFGS step, with the fmax target"))
@@ -313,7 +313,7 @@ def readme():
     a("- `--mlip`: UMA, MACE, SevenNet, CHGNet")
     a("- `mlip doctor`: environment check\n")
     a(f"[Data provenance]({REPO}/blob/main/docs/showcase/data/pack/PROVENANCE.md). "
-      "Installation: [docs/INSTALL.md](docs/INSTALL.md).\n")
+      f"Installation: [docs/INSTALL.md]({REPO}/blob/main/docs/INSTALL.md).\n")
     (HERE / "README.md").write_text("\n".join(L))
 
 

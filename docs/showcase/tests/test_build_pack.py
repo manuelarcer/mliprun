@@ -170,11 +170,33 @@ def test_real_pack_schema(name):
     assert rec["use_case"] == name
 
 
-@pytest.mark.parametrize("name", ["relax", "committee", "neb"])
+@pytest.mark.parametrize("name", ["relax", "committee", "neb", "md"])
 def test_real_pack_command_matches_run_record(name):
     rec = _load(name)
     run_json = RUNS / rec["run_dir"] / "mliprun_run.json"
     assert bp.command_mismatches(rec["command"], json.loads(run_json.read_text())) == []
+
+
+def test_command_provenance_guard():
+    record = {"provenance": {"mlip_model": "uma-s-1p2", "uma_task": "oc20",
+                             "device_requested": "cuda"}}
+    ok = "mlip optimize run --mlip uma-s-1p2 --uma-task oc20 --device cuda"
+    assert bp.command_mismatches(ok, record) == []
+    bad = "mlip optimize run --mlip mace-mh-1 --uma-task omat --device cpu"
+    assert len(bp.command_mismatches(bad, record)) == 3
+
+
+def _key(rec, start):
+    return next(k["value"] for k in rec["key_numbers"] if k["label"].startswith(start))
+
+
+def test_real_headline_numbers():
+    # The five site copies show these numbers; a rebuild must not change them silently.
+    neb = _load("neb")
+    assert _key(neb, "forward barrier") == pytest.approx(0.5442, abs=5e-5)
+    assert _key(neb, "reaction energy") == pytest.approx(0.3681, abs=5e-5)
+    assert _key(_load("relax"), "Pt lattice constant a") == pytest.approx(3.9898, abs=5e-5)
+    assert _key(_load("committee"), "sigma_max_free / fmax") == pytest.approx(3.677, abs=5e-4)
 
 
 def test_real_md_is_not_md():

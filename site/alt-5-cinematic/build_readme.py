@@ -80,7 +80,7 @@ def main():
 
     rows = []
     rows.append((
-        '<img src="media/relax.gif" width="300" alt="O relaxing into the fcc hollow of Pt(111)">',
+        '<img src="media/relax.gif" width="300" alt="O relaxes in the fcc hollow of Pt(111)">',
         "**Relax an adsorbate.**",
         f"`{short(relax['command'])}`",
         f"O height {q(kn(relax, 'O height above top Pt layer, fcc'))}, "

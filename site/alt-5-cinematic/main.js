@@ -394,7 +394,7 @@ function buildNEB(D) {
       ["Reverse barrier, hcp → fcc", kn(j, "reverse barrier")],
       ["NEB optimizer steps", kn(j, "NEB optimizer steps")],
     ]) +
-    `<details class="verify-box"><summary>TS checks: ${verify.filter((v) => v[0] === "✓").length} passed` +
+    `<details class="verify-box"><summary>Checks: ${verify.filter((v) => v[0] === "✓").length} passed` +
     `${verify.some((v) => v[0] === "!") ? `, ${verify.filter((v) => v[0] === "!").length} flag` : ""}</summary>` +
     `<ul class="verify" aria-label="TS checks">${verify.map(([m, t]) =>
       `<li><span class="mark ${m === "!" ? "mark-flag" : ""}" aria-hidden="true">${m}</span><span>${esc(t)}</span></li>`).join("")}</ul></details>`;
@@ -529,7 +529,7 @@ function defineScenes(D) {
   const nebReadout = (i) => {
     if (i < 0 || i >= nImg) return "";
     const tag = i === D.neb.ts_image_index ? ", climbing image (TS)" : i === 0 ? ", fcc" : i === nImg - 1 ? ", hcp" : "";
-    return `Image ${i} of ${nImg}${tag}: E − E(fcc) = ${fmtNum(s.relative_energy_eV[i])} eV`;
+    return `Image ${i} (0–${nImg - 1})${tag}: E − E(fcc) = ${fmtNum(s.relative_energy_eV[i])} eV`;
   };
   const oIdx = D.nebFrames[0].symbols.indexOf("O");
   // NEB overlay: every image's O as a translucent ghost at its real position,
@@ -565,7 +565,7 @@ function defineScenes(D) {
   state.specs.relax = {
     url: "data/relax.xyz", opts: { xyzText: D.relaxXYZ, fps: 3, loop: true, hold: 1.4, replicate: rep3,
       imageTint: 0.72, view: { elevation: 22, azimuth: -30, zoom: 1.5 }, restFrame: "last" },
-    caption: `O relaxing into the fcc hollow, ${rs.step.length - 1} BFGS steps.`,
+    caption: `O relaxes in the fcc hollow, ${rs.step.length - 1} BFGS steps.`,
     readout: (i) => i < rs.step.length
       ? `Step ${i}: O height ${fmtNum(relaxH[i])} Å, fmax ${fmtNum(rs.fmax_eV_per_A[i])} eV/Å` : "",
     cursor: "relax",

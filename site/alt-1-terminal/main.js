@@ -560,7 +560,7 @@ async function relaxPair(rel, logs) {
   const onFrame = (i) => {
     const j = Math.min(i, s.step.length - 1);
     cursor.setAttribute("x1", c.X(s.step[j])); cursor.setAttribute("x2", c.X(s.step[j]));
-    label.textContent = `BFGS step ${s.step[j]}, E = ${fx(s.energy_eV[j], 3)} eV · periodic images`;
+    label.textContent = `BFGS step ${s.step[j]}, E = ${fx(s.energy_eV[j], 3)} eV · 3×3 periodic images`;
   };
   nums($('[data-nums="relax"]'), rel, [
     ["total energy, O at fcc", "total energy, O at fcc", 3],
@@ -584,7 +584,7 @@ async function relaxPair(rel, logs) {
     };
   } catch (e) {
     console.warn("relax 3D view unavailable:", e.message);
-    fallbackGif($("#relax-scene"), "relax3d", "Recorded animation of the 13 BFGS steps, periodic images");
+    fallbackGif($("#relax-scene"), "relax3d", "Recorded animation of the 13 BFGS steps, 3×3 periodic images");
     label.textContent = "3D view unavailable; recorded animation";
     btn.hidden = true;
   }

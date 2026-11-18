@@ -271,6 +271,7 @@ function ensure3Dmol() {
       s.onload = () => {
         if (window.$3Dmol) return resolve(window.$3Dmol);
         threeDmolPromise = null;
+        s.remove();
         return reject(new Error("3Dmol missing after load"));
       };
       s.onerror = () => {
@@ -444,7 +445,7 @@ export async function loadScene(el, xyzUrl, opts = {}) {
   // scrolling. Unless touch rotation is on, stop touch events before they reach
   // the canvas (capture phase, passive) so the browser scrolls the page.
   const coarse = typeof window !== "undefined" && !!window.matchMedia &&
-    window.matchMedia("(pointer: coarse)").matches;
+    window.matchMedia("(any-pointer: coarse)").matches;
   let touchOn = o.touchRotate === null || o.touchRotate === undefined ? !coarse : !!o.touchRotate;
   const touchGuard = (e) => { if (!touchOn) e.stopPropagation(); };
   const TOUCH_EVENTS = ["touchstart", "touchmove", "touchend", "touchcancel"];

@@ -312,6 +312,14 @@ def command_mismatches(command: str, record: dict) -> list:
                         ok = False
         if not ok:
             missing.append(f"{flag} {value}")
+    # The other direction: --mlip / --uma-task / --device written in the command
+    # must equal what the run recorded in its provenance block.
+    prov = record.get("provenance") or {}
+    for flag, key in (("--mlip", "mlip_model"), ("--uma-task", "uma_task"),
+                      ("--device", "device_requested")) if prov else ():
+        for i, t in enumerate(toks[:-1]):
+            if t == flag and prov.get(key) != toks[i + 1]:
+                missing.append(f"{flag} {toks[i + 1]} (provenance {key}: {prov.get(key)})")
     return missing
 
 
@@ -373,8 +381,9 @@ def build_relax(runs: Path, out: Path) -> dict:
     rd = runs / "01_relax"
     converged, flags = optimize_converged(rd / "o_fcc")
     for name in ("bulk", "slab", "o_hcp"):
-        ok, _ = optimize_converged(rd / name)
-        if not ok:
+        ok, side_flags = optimize_converged(rd / name)
+        flags += [f"{name}_{x}" for x in side_flags]
+        if not ok and "not_converged" not in side_flags:
             flags.append(f"{name}_not_converged")
 
     bulk = read(rd / "bulk" / "opt_final.vasp")
@@ -470,7 +479,9 @@ def build_committee(runs: Path, out: Path) -> dict:
         converged, flags, key, series, None, run_dir="02_committee",
         cwd=str(Path(_record(rd)["inputs"]["structure_abspath"]).parent),
         notes=["Members: uma-s-1p2@oc20, 7net-omni@oc20, mace-mh-1@oc20_usemppbe, all at the "
-               "OC20 (RPBE) level (mixed_theory False on every row).",
+               "OC20 (RPBE) level ("
+               + ("mixed_theory True on some rows)." if "mixed_theory" in flags
+                  else "mixed_theory False on every row)."),
                "Start: the unrelaxed 01_relax/o_fcc/POSCAR; the relaxation follows the "
                "members' mean force.",
                "energy_spread_aligned_eV is a standard deviation (ddof=1), not a range "
@@ -603,15 +614,16 @@ def build_neb(runs: Path, out: Path) -> dict:
         "neb_barrier_eV": conv["barrier(eV)"],
     }
     notes += [
-        f"TS is image {ts_i} of {res['n_images']} (climbing image).",
+        f"TS is image {ts_i} (0–{res['n_images'] - 1}), the climbing image.",
         "neb_band.xyz: final band (A2B.traj). neb_seed.xyz: IDPP seed band (idpp.traj; "
-        "identical to A2B_full.traj frames 0..8, max position difference 0.0 Å, checked "
-        "on the cluster).",
+        f"identical to A2B_full.traj frames 0..{res['n_images'] - 1}, max position difference "
+        "0.0 Å, checked on the cluster).",
         f"ts_mode.xyz: {TS_MODE_FRAMES} frames, TS + {TS_MODE_AMPLITUDE} Å · sin(2πk/"
         f"{TS_MODE_FRAMES}) · mode, the mode scaled so its most-displaced atom moves "
         f"{TS_MODE_AMPLITUDE} Å; nonzero only on the {len(moving)} atoms ts_verify displaced "
         f"(indices {moving[0]}..{moving[-1]}). An illustration of the mode, not dynamics.",
-        "Band explosion allowance: 1.0 Å + 1.0 × each atom's IS→FS travel; not exploded.",
+        "Band explosion allowance: 1.0 Å + 1.0 × each atom's IS→FS travel; "
+        + ("EXPLODED." if bc["exploded"] else "not exploded."),
     ]
     return make_record(
         "neb", _command(rd, "run_03_neb.sh", "neb run"), converged, flags, key, series,

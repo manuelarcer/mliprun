@@ -5,7 +5,7 @@
 
 ## One system, from first relaxation to a run on your own GPU machine
 
-O on Pt(111), uma-s-1p2/oc20, fmax 0.02 eV/Å. [Interactive version](https://manuelarcer.github.io/mliprun/). [Install](docs/INSTALL.md) (one MLIP per environment).
+O on Pt(111), uma-s-1p2/oc20, fmax 0.02 eV/Å. [Interactive version](https://manuelarcer.github.io/mliprun/). [Install](https://github.com/manuelarcer/mliprun/blob/main/docs/INSTALL.md) (one MLIP per environment).
 
 ### 1. Relax (converged)
 
@@ -121,4 +121,4 @@ ts_verify reported endpoint fmax 0.0134 (IS) / 0.0174 (FS) eV/Å, above its inte
 - `--mlip`: UMA, MACE, SevenNet, CHGNet
 - `mlip doctor`: environment check
 
-[Data provenance](https://github.com/manuelarcer/mliprun/blob/main/docs/showcase/data/pack/PROVENANCE.md). Installation: [docs/INSTALL.md](docs/INSTALL.md).
+[Data provenance](https://github.com/manuelarcer/mliprun/blob/main/docs/showcase/data/pack/PROVENANCE.md). Installation: [docs/INSTALL.md](https://github.com/manuelarcer/mliprun/blob/main/docs/INSTALL.md).

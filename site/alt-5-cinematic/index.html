@@ -95,7 +95,8 @@
         <pre class="cmd-block"><code>git clone https://github.com/manuelarcer/mliprun.git
 cd mliprun
 python3 -m venv .venv &amp;&amp; source .venv/bin/activate
-pip install -e .
+pip install -e ".[neb,webapp]"
+pip install mace-torch   # or fairchem-core (UMA, gated), sevenn, chgnet
 mlip doctor</code></pre>
         <p><a href="https://github.com/manuelarcer/mliprun/blob/main/docs/INSTALL.md">Full installation instructions (docs/INSTALL.md)</a></p>
       </section>

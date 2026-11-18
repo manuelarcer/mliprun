@@ -115,7 +115,7 @@ def main(argv=None):
     text = json.dumps(result, indent=2)
     (neb_dir / "band_check.json").write_text(text + "\n")
     print(text)
-    return 0
+    return 1 if result["exploded"] else 0
 
 
 if __name__ == "__main__":

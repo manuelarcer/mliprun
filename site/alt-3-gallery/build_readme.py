@@ -63,7 +63,7 @@ def cmd_short(cmd, keep):
             out.append(t[i])
             if i + 1 < len(t) and not t[i + 1].startswith("--"):
                 out.append(t[i + 1])
-    return "mlip " + " ".join(out)
+    return "mlip " + " ".join(out) + " …"  # abbreviated: structure and other inputs omitted
 
 
 # ---------------------------------------------------------------- SVG strips
@@ -274,7 +274,7 @@ def build(prefix=""):
              "transition-state check, MD, and jobs sent to a remote GPU machine you add yourself. UMA, MACE, SevenNet and CHGNet.\n")
     L.append(f"**[Open the live gallery]({LANDING_URL})** for rotatable 3D panels, "
              f"**[install]({install})**, or **[run it on your own GPU machine](#run-it-on-your-own-gpu-machine)**.\n")
-    L.append(f"Plate 1. Five real runs on O/Pt(111), {level}, all on {machine} (one GPU card). Numbers are generated from the run records.\n")
+    L.append(f"Plate 1. Four real runs and one pending (MD) on Pt(111), single-model runs {level}, run on {machine} (one GPU card). Numbers are generated from the run records.\n")
     L.append("<table>")
     # row 1: a, NEB (wide)
     L.append("<tr><td colspan=\"2\">")
@@ -294,7 +294,7 @@ def build(prefix=""):
     L.append("</td><td width=\"50%\" valign=\"top\">")
     L.append(f"<b>c</b>&nbsp; <b>Committee: σ max {ratio['value']:.1f}× fmax</b> ({conv(committee)})<br>")
     L.append(pic(prefix, "committee", "png", 400, f"Force sigma per atom at the last step, 0 to {max(sig):.3f} eV/Å; O red"))
-    L.append(f"<br><sub>Force σ per atom, last step: pale 0 → violet {max(sig):.3f} eV/Å; O red.</sub>")
+    L.append(f"<br><sub>Start geometry, force σ per atom at the last step: pale 0 → violet {max(sig):.3f} eV/Å; O red.</sub>")
     L.append("<br>" + pic(prefix, "strip-committee", "svg", 400, "Committee-mean fmax against step with the largest and mean force sigma"))
     L.append(f"<br><code>{cmd_short(committee['command'], ['--committee', '--fmax'])}</code>")
     L.append("</td></tr>")
@@ -304,7 +304,7 @@ def build(prefix=""):
         L.append("<b>d</b>&nbsp; <b>MD: not run; next step pending a decision</b><br>")
         L.append(pic(prefix, "md", "png", 400, f"{md['structures']['built']['label']}; static, not a simulation"))
         L.append(f"<br><sub>{md['structures']['built']['label']}. Static, not a simulation.</sub>")
-        L.append("<br><code>mlip md run</code>")
+        L.append("<br><code>mlip md run …</code>")
     else:
         L.append(f"<b>d</b>&nbsp; <b>Finite-temperature MD</b> ({conv(md)})<br>MD media: rerun render_media.py once md.json has frames.")
     L.append("</td><td valign=\"top\">")

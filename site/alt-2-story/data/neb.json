@@ -309,7 +309,7 @@
  "ts_image_index": 5,
  "notes": [
   "ts_verify reported endpoint fmax 0.0134 (IS) / 0.0174 (FS) eV/Å, above its internal displace-and-relax fmax of 0.01 eV/Å (the endpoints were relaxed to 0.02 eV/Å). The verdict is unaffected: both displaced relaxations matched their endpoint (result: connects).",
-  "TS is image 5 of 9 (climbing image).",
+  "TS is image 5 (0–8), the climbing image.",
   "neb_band.xyz: final band (A2B.traj). neb_seed.xyz: IDPP seed band (idpp.traj; identical to A2B_full.traj frames 0..8, max position difference 0.0 Å, checked on the cluster).",
   "ts_mode.xyz: 30 frames, TS + 0.3 Å · sin(2πk/30) · mode, the mode scaled so its most-displaced atom moves 0.3 Å; nonzero only on the 19 atoms ts_verify displaced (indices 18..36). An illustration of the mode, not dynamics.",
   "Band explosion allowance: 1.0 Å + 1.0 × each atom's IS→FS travel; not exploded."

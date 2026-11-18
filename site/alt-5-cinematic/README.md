@@ -14,7 +14,7 @@
 
 <table>
 <tr>
-<td width="320"><img src="media/relax.gif" width="300" alt="O relaxing into the fcc hollow of Pt(111)"></td>
+<td width="320"><img src="media/relax.gif" width="300" alt="O relaxes in the fcc hollow of Pt(111)"></td>
 <td>
 
 **Relax an adsorbate.**<br>`mlip optimize run --structure POSCAR --mlip uma-s-1p2 --uma-task oc20 --device cuda --fmax 0.02 --optimizer bfgs --max-steps 500`<br>O height 1.13 Å, 12 BFGS steps.<br>**Converged:** fmax 0.0134 eV/Å, target 0.02 eV/Å.

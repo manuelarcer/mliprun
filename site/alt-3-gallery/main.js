@@ -540,7 +540,7 @@ async function main() {
       cmdFullTokens: cmdFull(webapp.command),
       keyV: num(fx(wall.value, 1), wall.unit),
       keyL: `job wall time on ${machine}`,
-      conv: `${webapp.converged ? "Converged" : "Not converged"}: fmax ${fx(ff.value, 4)} ${esc(ff.unit)} against a target of ${wt.value} ${esc(wt.unit)}, ${intv(steps.value)} BFGS steps, run on ${esc(machine)} (env ${esc(env)}). Same input as panel b; the final energy differs from the CLI run by ${signed(sci(dE.value), dE.value)} ${esc(dE.unit)}. The wall time in the stills is the app clock, which includes submit and copy-back; ${fx(wall.value, 1)} ${esc(wall.unit)} is the job wall time measured on the node (model load + relaxation; optimizer ${fx(relaxT.value, 1)} ${esc(relaxT.unit)}).`,
+      conv: `${webapp.converged ? "Converged" : "Not converged"}: fmax ${fx(ff.value, 4)} ${esc(ff.unit)} against a target of ${wt.value} ${esc(wt.unit)}, ${intv(steps.value)} BFGS steps, run on ${esc(machine)} (env ${esc(env)}). Same input as panel b; the final energy differs from the CLI run by ${signed(sci(dE.value), dE.value)} ${esc(dE.unit)}. Job wall time ${fx(wall.value, 1)} ${esc(wall.unit)} (model load + relaxation; optimizer ${fx(relaxT.value, 1)} ${esc(relaxT.unit)}).`,
     });
     bind("still-submit", "Submit");
     bind("still-running", "Running");

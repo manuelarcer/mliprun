@@ -530,7 +530,7 @@ function build(key) {
     const cam = !BAKE && cameras?.[builtLayout]?.[key];
     try {
       entry.ctrl = await V.loadScene(box, null, {
-        xyzText: spec.text, background: "transparent", replicate: [2, 2], fill: 0.86,
+        xyzText: spec.text, background: "transparent", replicate: [2, 2], fill: layoutKey() === "mobile" ? 0.95 : 0.86,
         ambientOcclusion: software ? false : 0.4,
         ...spec.opts,
         ...(cam ? { fit: false, camera: cam } : {}),

@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shlex
 import shutil
 import subprocess
 import sys
@@ -296,12 +297,12 @@ def pack(args) -> None:
         flags.append("convergence_record_mismatch")
     flags += geometry_flags(read(str(run_dir / "opt_final.vasp")))
 
-    # the command: the job's own reproduce.sh line (the equivalent mlip CLI call)
-    lines = [ln for ln in (run_dir / "reproduce.sh").read_text().splitlines()
-             if ln.startswith("mlip ")]
-    if len(lines) != 1:
-        raise SystemExit(f"expected one mlip line in reproduce.sh, got {lines}")
-    command = lines[0]
+    # the command: the job's own reproduce.json argv (the equivalent mlip CLI call).
+    # reproduce.json is tracked; reproduce.sh is gitignored.
+    argv = json.loads((run_dir / "reproduce.json").read_text())["argv"]
+    if not argv:
+        raise SystemExit("reproduce.json has an empty argv")
+    command = "mlip " + shlex.join(argv)
 
     stage = record["stages"][0]["results"]
     e_web = float(stage["final_energy_eV"])
@@ -338,7 +339,7 @@ def pack(args) -> None:
             "on cos-cluster (cosrnode01g), GPU card 0. The laptop only submitted.",
             "Input: 01_relax/o_fcc/POSCAR, byte-identical, with selective dynamics "
             "(bottom 2 Pt layers fixed, 18 atoms).",
-            "The energy difference to relax.json is GPU floating-point noise: same "
+            "The energy difference to relax.json is consistent with floating-point noise: same "
             "input, model, task, optimizer and fmax, same 12 BFGS steps.",
             f"webapp.mp4: waiting part sped up x{enc['speedup']} and labelled so; form "
             "and result parts at normal speed.",

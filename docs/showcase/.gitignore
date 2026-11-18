@@ -27,5 +27,6 @@ data/runs/**/*.traj
 data/runs/mliprun/
 data/runs/cluster.env
 data/runs/committee.yaml
-# .txt logs: commit only files of 1 MB or less. Git cannot test file size;
-# check with `find data/runs -name '*.txt' -size +1M` before committing.
+# .txt, .log and .xyz files: commit only files of 1 MB or less. Git cannot test file
+# size; check with `find data/runs \( -name '*.txt' -o -name '*.log' -o -name '*.xyz' \) -size +1M`
+# before committing.

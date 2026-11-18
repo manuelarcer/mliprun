@@ -16,8 +16,6 @@ HERE = Path(__file__).resolve().parent
 FIXTURE = HERE / "fixtures" / "relax_fixture.xyz"
 PACK = HERE.parents[1] / "docs" / "showcase" / "data" / "pack"
 FFPROBE = shutil.which("ffprobe")
-if FFPROBE is None:
-    pytest.skip("ffprobe not on PATH", allow_module_level=True)
 LIMIT = 5 * 1024 * 1024
 
 sys.path.insert(0, str(HERE))
@@ -34,6 +32,9 @@ def _probe(path, *fields):
 
 @pytest.fixture(scope="module")
 def media(tmp_path_factory):
+    # Only the media tests need ffprobe; the viewer tests below still run without it.
+    if FFPROBE is None:
+        pytest.skip("ffprobe not on PATH")
     root = tmp_path_factory.mktemp("cap")
     stem = root / "relax"
     rc = capture.main([str(FIXTURE), str(stem), "--frames", "24",

@@ -111,7 +111,7 @@ def test_cli_reads_seeded_band_from_full_traj(tmp_path, capsys):
     # A2B_full.traj: seeded band first, then a later iteration; A2B.traj: final band.
     write(tmp_path / "A2B_full.traj", seeded + final_band)
     write(tmp_path / "A2B.traj", final_band)
-    assert main([str(tmp_path)]) == 0
+    assert main([str(tmp_path)]) == 1   # an exploded band fails the script loudly
     out = json.loads((tmp_path / "band_check.json").read_text())
     assert out["exploded"] is True
     assert out["worst"]["atom"] == 1
