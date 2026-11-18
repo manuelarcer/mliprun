@@ -154,7 +154,7 @@ body[data-chapter="coda"] .scene-bar { display: none; }
 .ctl:hover { border-color: var(--key); }
 .ctl[aria-pressed="true"] { border-color: var(--key); color: var(--key); }
 .ctl-touch { display: none; }
-@media (pointer: coarse) { .ctl-touch { display: inline-block; } }
+@media (any-pointer: coarse) { .ctl-touch { display: inline-block; } }
 
 /* ---------------------------------------------------------------- chapter nav */
 .chapters {
