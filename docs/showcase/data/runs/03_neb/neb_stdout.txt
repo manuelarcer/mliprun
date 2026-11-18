@@ -1,0 +1,40 @@
+Using MLIP: uma-s-1p2
+   UMA task: oc20
+/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/lib/python3.11/site-packages/ase/mep/neb.py:329: UserWarning: The default method has changed from 'aseneb' to 'improvedtangent'. The 'aseneb' method is an unpublished, custom implementation that is not recommended as it frequently results in very poor bands. Please explicitly set method='improvedtangent' to silence this warning, or set method='aseneb' if you strictly require the old behavior (results may vary). See: https://gitlab.com/ase/ase/-/merge_requests/3952
+  warnings.warn(
+/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/lib/python3.11/site-packages/ase/mep/neb.py:329: UserWarning: The default method has changed from 'aseneb' to 'improvedtangent'. The 'aseneb' method is an unpublished, custom implementation that is not recommended as it frequently results in very poor bands. Please explicitly set method='improvedtangent' to silence this warning, or set method='aseneb' if you strictly require the old behavior (results may vary). See: https://gitlab.com/ase/ase/-/merge_requests/3952
+  warnings.warn(
+ Interpolating with IDPP...
+Running NEB optimization (optimizer=FIRE, climb=True, max_steps=600)...
+Processing results...
+Exporting POSCARs...
+NEB complete. Output written to:
+ - /scratchb/juar/mliprun-showcase/03_neb/neb.log
+ - /scratchb/juar/mliprun-showcase/03_neb/neb_convergence.csv
+ - /scratchb/juar/mliprun-showcase/03_neb/A2B.traj
+ - /scratchb/juar/mliprun-showcase/03_neb/A2B_full.traj
+ - /scratchb/juar/mliprun-showcase/03_neb/idpp.traj
+ - /scratchb/juar/mliprun-showcase/03_neb/idpp.log
+ - /scratchb/juar/mliprun-showcase/03_neb/neb_data.csv
+ - /scratchb/juar/mliprun-showcase/03_neb/neb_parameters.txt
+ - /scratchb/juar/mliprun-showcase/03_neb/neb_convergence.png
+ - /scratchb/juar/mliprun-showcase/03_neb/neb_energy.png
+ - /scratchb/juar/mliprun-showcase/03_neb/00/POSCAR
+ - /scratchb/juar/mliprun-showcase/03_neb/01/POSCAR
+ - /scratchb/juar/mliprun-showcase/03_neb/02/POSCAR
+ - /scratchb/juar/mliprun-showcase/03_neb/03/POSCAR
+ - /scratchb/juar/mliprun-showcase/03_neb/04/POSCAR
+ - /scratchb/juar/mliprun-showcase/03_neb/05/POSCAR
+ - /scratchb/juar/mliprun-showcase/03_neb/06/POSCAR
+ - /scratchb/juar/mliprun-showcase/03_neb/07/POSCAR
+ - /scratchb/juar/mliprun-showcase/03_neb/08/POSCAR
+Verifying image 5 as a transition state (check=both)...
+
+TS verification: verified
+   Reason: one imaginary mode and every requested check passed
+   Imaginary modes: 1 (128.3i cm⁻¹)
+   TS fmax (free components): 0.0123 eV/Å (limit 0.0300)
+   Overlap with neb_tangent: 0.9622 (threshold 0.70) -> pass
+   Displace-and-relax: connects
+
+📄 /scratchb/juar/mliprun-showcase/03_neb/ts_verify/ts_verify.txt

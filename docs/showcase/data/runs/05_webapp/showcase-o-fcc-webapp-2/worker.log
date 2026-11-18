@@ -1,0 +1,6 @@
+2026-11-18 07:47:59,708 INFO httpx: HTTP Request: HEAD https://huggingface.co/facebook/UMA/resolve/main/checkpoints/uma-s-1p2.pt "HTTP/1.1 302 Found"
+2026-11-18 07:47:59,966 INFO httpx: HTTP Request: HEAD https://huggingface.co/facebook/UMA/resolve/main/references/iso_atom_elem_refs.yaml "HTTP/1.1 200 OK"
+2026-11-18 07:48:00,345 INFO httpx: HTTP Request: HEAD https://huggingface.co/facebook/UMA/resolve/main/references/form_elem_refs.yaml "HTTP/1.1 200 OK"
+2026-11-18 07:48:11,512 INFO root: Adding 5 untrained task(s): ['oc25_stress', 'omol_stress', 'oc20_stress', 'odac_stress', 'oc22_stress']
+2026-11-18 07:48:11,837 INFO mliprun.core.optimize: Starting optimization with BFGS (fmax=0.0200, max_steps=500, relax_cell=False)
+2026-11-18 07:48:14,929 INFO mliprun.core.optimize: Optimization complete (converged=True, steps=12, energy=-192.469151 eV, fmax=0.013398 eV/Ang)

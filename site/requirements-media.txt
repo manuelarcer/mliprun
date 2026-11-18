@@ -1,0 +1,6 @@
+# Media tooling for site/shared/capture.py and its tests (not deployed).
+# Install: python3 -m venv site/.venv && site/.venv/bin/pip install -r site/requirements-media.txt
+# Browsers: capture.py uses Playwright's Chromium if installed, else the newest
+# cached build in ~/Library/Caches/ms-playwright (it prints which one it used).
+playwright==1.65.2
+pytest==9.2.0

@@ -1,0 +1,25 @@
+NEB Run Parameters
+=========================
+MLIP model:            uma-s-1p2
+UMA task:              oc20
+Device:                cuda
+Initial:               o_fcc/opt_final.vasp
+Final:                 o_hcp/opt_final.vasp
+Intermediate images:   7
+Total images:          9
+IDPP fmax:             0.1
+IDPP steps:            100
+Final fmax:            0.02
+Spring constant (k):   0.1
+Climb:                 True
+Verify TS:             both
+Dynamic NEB:           False
+Scale fmax:            0.0
+NEB optimizer:         fire
+NEB max steps:         600
+Optimize endpoints:    True
+Endpoint fmax:         0.02
+Endpoint optimizer:    bfgs
+Endpoint max steps:    200
+Log file:              neb.log
+Output dir:            /scratchb/juar/mliprun-showcase/03_neb

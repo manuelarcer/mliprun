@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 300" width="640" height="300" role="img" aria-label="Committee-mean fmax and force sigma against BFGS step" font-family="Helvetica, Arial, sans-serif">
+<rect width="640" height="300" rx="6" fill="#0e1724"/>
+<line x1="64" x2="622" y1="254.0" y2="254.0" stroke="#2c3e56" stroke-opacity="0.5"/>
+<text x="56" y="258.0" text-anchor="end" font-size="12" fill="#9fb0c3">0.01</text>
+<line x1="64" x2="622" y1="161.2" y2="161.2" stroke="#2c3e56" stroke-opacity="0.5"/>
+<text x="56" y="165.2" text-anchor="end" font-size="12" fill="#9fb0c3">0.1</text>
+<line x1="64" x2="622" y1="68.4" y2="68.4" stroke="#2c3e56" stroke-opacity="0.5"/>
+<text x="56" y="72.4" text-anchor="end" font-size="12" fill="#9fb0c3">1</text>
+<line x1="64.0" x2="64.0" y1="254" y2="259" stroke="#2c3e56"/>
+<text x="64.0" y="273" text-anchor="middle" font-size="12" fill="#9fb0c3">0</text>
+<line x1="165.5" x2="165.5" y1="254" y2="259" stroke="#2c3e56"/>
+<text x="165.5" y="273" text-anchor="middle" font-size="12" fill="#9fb0c3">2</text>
+<line x1="266.9" x2="266.9" y1="254" y2="259" stroke="#2c3e56"/>
+<text x="266.9" y="273" text-anchor="middle" font-size="12" fill="#9fb0c3">4</text>
+<line x1="368.4" x2="368.4" y1="254" y2="259" stroke="#2c3e56"/>
+<text x="368.4" y="273" text-anchor="middle" font-size="12" fill="#9fb0c3">6</text>
+<line x1="469.8" x2="469.8" y1="254" y2="259" stroke="#2c3e56"/>
+<text x="469.8" y="273" text-anchor="middle" font-size="12" fill="#9fb0c3">8</text>
+<line x1="571.3" x2="571.3" y1="254" y2="259" stroke="#2c3e56"/>
+<text x="571.3" y="273" text-anchor="middle" font-size="12" fill="#9fb0c3">10</text>
+<path d="M64,36V254H622" stroke="#2c3e56" fill="none"/>
+<text x="343.0" y="292" text-anchor="middle" font-size="13" fill="#9fb0c3">BFGS step</text>
+<text x="16" y="145.0" text-anchor="middle" font-size="13" fill="#9fb0c3" transform="rotate(-90 16 145.0)">force (eV/Å), log scale</text>
+<line x1="64" x2="622" y1="226.1" y2="226.1" stroke="#9fb0c3" stroke-dasharray="5 4"/>
+<text x="70" y="241.1" text-anchor="start" font-size="12" fill="#9fb0c3">fmax target 0.02 eV/Å</text>
+<path d="M64.0,54.9L114.7,68.9L165.5,95.7L216.2,92.4L266.9,99.6L317.6,127.2L368.4,152.5L419.1,163.7L469.8,159.3L520.5,166.7L571.3,196.2L622.0,231.8" stroke="#f1c98a" stroke-width="2" fill="none"/>
+<circle cx="64.0" cy="54.9" r="3.2" fill="#f1c98a"/>
+<circle cx="114.7" cy="68.9" r="3.2" fill="#f1c98a"/>
+<circle cx="165.5" cy="95.7" r="3.2" fill="#f1c98a"/>
+<circle cx="216.2" cy="92.4" r="3.2" fill="#f1c98a"/>
+<circle cx="266.9" cy="99.6" r="3.2" fill="#f1c98a"/>
+<circle cx="317.6" cy="127.2" r="3.2" fill="#f1c98a"/>
+<circle cx="368.4" cy="152.5" r="3.2" fill="#f1c98a"/>
+<circle cx="419.1" cy="163.7" r="3.2" fill="#f1c98a"/>
+<circle cx="469.8" cy="159.3" r="3.2" fill="#f1c98a"/>
+<circle cx="520.5" cy="166.7" r="3.2" fill="#f1c98a"/>
+<circle cx="571.3" cy="196.2" r="3.2" fill="#f1c98a"/>
+<circle cx="622.0" cy="231.8" r="3.2" fill="#f1c98a"/>
+<path d="M64.0,162.2L114.7,161.9L165.5,164.5L216.2,167.5L266.9,172.6L317.6,176.2L368.4,176.6L419.1,177.2L469.8,177.9L520.5,178.3L571.3,178.8L622.0,179.3" stroke="#86c7dc" stroke-width="2" fill="none"/>
+<path d="M64.0,185.2L114.7,190.5L165.5,190.7L216.2,188.8L266.9,189.2L317.6,191.6L368.4,193.9L419.1,195.1L469.8,195.9L520.5,196.2L571.3,196.5L622.0,197.0" stroke="#86c7dc" stroke-width="2" fill="none" stroke-dasharray="2 4"/>
+<line x1="64" x2="82" y1="18" y2="18" stroke="#f1c98a" stroke-width="2"/>
+<text x="88" y="22" font-size="12" fill="#9fb0c3">fmax of the mean force</text>
+<line x1="239.2" x2="257.2" y1="18" y2="18" stroke="#86c7dc" stroke-width="2"/>
+<text x="263.2" y="22" font-size="12" fill="#9fb0c3">σ max, free atoms</text>
+<line x1="381.4" x2="399.4" y1="18" y2="18" stroke="#86c7dc" stroke-width="2" stroke-dasharray="2 4"/>
+<text x="405.4" y="22" font-size="12" fill="#9fb0c3">σ mean, free atoms</text>
+</svg>

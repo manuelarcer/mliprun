@@ -1,0 +1,12 @@
+Geometry Optimization Parameters
+=================================
+MLIP model:        uma-s-1p2
+UMA task:          oc20
+Device:            cuda
+Relax cell:        True
+Structure:         POSCAR
+Optimizer:         BFGS
+fmax (eV/Å):       0.02
+Max steps:         500
+Converged:         True
+Output dir:        /scratchb/juar/mliprun-showcase/01_relax/bulk

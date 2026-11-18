@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="170" viewBox="0 0 720 170" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11">
+<text x="0" y="12" fill="#1f2328" font-size="12" font-weight="600">Energy along the final band (7 intermediate + 2 endpoint images)</text>
+<line x1="44" x2="710" y1="134.4" y2="134.4" stroke="#d1d9e0"/>
+<text x="39" y="137.9" text-anchor="end" fill="#59636e">0</text>
+<line x1="44" x2="710" y1="99.6" y2="99.6" stroke="#d1d9e0"/>
+<text x="39" y="103.1" text-anchor="end" fill="#59636e">0.2</text>
+<line x1="44" x2="710" y1="64.7" y2="64.7" stroke="#d1d9e0"/>
+<text x="39" y="68.2" text-anchor="end" fill="#59636e">0.4</text>
+<line x1="44.0" x2="44.0" y1="142" y2="145" stroke="#59636e"/>
+<text x="44.0" y="156" text-anchor="middle" fill="#59636e">0</text>
+<line x1="215.2" x2="215.2" y1="142" y2="145" stroke="#59636e"/>
+<text x="215.2" y="156" text-anchor="middle" fill="#59636e">0.5</text>
+<line x1="386.3" x2="386.3" y1="142" y2="145" stroke="#59636e"/>
+<text x="386.3" y="156" text-anchor="middle" fill="#59636e">1.0</text>
+<line x1="557.5" x2="557.5" y1="142" y2="145" stroke="#59636e"/>
+<text x="557.5" y="156" text-anchor="middle" fill="#59636e">1.5</text>
+<path d="M44,32 V142 H710" fill="none" stroke="#59636e"/>
+<text x="39" y="24" fill="#1f2328">E − E(fcc) / eV</text>
+<text x="710" y="168" text-anchor="end" fill="#1f2328">reaction coordinate / Å</text>
+<path d="M44.0,134.4L146.9,126.9L233.0,89.6L315.7,59.9L398.7,45.0L481.0,39.6L552.4,44.7L632.2,63.0L710.0,70.3" fill="none" stroke="#2443c4" stroke-width="1.6"/>
+<circle cx="44.0" cy="134.4" r="2.4" fill="#2443c4"/>
+<circle cx="146.9" cy="126.9" r="2.4" fill="#2443c4"/>
+<circle cx="233.0" cy="89.6" r="2.4" fill="#2443c4"/>
+<circle cx="315.7" cy="59.9" r="2.4" fill="#2443c4"/>
+<circle cx="398.7" cy="45.0" r="2.4" fill="#2443c4"/>
+<circle cx="481.0" cy="39.6" r="2.4" fill="#2443c4"/>
+<circle cx="552.4" cy="44.7" r="2.4" fill="#2443c4"/>
+<circle cx="632.2" cy="63.0" r="2.4" fill="#2443c4"/>
+<circle cx="710.0" cy="70.3" r="2.4" fill="#2443c4"/>
+<circle cx="481.0" cy="39.6" r="3.8" fill="#c0392b"/>
+<text x="481.0" y="30.6" text-anchor="middle" fill="#c0392b" font-weight="600">TS 0.544 eV</text>
+<text x="48.0" y="125.4" text-anchor="start" fill="#1f2328">fcc</text>
+<text x="710.0" y="88.3" text-anchor="end" fill="#1f2328">hcp, ΔE +0.368 eV</text>
+</svg>

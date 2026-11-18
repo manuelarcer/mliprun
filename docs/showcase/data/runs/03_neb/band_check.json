@@ -1,0 +1,16 @@
+{
+  "exploded": false,
+  "worst": {
+    "image": 1,
+    "atom": 28,
+    "drift": 0.10777087866954392,
+    "allowance": 1.118502682834698
+  },
+  "max_interimage_jump": 0.23879577159604462,
+  "jump_warning": false,
+  "floor_A": 1.0,
+  "factor": 1.0,
+  "n_images_total": 9,
+  "seeded_source": "A2B_full.traj frames 0..8",
+  "final_source": "A2B.traj"
+}

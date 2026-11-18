@@ -1,0 +1,93 @@
+      Step     Time          Energy          fmax
+FIRE:    0 23:02:53     -191.608794        3.174757
+Step    0  Fmax: 3.174757 eV/A  Barrier: 0.860359 eV
+FIRE:    1 23:02:54     -191.763597        2.057942
+Step    1  Fmax: 2.057942 eV/A  Barrier: 0.705556 eV
+FIRE:    2 23:02:56     -191.855034        0.555233
+Step    2  Fmax: 0.555233 eV/A  Barrier: 0.614119 eV
+FIRE:    3 23:02:58     -191.834399        1.098832
+Step    3  Fmax: 1.098832 eV/A  Barrier: 0.634755 eV
+FIRE:    4 23:02:59     -191.839803        1.044681
+Step    4  Fmax: 1.044681 eV/A  Barrier: 0.629350 eV
+FIRE:    5 23:03:00     -191.849420        0.937169
+Step    5  Fmax: 0.937169 eV/A  Barrier: 0.619734 eV
+FIRE:    6 23:03:03     -191.861094        0.778399
+Step    6  Fmax: 0.778399 eV/A  Barrier: 0.608059 eV
+FIRE:    7 23:03:05     -191.872216        0.576394
+Step    7  Fmax: 0.576394 eV/A  Barrier: 0.596937 eV
+FIRE:    8 23:03:06     -191.880497        0.349130
+Step    8  Fmax: 0.349130 eV/A  Barrier: 0.588656 eV
+FIRE:    9 23:03:07     -191.884840        0.407500
+Step    9  Fmax: 0.407500 eV/A  Barrier: 0.584314 eV
+FIRE:   10 23:03:09     -191.886129        0.598589
+Step   10  Fmax: 0.598589 eV/A  Barrier: 0.583025 eV
+FIRE:   11 23:03:10     -191.886765        0.735637
+Step   11  Fmax: 0.735637 eV/A  Barrier: 0.582389 eV
+FIRE:   12 23:03:12     -191.889475        0.778535
+Step   12  Fmax: 0.778535 eV/A  Barrier: 0.579679 eV
+FIRE:   13 23:03:13     -191.896114        0.696057
+Step   13  Fmax: 0.696057 eV/A  Barrier: 0.573039 eV
+FIRE:   14 23:03:15     -191.905749        0.481856
+Step   14  Fmax: 0.481856 eV/A  Barrier: 0.563404 eV
+FIRE:   15 23:03:16     -191.914136        0.185479
+Step   15  Fmax: 0.185479 eV/A  Barrier: 0.555017 eV
+FIRE:   16 23:03:18     -191.916800        0.237034
+Step   16  Fmax: 0.237034 eV/A  Barrier: 0.552354 eV
+FIRE:   17 23:03:19     -191.917025        0.227432
+Step   17  Fmax: 0.227432 eV/A  Barrier: 0.552128 eV
+FIRE:   18 23:03:20     -191.917441        0.208713
+Step   18  Fmax: 0.208713 eV/A  Barrier: 0.551712 eV
+FIRE:   19 23:03:20     -191.917981        0.182004
+Step   19  Fmax: 0.182004 eV/A  Barrier: 0.551172 eV
+FIRE:   20 23:03:21     -191.918567        0.149098
+Step   20  Fmax: 0.149098 eV/A  Barrier: 0.550586 eV
+FIRE:   21 23:03:22     -191.919117        0.112801
+Step   21  Fmax: 0.112801 eV/A  Barrier: 0.550037 eV
+FIRE:   22 23:03:22     -191.919581        0.090984
+Step   22  Fmax: 0.090984 eV/A  Barrier: 0.549572 eV
+FIRE:   23 23:03:23     -191.919934        0.113229
+Step   23  Fmax: 0.113229 eV/A  Barrier: 0.549220 eV
+FIRE:   24 23:03:24     -191.920231        0.139100
+Step   24  Fmax: 0.139100 eV/A  Barrier: 0.548922 eV
+FIRE:   25 23:03:25     -191.920539        0.160138
+Step   25  Fmax: 0.160138 eV/A  Barrier: 0.548615 eV
+FIRE:   26 23:03:26     -191.920953        0.169866
+Step   26  Fmax: 0.169866 eV/A  Barrier: 0.548201 eV
+FIRE:   27 23:03:27     -191.921543        0.159534
+Step   27  Fmax: 0.159534 eV/A  Barrier: 0.547610 eV
+FIRE:   28 23:03:28     -191.922271        0.129555
+Step   28  Fmax: 0.129555 eV/A  Barrier: 0.546882 eV
+FIRE:   29 23:03:30     -191.922950        0.086022
+Step   29  Fmax: 0.086022 eV/A  Barrier: 0.546203 eV
+FIRE:   30 23:03:31     -191.923395        0.072977
+Step   30  Fmax: 0.072977 eV/A  Barrier: 0.545758 eV
+FIRE:   31 23:03:32     -191.923702        0.095578
+Step   31  Fmax: 0.095578 eV/A  Barrier: 0.545451 eV
+FIRE:   32 23:03:34     -191.924126        0.078373
+Step   32  Fmax: 0.078373 eV/A  Barrier: 0.545027 eV
+FIRE:   33 23:03:35     -191.924530        0.036633
+Step   33  Fmax: 0.036633 eV/A  Barrier: 0.544623 eV
+FIRE:   34 23:03:37     -191.924469        0.059228
+Step   34  Fmax: 0.059228 eV/A  Barrier: 0.544685 eV
+FIRE:   35 23:03:38     -191.924499        0.052223
+Step   35  Fmax: 0.052223 eV/A  Barrier: 0.544654 eV
+FIRE:   36 23:03:39     -191.924551        0.040658
+Step   36  Fmax: 0.040658 eV/A  Barrier: 0.544602 eV
+FIRE:   37 23:03:41     -191.924604        0.026137
+Step   37  Fmax: 0.026137 eV/A  Barrier: 0.544550 eV
+FIRE:   38 23:03:42     -191.924646        0.022649
+Step   38  Fmax: 0.022649 eV/A  Barrier: 0.544508 eV
+FIRE:   39 23:03:43     -191.924668        0.029077
+Step   39  Fmax: 0.029077 eV/A  Barrier: 0.544486 eV
+FIRE:   40 23:03:45     -191.924683        0.036812
+Step   40  Fmax: 0.036812 eV/A  Barrier: 0.544471 eV
+FIRE:   41 23:03:46     -191.924706        0.041011
+Step   41  Fmax: 0.041011 eV/A  Barrier: 0.544448 eV
+FIRE:   42 23:03:47     -191.924738        0.039841
+Step   42  Fmax: 0.039841 eV/A  Barrier: 0.544415 eV
+FIRE:   43 23:03:49     -191.924797        0.032275
+Step   43  Fmax: 0.032275 eV/A  Barrier: 0.544357 eV
+FIRE:   44 23:03:50     -191.924865        0.020576
+Step   44  Fmax: 0.020576 eV/A  Barrier: 0.544288 eV
+FIRE:   45 23:03:51     -191.924916        0.017678
+Step   45  Fmax: 0.017678 eV/A  Barrier: 0.544238 eV

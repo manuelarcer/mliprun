@@ -1,0 +1,29 @@
+{
+  "note": "Capability list shared by index.html (main.js) and README.md (build_readme.py). Edit here only.",
+  "items": [
+    {
+      "cmd": "mlip freq run",
+      "text": "frequencies, imaginary modes, ZPE"
+    },
+    {
+      "cmd": "mlip autoneb run",
+      "text": "NEB with image insertion"
+    },
+    {
+      "cmd": "mlip ts verify",
+      "text": "TS check on its own"
+    },
+    {
+      "cmd": "mlip benchmark run",
+      "text": "model benchmarks"
+    },
+    {
+      "cmd": "mlip doctor",
+      "text": "environment check"
+    },
+    {
+      "cmd": null,
+      "text": "UMA, MACE, SevenNet, CHGNet; one MLIP per environment"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+📂 Loaded structure: POSCAR
+   Atoms: 36, Formula: Pt36
+🧠 Using MLIP: uma-s-1p2
+⚙️  Attaching uma-s-1p2 calculator (device=cuda)...
+   UMA task: oc20
+
+🔧 Optimizer: BFGS
+   fmax = 0.02 eV/Å
+   max_steps = 500
+   Output dir: /scratchb/juar/mliprun-showcase/01_relax/slab
+
+
+✅ Optimization complete. Output files:
+   📄 /scratchb/juar/mliprun-showcase/01_relax/slab/opt.traj
+   📄 /scratchb/juar/mliprun-showcase/01_relax/slab/opt.log
+   📄 /scratchb/juar/mliprun-showcase/01_relax/slab/opt_convergence.csv
+   📄 /scratchb/juar/mliprun-showcase/01_relax/slab/opt_final.vasp
+   📄 /scratchb/juar/mliprun-showcase/01_relax/slab/CONTCAR
+   📄 /scratchb/juar/mliprun-showcase/01_relax/slab/opt_params.txt

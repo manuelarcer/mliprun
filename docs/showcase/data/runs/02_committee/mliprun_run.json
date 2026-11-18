@@ -1,0 +1,194 @@
+{
+  "schema_version": 6,
+  "command": "optimize",
+  "status": "converged",
+  "run": {
+    "mode": "one-off",
+    "batch": null
+  },
+  "inputs": {
+    "n_atoms": 37,
+    "formula": "OPt36",
+    "structure": "POSCAR",
+    "structure_abspath": "/scratchb/juar/mliprun-showcase/02_committee/POSCAR"
+  },
+  "parameters": {
+    "optimizer": {
+      "value": "bfgs",
+      "source": "user"
+    },
+    "fmax": {
+      "value": 0.02,
+      "source": "user"
+    },
+    "max_steps": {
+      "value": 500,
+      "source": "user"
+    },
+    "relax_cell": {
+      "value": false,
+      "source": "default"
+    },
+    "trajectory": {
+      "value": "opt.traj",
+      "source": "default"
+    },
+    "logfile": {
+      "value": "opt.log",
+      "source": "default"
+    },
+    "plot": {
+      "value": false,
+      "source": "default"
+    },
+    "uncertainty_plot": {
+      "value": true,
+      "source": "user"
+    },
+    "verbose": {
+      "value": true,
+      "source": "default"
+    },
+    "uncertainty_threshold": {
+      "value": null,
+      "source": "default"
+    },
+    "n_members": {
+      "value": 3,
+      "source": "unspecified"
+    },
+    "committee_file": {
+      "value": "/scratchb/juar/mliprun-showcase/02_committee/committee.yaml",
+      "source": "unspecified"
+    }
+  },
+  "provenance": {
+    "mliprun_version": "0.4.0",
+    "ase_version": "3.28.0",
+    "mlip_package": {
+      "name": null,
+      "version": null
+    },
+    "mlip_model": "committee",
+    "uma_task": null,
+    "mace_head": null,
+    "sevennet_task": null,
+    "aqcat_spin": null,
+    "aqcat_fidelity": null,
+    "device_requested": "committee",
+    "device_resolved": "committee",
+    "python_version": "3.11.15",
+    "hostname": "cosrnode01g",
+    "started_at": "2026-11-17T23:12:57+08:00",
+    "finished_at": "2026-11-17T23:13:07+08:00",
+    "walltime_s": 9.642,
+    "committee": {
+      "members": [
+        {
+          "name": "uma-s-1p2@oc20",
+          "mlip": "uma-s-1p2",
+          "uma_task": "oc20",
+          "mace_head": null,
+          "sevennet_task": null,
+          "env": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma",
+          "python": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/bin/python",
+          "device": "auto",
+          "gpu": 0,
+          "level_of_theory": "RPBE/OC20",
+          "measured": {
+            "python": "3.11.15",
+            "executable": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/bin/python",
+            "mliprun": "0.4.0",
+            "ase": "3.28.0",
+            "torch": "2.8.0",
+            "package": "fairchem-core",
+            "package_version": "2.19.0"
+          }
+        },
+        {
+          "name": "7net-omni@oc20",
+          "mlip": "7net-omni",
+          "uma_task": null,
+          "mace_head": null,
+          "sevennet_task": "oc20",
+          "env": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/sevenn",
+          "python": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/sevenn/bin/python",
+          "device": "auto",
+          "gpu": 0,
+          "level_of_theory": "RPBE/OC20",
+          "measured": {
+            "python": "3.11.16",
+            "executable": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/sevenn/bin/python",
+            "mliprun": "0.4.0",
+            "ase": "3.29.0",
+            "torch": "2.8.0+cu128",
+            "package": "sevenn",
+            "package_version": "0.13.0"
+          }
+        },
+        {
+          "name": "mace-mh-1@oc20_usemppbe",
+          "mlip": "mace-mh-1",
+          "uma_task": null,
+          "mace_head": "oc20_usemppbe",
+          "sevennet_task": null,
+          "env": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/mace",
+          "python": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/mace/bin/python",
+          "device": "auto",
+          "gpu": 0,
+          "level_of_theory": "RPBE/OC20",
+          "measured": {
+            "python": "3.11.15",
+            "executable": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/mace/bin/python",
+            "mliprun": "0.4.0",
+            "ase": "3.28.0",
+            "torch": "2.5.1+cu121",
+            "package": "mace-torch",
+            "package_version": "0.3.15"
+          }
+        }
+      ],
+      "levels": [
+        "RPBE/OC20"
+      ],
+      "mixed_theory": false,
+      "level_table_version": 2,
+      "config_sha256": "9db95037b849d459dc6b3bf68ddd314f31506bde81db19bee46f20ed55988474",
+      "config_path": "/scratchb/juar/mliprun-showcase/02_committee/committee.yaml"
+    },
+    "committee_config_sha256": "9db95037b849d459dc6b3bf68ddd314f31506bde81db19bee46f20ed55988474"
+  },
+  "stages": [
+    {
+      "index": 0,
+      "kind": "optimize",
+      "status": "converged",
+      "started_at": "2026-11-17T23:12:57+08:00",
+      "walltime_s": 9.642,
+      "steps": 11,
+      "results": {
+        "converged": true,
+        "final_energy_eV": -192.29348605935593,
+        "final_fmax_eV_per_A": 0.017334022031961573,
+        "committee_uncertainty": {
+          "n_steps": 12,
+          "threshold_eV_per_A": null,
+          "threshold_source": "none",
+          "sigma_max_free_final_eV_per_A": 0.06374471635864469,
+          "sigma_mean_free_final_eV_per_A": 0.04112591496371638,
+          "sigma_max_all_final_eV_per_A": 0.06374471635864469,
+          "sigma_mean_all_final_eV_per_A": 0.03548131540930678,
+          "sigma_max_free_peak_eV_per_A": 0.09832641649687185,
+          "sigma_max_free_over_fmax_final": 3.677433675872116,
+          "peak_step": 1,
+          "worst_atom_free": 26,
+          "worst_atom_free_symbol": "Pt",
+          "n_free_atoms": 19,
+          "unhandled_constraints": [],
+          "energy_spread_aligned_final_eV": 0.006067654198187615,
+          "flagged": null
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+wrote /scratchb/juar/mliprun-showcase/01_relax/bulk/POSCAR (1 atoms, Pt)
+=== 2026-11-17T22:51:20+08:00 relax /scratchb/juar/mliprun-showcase/01_relax/bulk (CUDA_VISIBLE_DEVICES=0)
+=== 2026-11-17T22:51:52+08:00 /scratchb/juar/mliprun-showcase/01_relax/bulk converged
+cell lengths (A): 2.821226 2.821226 2.821226
+cell angles (deg): 59.999999 60.000000 60.000000
+length spread (A): 4.66e-08 (tol 1e-4)
+max |angle - 60| (deg): 5.67e-07 (tol 0.01)
+lattice constant a (A): 3.989816
+fcc check: PASS
+slab from relaxed a = 3.989816 A
+wrote /scratchb/juar/mliprun-showcase/01_relax/slab/POSCAR (36 atoms, Pt36)
+=== 2026-11-17T22:51:57+08:00 relax /scratchb/juar/mliprun-showcase/01_relax/slab (CUDA_VISIBLE_DEVICES=0)
+=== 2026-11-17T22:52:25+08:00 /scratchb/juar/mliprun-showcase/01_relax/slab converged
+wrote /scratchb/juar/mliprun-showcase/01_relax/o_fcc/POSCAR (37 atoms, OPt36)
+wrote /scratchb/juar/mliprun-showcase/01_relax/o_hcp/POSCAR (37 atoms, OPt36)
+=== 2026-11-17T22:52:28+08:00 relax /scratchb/juar/mliprun-showcase/01_relax/o_fcc (CUDA_VISIBLE_DEVICES=0)
+=== 2026-11-17T22:52:59+08:00 /scratchb/juar/mliprun-showcase/01_relax/o_fcc converged
+=== 2026-11-17T22:52:59+08:00 relax /scratchb/juar/mliprun-showcase/01_relax/o_hcp (CUDA_VISIBLE_DEVICES=0)
+=== 2026-11-17T22:53:25+08:00 /scratchb/juar/mliprun-showcase/01_relax/o_hcp converged
+=== 2026-11-17T22:53:25+08:00 stage 01 done

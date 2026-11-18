@@ -1,0 +1,25 @@
+Endpoint Optimization Results
+==============================
+
+Initial Structure:
+  Energy before: -192.469153 eV
+  Energy after:  -192.469153 eV
+  Energy change: 0.000000 eV
+  Steps:         0
+  Converged:     True
+
+Final Structure:
+  Energy before: -192.101012 eV
+  Energy after:  -192.101012 eV
+  Energy change: 0.000000 eV
+  Steps:         0
+  Converged:     True
+
+Reaction energy: 0.368141 eV
+
+Similarity Check:
+  Average displacement: 0.068 Ang
+  Max displacement:     1.633 Ang (atom 36)
+  Min displacement:     0.000 Ang
+  Energy difference:    0.368141 eV
+  Structures similar:   False

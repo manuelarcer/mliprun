@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="150" viewBox="0 0 720 150" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif" font-size="11">
+<text x="0" y="12" fill="#1f2328" font-size="12" font-weight="600">Same input: CLI run (line), web app job (dots)</text>
+<line x1="44" x2="710" y1="115.8" y2="115.8" stroke="#d1d9e0"/>
+<text x="39" y="119.3" text-anchor="end" fill="#59636e">0</text>
+<line x1="44" x2="710" y1="85.2" y2="85.2" stroke="#d1d9e0"/>
+<text x="39" y="88.7" text-anchor="end" fill="#59636e">0.1</text>
+<line x1="44" x2="710" y1="54.6" y2="54.6" stroke="#d1d9e0"/>
+<text x="39" y="58.1" text-anchor="end" fill="#59636e">0.2</text>
+<line x1="44.0" x2="44.0" y1="122" y2="125" stroke="#59636e"/>
+<text x="44.0" y="136" text-anchor="middle" fill="#59636e">0</text>
+<line x1="155.0" x2="155.0" y1="122" y2="125" stroke="#59636e"/>
+<text x="155.0" y="136" text-anchor="middle" fill="#59636e">2</text>
+<line x1="266.0" x2="266.0" y1="122" y2="125" stroke="#59636e"/>
+<text x="266.0" y="136" text-anchor="middle" fill="#59636e">4</text>
+<line x1="377.0" x2="377.0" y1="122" y2="125" stroke="#59636e"/>
+<text x="377.0" y="136" text-anchor="middle" fill="#59636e">6</text>
+<line x1="488.0" x2="488.0" y1="122" y2="125" stroke="#59636e"/>
+<text x="488.0" y="136" text-anchor="middle" fill="#59636e">8</text>
+<line x1="599.0" x2="599.0" y1="122" y2="125" stroke="#59636e"/>
+<text x="599.0" y="136" text-anchor="middle" fill="#59636e">10</text>
+<line x1="710.0" x2="710.0" y1="122" y2="125" stroke="#59636e"/>
+<text x="710.0" y="136" text-anchor="middle" fill="#59636e">12</text>
+<path d="M44,32 V122 H710" fill="none" stroke="#59636e"/>
+<text x="39" y="24" fill="#1f2328">E − E(final, CLI) / eV</text>
+<text x="710" y="148" text-anchor="end" fill="#1f2328">optimizer step</text>
+<path d="M44.0,38.2L99.5,68.9L155.0,100.7L210.5,104.9L266.0,108.7L321.5,112.7L377.0,114.1L432.5,114.5L488.0,115.0L543.5,115.4L599.0,115.7L654.5,115.8L710.0,115.8" fill="none" stroke="#8a96b8" stroke-width="1.6"/>
+<circle cx="44.0" cy="38.2" r="2.4" fill="#2443c4"/>
+<circle cx="99.5" cy="68.9" r="2.4" fill="#2443c4"/>
+<circle cx="155.0" cy="100.7" r="2.4" fill="#2443c4"/>
+<circle cx="210.5" cy="104.9" r="2.4" fill="#2443c4"/>
+<circle cx="266.0" cy="108.7" r="2.4" fill="#2443c4"/>
+<circle cx="321.5" cy="112.7" r="2.4" fill="#2443c4"/>
+<circle cx="377.0" cy="114.1" r="2.4" fill="#2443c4"/>
+<circle cx="432.5" cy="114.5" r="2.4" fill="#2443c4"/>
+<circle cx="488.0" cy="115.0" r="2.4" fill="#2443c4"/>
+<circle cx="543.5" cy="115.4" r="2.4" fill="#2443c4"/>
+<circle cx="599.0" cy="115.7" r="2.4" fill="#2443c4"/>
+<circle cx="654.5" cy="115.8" r="2.4" fill="#2443c4"/>
+<circle cx="710.0" cy="115.8" r="2.4" fill="#2443c4"/>
+<text x="710.0" y="59.0" text-anchor="end" fill="#1f2328">final difference +2.2 × 10⁻⁶ eV</text>
+</svg>

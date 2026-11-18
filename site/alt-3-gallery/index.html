@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>mliprun gallery</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Five mliprun workflows on O/Pt(111), each one command, each from a real run.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="mast-id">
+    <h1 class="wordmark">mliprun</h1>
+    <p class="thesis">Machine-learning interatomic potentials from one command: relaxations, committees, NEB with a transition-state check, MD, and jobs sent to a remote GPU machine you add yourself.</p>
+  </div>
+  <div class="mast-side">
+    <p class="install"><a href="https://github.com/manuelarcer/mliprun/blob/main/docs/INSTALL.md">Install</a>: <code>pip install -e ".[neb]"</code>, <code>pip install mace-torch</code> (or another MLIP), then <code>mlip doctor</code></p>
+    <button type="button" class="loops" id="loops" aria-pressed="false">Pause loops</button>
+  </div>
+</header>
+
+<p class="plate-title" id="plate-title">Plate 1. O and H₂O on Pt(111),<span data-bind="level"></span>; four real runs on <span data-bind="machine"></span> (one GPU card); MD not run, next step pending a decision. Hover or open a panel for its run record.</p>
+
+<main class="plate" aria-labelledby="plate-title">
+
+  <article class="tile t-neb" id="neb" data-tile="neb" tabindex="0" aria-labelledby="neb-h">
+    <header class="tile-head">
+      <span class="panel" aria-hidden="true">a</span>
+      <h2 id="neb-h">Reaction path and TS check</h2>
+      <span class="status" data-status></span>
+      <button type="button" class="grow" aria-expanded="false"><span class="vh">Enlarge panel a</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M14 10v4h-4M2 2l5 5M14 14l-5-5"/></svg></button>
+    </header>
+    <div class="neb-grid">
+      <div class="stage bandbox">
+        <div class="scene" id="scene-neb" role="img" aria-label="Final NEB band of O hopping from the fcc to the hcp hollow on Pt(111), played forward and back; periodic images faded."></div>
+        <p class="tag tag-tl" data-overlay="neb">image <b>–</b></p>
+      </div>
+      <figure class="chart chart-fit" data-chart="neb-profile"><figcaption>Energy profile</figcaption></figure>
+      <figure class="inset">
+        <div class="scene" id="scene-ts" role="img" data-bind-aria="ts-aria"></div>
+        <figcaption data-bind="ts-cap"></figcaption>
+      </figure>
+      <figure class="chart" data-chart="neb-conv"><figcaption>Band convergence</figcaption></figure>
+    </div>
+    <footer class="tile-foot">
+      <code class="cmd" data-cmd></code>
+      <p class="key"><span class="key-v" data-key-v></span><span class="key-l" data-key-l></span></p>
+    </footer>
+    <div class="detail"><p class="detail-h">Full command as run</p><code class="cmd-full" data-cmd-full></code><p class="conv" data-conv></p></div>
+  </article>
+
+  <article class="tile t-relax" id="relax" data-tile="relax" tabindex="0" aria-labelledby="relax-h">
+    <header class="tile-head">
+      <span class="panel" aria-hidden="true">b</span>
+      <h2 id="relax-h">Adsorbate relaxation</h2>
+      <span class="status" data-status></span>
+      <button type="button" class="grow" aria-expanded="false"><span class="vh">Enlarge panel b</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M14 10v4h-4M2 2l5 5M14 14l-5-5"/></svg></button>
+    </header>
+    <div class="stage">
+      <div class="scene" id="scene-relax" role="img" aria-label="Relaxation of O at the fcc hollow of Pt(111), every optimizer step, seen from a low angle; periodic images faded."></div>
+      <p class="tag tag-tl" data-overlay="relax">step <b>–</b></p>
+    </div>
+    <div class="strip strip-2">
+      <figure class="chart" data-chart="relax-e"><figcaption>Energy</figcaption></figure>
+      <figure class="chart" data-chart="relax-f"><figcaption>Max force</figcaption></figure>
+    </div>
+    <footer class="tile-foot">
+      <code class="cmd" data-cmd></code>
+      <p class="key"><span class="key-v" data-key-v></span><span class="key-l" data-key-l></span></p>
+    </footer>
+    <div class="detail"><p class="detail-h">Full command as run</p><code class="cmd-full" data-cmd-full></code><p class="conv" data-conv></p></div>
+  </article>
+
+  <article class="tile t-committee" id="committee" data-tile="committee" tabindex="0" aria-labelledby="committee-h">
+    <header class="tile-head">
+      <span class="panel" aria-hidden="true">c</span>
+      <h2 id="committee-h">Committee uncertainty</h2>
+      <span class="status" data-status></span>
+      <button type="button" class="grow" aria-expanded="false"><span class="vh">Enlarge panel c</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M14 10v4h-4M2 2l5 5M14 14l-5-5"/></svg></button>
+    </header>
+    <div class="stage">
+      <div class="scene" id="scene-committee" role="img" aria-label="Top view of the start geometry of O on Pt(111); each free Pt atom coloured by the committee's force disagreement at the final step; O red. Static."></div>
+    </div>
+    <p class="stage-cap"><span data-bind="committee-cap"></span> <span class="ramp" aria-hidden="true"><span class="ramp-lo" data-bind="ramp-lo"></span><span class="ramp-bar"></span><span class="ramp-hi" data-bind="ramp-hi"></span></span></p>
+    <div class="strip">
+      <figure class="chart" data-chart="committee"><figcaption>Remaining force vs committee σ</figcaption></figure>
+    </div>
+    <footer class="tile-foot">
+      <code class="cmd" data-cmd></code>
+      <p class="key"><span class="key-v" data-key-v></span><span class="key-l" data-key-l></span></p>
+    </footer>
+    <div class="detail"><p class="detail-h">Full command as run</p><code class="cmd-full" data-cmd-full></code><p class="conv" data-conv></p></div>
+  </article>
+
+  <article class="tile t-md" id="md" data-tile="md" tabindex="0" aria-labelledby="md-h">
+    <header class="tile-head">
+      <span class="panel" aria-hidden="true">d</span>
+      <h2 id="md-h">Finite-temperature MD</h2>
+      <span class="status" data-status></span>
+      <button type="button" class="grow" aria-expanded="false"><span class="vh">Enlarge panel d</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M14 10v4h-4M2 2l5 5M14 14l-5-5"/></svg></button>
+    </header>
+    <div class="stage">
+      <div class="scene" id="scene-md" role="img" aria-label="Water bilayer on Pt(111) as built. Static structure, not a simulation."></div>
+      <p class="tag tag-bl tag-pending" data-bind="md-tag">Static structure, not a simulation</p>
+    </div>
+    <div class="strip">
+      <figure class="chart" data-chart="md"><figcaption>Temperature and energy against time</figcaption></figure>
+    </div>
+    <footer class="tile-foot">
+      <code class="cmd" data-cmd></code>
+      <p class="key"><span class="key-v" data-key-v></span><span class="key-l" data-key-l></span></p>
+    </footer>
+    <div class="detail"><p class="detail-h">What ran so far</p><code class="cmd-full" data-cmd-full></code><p class="conv" data-conv></p></div>
+  </article>
+
+  <article class="tile t-webapp" id="webapp" data-tile="webapp" tabindex="0" aria-labelledby="webapp-h">
+    <header class="tile-head">
+      <span class="panel" aria-hidden="true">e</span>
+      <h2 id="webapp-h">Remote run from the web app</h2>
+      <span class="status" data-status></span>
+      <button type="button" class="grow" aria-expanded="false"><span class="vh">Enlarge panel e</span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 6V2h4M14 10v4h-4M2 2l5 5M14 14l-5-5"/></svg></button>
+    </header>
+    <div class="stage stills">
+      <figure class="still s-submit"><img src="media/webapp-submit.png" alt="New calculation form in the web app: geometry optimization, run on the cos-cluster UMA environment, UMA small 1.2, task oc20, device cuda." width="380" height="406"><figcaption data-bind="still-submit"></figcaption></figure>
+      <figure class="still s-running"><img src="media/webapp-running.png" alt="Queue and job header while the job runs on cos-cluster." width="886" height="236"><figcaption data-bind="still-running"></figcaption></figure>
+      <figure class="still s-done"><img src="media/webapp-done.png" alt="Queue and job header after the job finished: done, converged, with the final energy and fmax." width="886" height="236"><figcaption data-bind="still-done"></figcaption></figure>
+      <div class="vbox" hidden><video id="webapp-video" muted playsinline controls preload="none" aria-label="Screen recording: an optimize job is filled in the mliprun web app, sent to cos-cluster, runs, and returns its result. The waiting part is sped up."></video></div>
+      <button type="button" class="vplay" id="vplay" data-bind="vplay"></button>
+    </div>
+    <div class="strip">
+      <figure class="chart" data-chart="webapp"><figcaption>Same input <span class="legend"><span class="lg-line"></span> CLI run <span class="lg-dot"></span> web app job</span></figcaption></figure>
+    </div>
+    <footer class="tile-foot">
+      <code class="cmd" data-cmd></code>
+      <p class="key"><span class="key-v" data-key-v></span><span class="key-l" data-key-l></span></p>
+    </footer>
+    <div class="detail"><p class="detail-h">Job command the web app ran on the cluster</p><code class="cmd-full" data-cmd-full></code><p class="conv" data-conv></p></div>
+  </article>
+
+</main>
+
+<div class="below">
+  <section class="cluster" aria-labelledby="cluster-h">
+    <h2 id="cluster-h">Run it on your own GPU machine</h2>
+    <div id="cluster"></div>
+  </section>
+  <section class="caps" aria-labelledby="caps-h">
+    <h2 id="caps-h">Also in mliprun</h2>
+    <ul id="caps"></ul>
+    <p class="src">Data: <a href="https://github.com/manuelarcer/mliprun/tree/main/docs/showcase/data/pack">showcase data pack</a> and its <a href="https://github.com/manuelarcer/mliprun/blob/main/docs/showcase/data/pack/PROVENANCE.md">provenance record</a>.</p>
+  </section>
+</div>
+
+</div>
+<div class="backdrop" id="backdrop" hidden></div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

@@ -1,0 +1,50 @@
+{
+ "schema_version": 2,
+ "job_id": "20261117-234302-optimize-357af6",
+ "calc_type": "optimize",
+ "label": "O/Pt(111) fcc hollow",
+ "folder": "showcase-o-fcc-webapp-2",
+ "location": "/scratchb/juar/mlip-webapp",
+ "created_at": "2026-11-17T23:43:02.982Z",
+ "calculator": {
+  "name": "uma-s-1p2",
+  "device": "cuda",
+  "uma_task": "oc20",
+  "mace_head": null,
+  "sevennet_task": null
+ },
+ "params": {
+  "optimizer": "bfgs",
+  "fmax": 0.02,
+  "max_steps": 500,
+  "relax_cell": false,
+  "plot": false
+ },
+ "param_sources": {
+  "optimizer": "default",
+  "fmax": "user",
+  "max_steps": "user",
+  "relax_cell": "default",
+  "plot": "default"
+ },
+ "structure_every": 5,
+ "inputs": {
+  "structure": {
+   "upload_id": "e025ef57fe0d",
+   "filename": "POSCAR",
+   "path": "inputs/structure/POSCAR",
+   "format": "vasp"
+  }
+ },
+ "target": {
+  "kind": "remote",
+  "machine_id": "m-c5b5bd",
+  "machine_name": "cos-cluster",
+  "env_id": "e-932119",
+  "env_name": "cos-cluster-uma",
+  "host": "10.9.240.62",
+  "python": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/bin/python"
+ },
+ "local_location": "/private/tmp/mliprun-showcase-2",
+ "remote_run_dir": null
+}

@@ -1,0 +1,90 @@
+{
+  "schema_version": 6,
+  "command": "optimize",
+  "status": "converged",
+  "run": {
+    "mode": "one-off",
+    "batch": null
+  },
+  "inputs": {
+    "n_atoms": 37,
+    "formula": "OPt36",
+    "source": "webapp",
+    "job_id": "20261117-234302-optimize-357af6",
+    "structure_filename": "POSCAR"
+  },
+  "parameters": {
+    "optimizer": {
+      "value": "bfgs",
+      "source": "default"
+    },
+    "fmax": {
+      "value": 0.02,
+      "source": "user"
+    },
+    "max_steps": {
+      "value": 500,
+      "source": "user"
+    },
+    "relax_cell": {
+      "value": false,
+      "source": "default"
+    },
+    "trajectory": {
+      "value": "opt.traj",
+      "source": "unspecified"
+    },
+    "logfile": {
+      "value": "opt.log",
+      "source": "unspecified"
+    },
+    "plot": {
+      "value": false,
+      "source": "default"
+    },
+    "uncertainty_plot": {
+      "value": false,
+      "source": "unspecified"
+    },
+    "verbose": {
+      "value": true,
+      "source": "unspecified"
+    }
+  },
+  "provenance": {
+    "mliprun_version": "0.4.0",
+    "ase_version": "3.28.0",
+    "mlip_package": {
+      "name": "fairchem-core",
+      "version": "2.19.0"
+    },
+    "mlip_model": "uma-s-1p2",
+    "uma_task": "oc20",
+    "mace_head": null,
+    "sevennet_task": null,
+    "aqcat_spin": null,
+    "aqcat_fidelity": null,
+    "device_requested": "cuda",
+    "device_resolved": "cuda",
+    "python_version": "3.11.15",
+    "hostname": "cosrnode01g",
+    "started_at": "2026-11-18T07:48:11+08:00",
+    "finished_at": "2026-11-18T07:48:14+08:00",
+    "walltime_s": 3.093
+  },
+  "stages": [
+    {
+      "index": 0,
+      "kind": "optimize",
+      "status": "converged",
+      "started_at": "2026-11-18T07:48:11+08:00",
+      "walltime_s": 3.093,
+      "steps": 12,
+      "results": {
+        "converged": true,
+        "final_energy_eV": -192.46915139776362,
+        "final_fmax_eV_per_A": 0.013398115523159504
+      }
+    }
+  ]
+}
