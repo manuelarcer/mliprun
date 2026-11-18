@@ -69,7 +69,7 @@ code { font-family: var(--f-mono); font-size: 0.84em; background: var(--code-bg)
 }
 @media (min-width: 901px) {
   /* the masthead sits over the chapter column so the pinned stage starts at the top */
-  .mast { position: absolute; top: 0; right: 0; width: 40%; z-index: 4; padding-left: 0; }
+  .mast { position: absolute; top: 0; right: 0; width: calc(25rem + 2 * max(16px, env(safe-area-inset-right, 0px))); z-index: 4; padding-left: 0; }
 }
 .wordmark { font-weight: 700; font-size: 1.15rem; text-decoration: none; letter-spacing: -0.01em; }
 .mast-links { display: flex; gap: 20px; font-size: 0.95rem; }
@@ -79,7 +79,7 @@ code { font-family: var(--f-mono); font-size: 0.84em; background: var(--code-bg)
 /* ---------------------------------------------------------------- story grid */
 .story {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 25rem);
   gap: clamp(24px, 4vw, 64px);
   padding-left: var(--gutter-l); padding-right: var(--gutter-r);
 }
@@ -127,32 +127,32 @@ code { font-family: var(--f-mono); font-size: 0.84em; background: var(--code-bg)
 }
 .clip { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
 
+/* readouts: a strip above the atoms, never over them */
 .hud {
-  position: absolute; left: 12px; top: 10px; margin: 0;
-  display: grid; grid-template-columns: auto auto; column-gap: 12px; row-gap: 1px;
-  font-family: var(--f-head); font-size: 0.8rem; line-height: 1.35;
-  padding: 7px 10px; border-radius: 4px;
-  background: color-mix(in srgb, var(--sheet) 82%, transparent);
+  position: absolute; left: 0; right: 0; top: 0; margin: 0; height: 28px;
+  display: flex; align-items: center; gap: 6px; overflow: hidden; white-space: nowrap;
+  font-family: var(--f-head); font-size: 0.8rem; line-height: 1;
+  padding: 0 12px; border-bottom: 1px solid var(--rule); background: var(--sheet);
   pointer-events: none;
 }
+.hud dd { margin-right: 14px; }
 .hud:empty { display: none; }
 .hud dt { color: var(--muted); }
-.hud dd { margin: 0; text-align: right; font-weight: 600; }
+.hud dd { margin-left: 0; font-weight: 600; }
 .hud dd.pending { color: var(--pending); }
 
 /* fixed height, so the scene box keeps its size from chapter to chapter */
-.capbar { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; min-width: 0; height: 56px; overflow: hidden; }
-.capbar .scene-cap { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.capbar { display: flex; gap: 16px; align-items: center; justify-content: space-between; min-width: 0; height: 28px; overflow: hidden; }
+.capbar .scene-cap { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; min-height: 0; }
 .legend {
-  flex: 0 0 200px; margin-top: 6px;
-  font-family: var(--f-head); font-size: 0.75rem; color: var(--muted);
+  flex: 0 1 240px; display: flex; align-items: center; gap: 6px;
+  font-family: var(--f-head); font-size: 0.72rem; color: var(--muted); white-space: nowrap;
 }
-.legend .bar { height: 8px; border-radius: 2px; margin: 4px 0 2px; }
+.legend .bar { flex: 1; min-width: 50px; height: 6px; border-radius: 2px; }
 .lg-short { display: none; }
-.legend .ticks { display: flex; justify-content: space-between; }
 
 .play {
-  position: absolute; right: 12px; top: 10px;
+  position: absolute; right: 12px; top: 38px;
   font-family: var(--f-head); font-size: 0.85rem; font-weight: 600;
   color: var(--ink); background: var(--sheet);
   border: 1px solid var(--rule); border-radius: 4px; padding: 6px 12px; cursor: pointer;
@@ -166,12 +166,13 @@ code { font-family: var(--f-mono); font-size: 0.84em; background: var(--code-bg)
 }
 
 .plot { margin: 4px 0 0; position: relative; }
-.plot svg { display: block; width: 100%; height: clamp(170px, 26vh, 250px); overflow: visible; }
-.plot figcaption { font-family: var(--f-head); font-size: 0.8rem; color: var(--muted); line-height: 1.35; margin-top: 2px; }
+.plot svg { display: block; width: 100%; height: clamp(140px, 21vh, 200px); overflow: visible; }
+/* charts carry their own axis labels; the caption is for screen readers */
+.plot figcaption { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* empty MD slot: one line, so the scene above gets the height */
 .plot-empty {
-  position: absolute; inset: 0 0 1.6em; display: grid; place-items: center; text-align: center;
-  border: 1px dashed var(--rule); border-radius: 6px; color: var(--muted);
-  font-family: var(--f-head); font-size: 0.9rem; padding: 16px;
+  margin: 4px 0 0; padding: 6px 0; border-top: 1px dashed var(--rule); color: var(--muted);
+  font-family: var(--f-head); font-size: 0.85rem;
 }
 
 /* SVG plot styling: every colour from the theme tokens */
@@ -199,7 +200,7 @@ code { font-family: var(--f-mono); font-size: 0.84em; background: var(--code-bg)
 
 /* ---------------------------------------------------------------- chapters */
 .chapters { min-width: 0; padding-bottom: 30vh; }
-.intro { min-height: 92vh; padding-top: clamp(32px, 12vh, 140px); }
+.intro { min-height: 75vh; padding-top: clamp(32px, 14vh, 160px); }
 .intro h1 {
   font-family: var(--f-head); font-weight: 700;
   font-size: clamp(2rem, 3.6vw, 3.1rem); line-height: 1.05; letter-spacing: -0.025em;
@@ -217,7 +218,13 @@ code { font-family: var(--f-mono); font-size: 0.84em; background: var(--code-bg)
 #ch-ts { min-height: 105vh; }
 #ch-water { min-height: 80vh; }
 #ch-remote { min-height: 90vh; }
-.beat { max-width: 34rem; margin-bottom: 22vh; }
+.beat { max-width: 34rem; margin-bottom: 22vh; position: sticky; top: 14vh; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 14px 0; font-family: var(--f-head); font-size: 0.95rem; }
+.facts > div { display: contents; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }
+.more { font-family: var(--f-head); font-size: 0.82rem; color: var(--muted); }
+.more summary { cursor: pointer; }
 .beat:last-child { margin-bottom: 0; }
 .beat p { margin: 0 0 0.85em; }
 .kicker {
@@ -271,7 +278,7 @@ code { font-family: var(--f-mono); font-size: 0.84em; background: var(--code-bg)
 @media (max-width: 900px) {
   .story { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .stage {
-    height: 62svh; z-index: 5; background: var(--paper);
+    height: 72svh; z-index: 5; background: var(--paper);
     grid-template-rows: auto minmax(0, 1fr) auto auto;
     padding-block: 8px 6px;
     border-bottom: 1px solid var(--rule);
@@ -283,36 +290,29 @@ code { font-family: var(--f-mono); font-size: 0.84em; background: var(--code-bg)
   .rail a { padding-top: 5px; }
   .rail-t { display: none; }
   .rail-now { display: block; margin: 0; font-family: var(--f-head); font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-  .scene-cap { min-height: 0; font-size: 0.7rem; line-height: 1.3; margin-top: 2px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-  .capbar { flex-direction: column; gap: 2px; height: 48px; }
-  .legend { flex: none; width: 100%; margin-top: 0; font-size: 0.66rem; display: flex; align-items: center; gap: 6px; }
-  .legend .bar { flex: 1; margin: 0; height: 6px; }
-  .legend .ticks { display: contents; }
-  .legend .ticks span:nth-child(2) { display: none; }
-  .legend .ticks span:first-child { order: -1; }
-  .legend > div:first-child { order: -2; white-space: nowrap; }
-  .plot svg { height: 21svh; }
+  .scene-cap { font-size: 0.72rem; }
+  .capbar { height: 38px; flex-wrap: wrap; gap: 0 12px; align-content: center; }
+  .capbar .scene-cap { flex-basis: 100%; }
+  .legend { flex: 0 1 150px; font-size: 0.66rem; }
+  .plot svg { height: 16svh; }
   .ax text { font-size: 12px; }
   .ax .lab { font-size: 12px; }
-  .plot figcaption { display: none; }
-  /* phones: the readouts become a strip above the atoms, first two values only */
-  .hud { left: 0; right: 0; top: 0; border-radius: 0; padding: 3px 8px; font-size: 0.7rem;
-    display: flex; gap: 6px; align-items: baseline; background: var(--sheet); border-bottom: 1px solid var(--rule); }
-  .hud dd { margin-right: 10px; }
+  /* phones: first two readouts only */
+  .hud { font-size: 0.7rem; height: 24px; padding: 0 8px; }
   .hud dt:nth-of-type(n+3), .hud dd:nth-of-type(n+3) { display: none; }
-  .scene { top: 24px; height: auto; }
   .lg-long { display: none; }
   .lg-short { display: inline; }
-  .legend { font-size: 0.68rem; width: 140px; right: 6px; bottom: 6px; }
   .play { right: 6px; top: auto; bottom: 6px; font-size: 0.78rem; padding: 4px 9px; }
-  .intro { min-height: 0; padding-top: 24px; padding-bottom: 20vh; }
+  .intro { min-height: 0; padding-top: 16px; padding-bottom: 6vh; }
   .chapter { padding-top: 6vh; }
-  .beat { margin-bottom: 18vh; }
-  #ch-relax { min-height: 130vh; }
-  #ch-committee { min-height: 110vh; }
-  #ch-neb { min-height: 115vh; }
-  #ch-ts, #ch-remote { min-height: 90vh; }
-  #ch-water { min-height: 70vh; }
+  .beat { margin-bottom: 6vh; position: static; }
+  .chapter { padding-top: 2vh; }
+  /* phones: the text band under the stage is ~28svh; chapters only as long as the scrub needs */
+  #ch-relax { min-height: 75vh; }
+  #ch-committee { min-height: 60vh; }
+  #ch-neb { min-height: 70vh; }
+  #ch-ts, #ch-remote { min-height: 45vh; }
+  #ch-water { min-height: 35vh; }
   .lede { font-size: 1.08rem; }
   body { font-size: 1rem; }
 }

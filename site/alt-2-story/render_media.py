@@ -199,7 +199,7 @@ def main():
     neb = json.loads((DATA / "neb.json").read_text())
     md = json.loads((DATA / "md.json").read_text())
     relax = json.loads((DATA / "relax.json").read_text())
-    W, H = 560, 320
+    W, H = 800, 450  # visuals first (ruling AG)
 
     n_relax = len(relax["series"]["step"])
     # relax: the README uses the chart alone. The atoms move 0.07 Å, so even the cropped

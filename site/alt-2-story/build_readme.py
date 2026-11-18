@@ -252,108 +252,67 @@ def readme():
 
     L = []
     a = L.append
+    nu = kn("neb", "TS imaginary frequency")
     a("# mliprun\n")
     a(f"[![Tests]({REPO}/actions/workflows/tests.yml/badge.svg)]({REPO}/actions/workflows/tests.yml)")
     a(f"[![Fresh-install smoke test]({REPO}/actions/workflows/install-smoke.yml/badge.svg)]({REPO}/actions/workflows/install-smoke.yml)\n")
-    a("Machine-learning interatomic potentials from one command line: relaxations, model committees, "
-      "NEB with transition-state checks, MD, and remote runs on GPU machines you add yourself. "
-      "UMA, MACE, SevenNet and CHGNet, each in its own environment.\n")
-    a(f"**One oxygen atom, followed from start to finish.** O on Pt(111), {model}/{head}, force target "
-      f"{q('relax', 'fmax target', 2)}. Each chapter below is one real run from the showcase data pack. "
-      f"The [interactive version]({LANDING}) replays the same runs in 3D as you scroll.\n")
-    a("To run any of this yourself, start with the [installation steps](docs/INSTALL.md) "
-      "(one MLIP per environment).\n")
+    a("## One system, from first relaxation to a run on your own GPU machine\n")
+    a(f"O on Pt(111), {model}/{head}, fmax {q('relax', 'fmax target', 2)}. "
+      f"[Interactive version]({LANDING}). [Install](docs/INSTALL.md) (one MLIP per environment).\n")
 
-    a(f"## 1. Relax the adsorbate ({state(r)})\n")
-    a("Start every surface study here: `mlip optimize run` moves the free atoms until the largest "
-      "force on any of them drops below `--fmax`.\n")
-    a("```bash\n" + short_cmd(r["command"]) + "\n```\n")
-    a(pic("chart-relax", "svg", "Energy relative to step 0 and fmax per BFGS step, with the fmax target"))
+    a(f"### 1. Relax ({state(r)})\n")
+    a(pic("chart-relax", "svg", "Relaxation: energy and fmax per BFGS step, with the fmax target"))
     a("")
-    a(f"Forces fall from {fmt(rs['fmax_eV_per_A'][0], 2)} eV/Å to {q('relax', 'final fmax, O at fcc hollow', 4)} "
-      f"in {q('relax', 'BFGS steps, O at fcc hollow', 0)}. The energy drops by {fmt(drop, 3)} eV, "
-      f"90% of it in the first {k90} steps. The geometry barely moves: the O atom sinks from "
-      f"{h[0]:.2f} Å to {h[-1]:.2f} Å above the top Pt layer, too small to see in a picture of the slab, so this chapter shows the chart only. "
-      f"The same command at the hcp hollow gives E(hcp) − E(fcc) = {q('relax', 'E(hcp) − E(fcc)', 3)}.\n")
+    a(f"{q('relax', 'BFGS steps, O at fcc hollow', 0)}, fmax {q('relax', 'final fmax, O at fcc hollow', 4)}, "
+      f"ΔE {fmt(-drop, 3)} eV, O height {h[0]:.2f} → {h[-1]:.2f} Å.\n")
+    a("```bash\n" + short_cmd(r["command"]) + "\n```\n")
 
-    a(f"## 2. Ask a committee how sure it is ({state(c)})\n")
-    a(f"Add `--committee` and the relaxation runs with {fmt(kn('committee', 'committee members')['value'], 0)} "
-      f"models at once ({', '.join(members)}), follows their mean force, and records how far they disagree.\n")
-    a("```bash\n" + short_cmd(c["command"]) + "\n```\n")
-    a(pic("committee", "png", "Pt(111) slab with each atom coloured by the committee's per-atom force disagreement at the final step", 560))
+    a(f"### 2. Committee ({state(c)})\n")
+    a(pic("committee", "png", "Pt(111) slab, atoms coloured by committee force disagreement at the final step", 800))
     a("")
     a(pic("chart-committee", "svg", f"Committee relaxation: fmax and σmax per BFGS step, shaded zone below σmax, fmax drops below σmax at step {cross}; right panel: energy spread per step"))
     a("")
-    a("**The blue line, σmax, is the largest force disagreement between the models over the free atoms. "
-      "Once the force being minimised (fmax, red) drops below it, into the shaded zone, the remaining force "
-      "is smaller than what these models can tell apart.** "
-      f"Here fmax drops below σmax at step {cross}. At the last step the disagreement is "
-      f"{q('committee', 'sigma_max_free, final step', 3)}, {q('committee', 'sigma_max_free / fmax', 1)} times the final force "
-      f"of {q('committee', 'final fmax of the committee-mean force', 4)}. The energy spread ends at "
-      f"{q('committee', 'energy spread across members, final step', 4)} (standard deviation after each member's step-0 energy is subtracted).\n")
-    a("The atom colours are the per-atom disagreement at the committee's final step, drawn on the chapter 1 geometry "
-      "(the committee run saves numbers, not frames).\n")
+    a(f"{', '.join(members)}. fmax < σmax from step {cross}; σmax {q('committee', 'sigma_max_free, final step', 3)}.\n")
+    a("```bash\n" + short_cmd(c["command"]) + "\n```\n")
 
-    a(f"## 3. Find the path between the hollows ({state(nb)})\n")
-    a("`mlip neb run` builds a band from the fcc to the hcp minimum, relaxes it, and lets the highest "
-      "image climb to the saddle point.\n")
-    a("```bash\n" + short_cmd(nb["command"]) + "\n```\n")
-    a(pic("neb", "gif", "Top view of the final NEB band, O moving from the fcc to the hcp hollow and back", 560))
+    a(f"### 3. NEB, fcc → hcp ({state(nb)})\n")
+    a(pic("neb", "gif", f"O hops from the fcc to the hcp hollow on Pt(111) along the NEB band; barrier {q('neb', 'forward barrier', 3)}", 800))
     a("")
     a(pic("chart-neb", "svg", "NEB energy profile with forward and reverse barriers and the reaction energy"))
     a("")
-    a(f"{nimg} images between the relaxed endpoints, converged to {q('neb', 'final band fmax', 4)} in "
-      f"{q('neb', 'NEB optimizer steps', 0)}. Forward barrier {q('neb', 'forward barrier', 3)}, reverse "
-      f"{q('neb', 'reverse barrier', 3)}, reaction energy {q('neb', 'reaction energy', 3)}. No atom drifted "
-      f"more than {q('neb', 'band check: largest drift', 3)} from the seeded band (allowance "
-      f"{q('neb', 'band check: allowance', 2)}).\n")
+    a(f"Barrier {q('neb', 'forward barrier', 3)}, reverse {q('neb', 'reverse barrier', 3)}, "
+      f"ΔE {q('neb', 'reaction energy', 3)}.\n")
+    a("```bash\n" + short_cmd(nb["command"]) + "\n```\n")
 
-    a(f"## 4. Check that the top is a real saddle ({'TS verified' if ts_ok else 'TS not verified'})\n")
-    a("`--verify-ts both` asks three questions of the climbing image: is there exactly one imaginary mode, "
-      "does it point along the path, and does relaxing off it land in the two minima.\n")
-    a(pic("ts", "gif", "The transition state displaced along its imaginary mode, an illustration of the mode and not dynamics", 560))
+    a(f"### 4. TS check ({'TS verified' if ts_ok else 'TS not verified'})\n")
+    a(pic("ts", "gif", "Imaginary mode at the transition state; mode, not dynamics", 800))
     a("")
-    nu = kn("neb", "TS imaginary frequency")
-    a(f"One imaginary mode at {fmt(nu['value'], 1)}i {nu['unit']}. Overlap with the NEB tangent "
-      f"{q('neb', 'overlap of imaginary mode', 3)} (threshold {q('neb', 'overlap threshold', 1)}); displaced "
-      f"along the mode and relaxed, the structure connects to both endpoints. The animation is the mode scaled "
-      f"so the most-displaced atom moves {q('neb', 'TS mode animation peak displacement', 1)}: an illustration, not dynamics.\n")
+    a(f"`--verify-ts both`: {fmt(nu['value'], 1)}i {nu['unit']}, overlap {q('neb', 'overlap of imaginary mode', 3)} "
+      f"(≥ {q('neb', 'overlap threshold', 1)}). Mode, not dynamics.\n")
     if "ts_verify_endpoint_fmax_above_relax_fmax" in nb["flags"]:
-        a(f"> Flag raised by the check: {nb['notes'][0]}\n")
+        a(f"<details><summary>Flag from the check</summary>\n\n{nb['notes'][0]}\n\n</details>\n")
 
-    a(f"## 5. Water at finite temperature ({state(md)})\n")
-    a("**MD not run; next step pending a decision.**\n")
-    a(f"The story moves to a new system, a bilayer of {nwater} water molecules on Pt(111). "
-      "The picture shows the "
-      f"{md['structures']['built']['label']}: a static structure, not a simulation.\n")
-    a(pic("water", "png", "Static structure, not a simulation: water bilayer on Pt(111) as built", 560))
+    a(f"### 5. Water on Pt(111) ({state(md)})\n")
+    a(pic("water", "png", f"Static structure, not a simulation: {md['structures']['built']['label']}", 800))
     a("")
+    a(f"**MD not run; next step pending a decision.** {nwater} H₂O as built; static, not a simulation.\n")
 
-    a(f"## 6. Run it on your own GPU machine from the browser ({state(wa)})\n")
-    a("`mlip webapp` sends a job to a remote machine that you add yourself and brings the result back: "
-      "the GPU does the work, your laptop only submits. mliprun ships with no preconfigured machines.\n")
-    a("1. In the web app, open **Machines** and choose **Add machine**: your SSH alias (`<your ssh alias>`) "
-      "and your remote folder (`<your remote folder>`).")
-    a("2. Point it at your own MLIP environment (`<your uma env>`).")
-    a("3. Press **Test connection**, then submit. The web app runs the same command as the CLI:\n")
-    a("```bash\n" + short_cmd(wa["command"]) + "\n```\n")
-    a(f'<img src="media/webapp.gif" alt="Screen recording: a relaxation submitted from the mliprun web app to {wa["target"]["machine"]}, where the showcase runs ran, and its result">\n')
-    a(f"In the recording, the chapter 1 relaxation runs on {wa['target']['machine']}, the machine where all "
-      "showcase runs in this README ran (one GPU card); your machine will be the one you add. "
-      "Timing: "
-      f"{fmt(wall, 1)} s in total, {fmt(opt, 1)} s of it relaxation and the rest loading the model. "
-      f"Same {q('webapp', 'BFGS steps', 0)} as the command line, energy difference "
-      f"{q('webapp', 'energy difference, web app − CLI', 1)} (GPU floating-point noise). "
-      f"The waiting part of the recording is sped up {fmt(kn('webapp', 'video speed-up')['value'], 0)}× and labelled so. "
-      f"[Full-quality video](data/{wa['video']}).\n")
+    a(f"### 6. Remote run from the browser ({state(wa)})\n")
+    a(f'<img src="media/webapp.gif" alt="Screen recording: a relaxation submitted from the mliprun web app to a remote GPU machine and its result">\n')
+    a(f"`mlip webapp` on a GPU machine you add; none are preconfigured. "
+      "**Machines → Add machine** (Host `<your ssh alias>`, Default remote location `<your remote folder>`), save; "
+      "**Add environment** (Python path `<your uma env>/bin/python`); **Test connection**; submit. "
+      f"Showcase run on {wa['target']['machine']}: {fmt(wall, 1)} s, web app − CLI "
+      f"{q('webapp', 'energy difference, web app − CLI', 1)}. Waiting part ×{fmt(kn('webapp', 'video speed-up')['value'], 0)}. "
+      f"[Video](data/{wa['video']}).\n")
 
-    a("## Also in mliprun\n")
-    a("- `mlip freq run`: finite-difference frequencies, imaginary-mode count and zero-point energy, with per-member spread from a committee.")
-    a("- `mlip autoneb run`: NEB with images inserted where the path needs them.")
-    a("- `mlip benchmark run`: times one energy call for each installed MLIP on the same structure.")
-    a("- `--mlip`: UMA, MACE, SevenNet and CHGNet, each in its own environment.")
-    a("- `mlip doctor`: checks that an environment can import and run its model.\n")
-    a(f"Where each number comes from: [data pack provenance]({REPO}/blob/main/docs/showcase/data/pack/PROVENANCE.md). "
+    a("### Also in mliprun\n")
+    a("- `mlip freq run`: frequencies, ZPE")
+    a("- `mlip autoneb run`: NEB with inserted images")
+    a("- `mlip benchmark run`: model timing")
+    a("- `--mlip`: UMA, MACE, SevenNet, CHGNet")
+    a("- `mlip doctor`: environment check\n")
+    a(f"[Data provenance]({REPO}/blob/main/docs/showcase/data/pack/PROVENANCE.md). "
       "Installation: [docs/INSTALL.md](docs/INSTALL.md).\n")
     (HERE / "README.md").write_text("\n".join(L))
 

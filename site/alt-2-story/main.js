@@ -227,7 +227,7 @@ function plotRelax(k) {
     S("path", { class: "ln oxy", d: path(ph.slice(0, k + 1)) }, svg);
     S("circle", { class: "dot oxy", cx: ph[k][0], cy: ph[k][1], r: 4 }, svg);
   }
-  $("#plot-cap").textContent = `Energy relative to step 0, the largest force on a free atom${b3 ? ", and the O height above the top Pt layer" : ""}, drawn up to the current step (step ${k} of ${n}). Dashed red: the --fmax target.`;
+  $("#plot-cap").textContent = `Energy, fmax${b3 ? " and O height" : ""} per BFGS step (step ${k} of ${n})`;
 }
 
 function plotCommittee(k) {
@@ -255,14 +255,16 @@ function plotCommittee(k) {
   S("line", { class: "target", x1: b1.x0, x2: b1.x0 + b1.w, y1: p1.y(target), y2: p1.y(target) }, svg);
   S("text", { class: "target-t", x: b1.x0 + 4, y: p1.y(target) + 13 }, svg, `target ${num(target, 2)}`);
   // colour key, written next to each curve (every width)
-  S("text", { class: "ann", x: p1.x(s.step[3]), y: p1.y(fm[3]) + 16, style: "fill:var(--oxy)" }, svg, "fmax");
+  S("text", { class: "ann", x: p1.x(s.step[1]) + 4, y: p1.y(fm[1]) - 5, style: "fill:var(--oxy)" }, svg, "fmax");
   S("text", { class: "ann", x: b1.x0 + 4, y: p1.y(sig[0]) - 6, style: "fill:var(--cool)" }, svg, "σmax");
   const cross = fm.findIndex((f, i) => f < sig[i]);
   if (cross >= 0 && k >= cross) {
     const xc = p1.x(s.step[cross]);
     S("line", { class: "cursor", x1: xc, x2: xc, y1: p1.y(3), y2: p1.y(floor) }, svg);
-    S("text", { class: "ann", x: xc - 4, y: p1.y(3) + 12, "text-anchor": "end" }, svg, `fmax < σmax`);
-    S("text", { class: "ann m", x: xc - 4, y: p1.y(3) + 25, "text-anchor": "end" }, svg, `from step ${s.step[cross]}`);
+    if (b1.w >= 220) { // phones: the marker line stays; "from step" is in the chapter facts
+      S("text", { class: "ann", x: xc - 4, y: p1.y(3) + 12, "text-anchor": "end" }, svg, `fmax < σmax`);
+      S("text", { class: "ann m", x: xc - 4, y: p1.y(3) + 25, "text-anchor": "end" }, svg, `from step ${s.step[cross]}`);
+    }
   }
 
   const sp = s.energy_spread_aligned_eV;
@@ -272,7 +274,7 @@ function plotCommittee(k) {
   S("path", { class: "ghost", d: path(ps) }, svg);
   S("path", { class: "ln cool", d: path(ps.slice(0, cut)) }, svg);
   S("circle", { class: "dot cool", cx: ps[k][0], cy: ps[k][1], r: 4 }, svg);
-  $("#plot-cap").textContent = `Left: the committee-mean fmax (red) and σmax, the largest per-atom force disagreement over the free atoms (blue); the shaded zone lies below σmax. Right: standard deviation of the member energies, each member's step-0 energy subtracted. Step ${k} of ${n}.`;
+  $("#plot-cap").textContent = `fmax and σmax per step; energy spread (step ${k} of ${n})`;
 }
 
 function nebProfile(svg, box, ml, upto, ringTs) {
@@ -318,7 +320,7 @@ function plotNeb(k) {
   const { svg, W, H, ml } = plotFrame();
   nebProfile(svg, { x0: ml, y0: 20, w: W - ml - 10, h: H - 54 }, ml, k, false);
   const n = pack.neb.series.image_index.length - 1;
-  $("#plot-cap").textContent = `Final NEB band: energy of each image relative to the fcc endpoint, drawn up to image ${k} of ${n}.`;
+  $("#plot-cap").textContent = `NEB energy profile (image ${k} of ${n})`;
 }
 function plotTs() {
   const { svg, split, ml, W, narrow } = plotFrame();
@@ -333,7 +335,7 @@ function plotTs() {
   S("line", { class: "target", x1: p.x(thr), x2: p.x(thr), y1: yb - 8, y2: yb + hb + 8 }, svg);
   S("text", { class: "target-t", x: p.x(thr), y: yb - 11, "text-anchor": "middle" }, svg, `threshold ${num(thr, 1)}`);
   S("text", { class: "ann", x: p.x(ov), y: yb + hb + 20, "text-anchor": "end" }, svg, num(ov, 3));
-  $("#plot-cap").textContent = `Left: the band with the climbing image (TS) ringed. Right: overlap of the imaginary mode with the band tangent, against the ${num(thr, 1)} threshold of --verify-ts.`;
+  $("#plot-cap").textContent = "NEB profile with the TS; mode overlap with the path";
 }
 function plotWater() {
   const md = pack.md;
@@ -350,10 +352,11 @@ function plotWater() {
     $("#plot-cap").textContent = "MD series from md.json.";
     return;
   }
-  $("#plot").innerHTML = ""; // keep the svg box so the stage layout does not jump
+  $("#plot").innerHTML = "";
+  $("#plot").style.display = "none"; // one line instead of an empty chart: the scene gets the height
   const empty = $("#plot-empty");
   empty.hidden = false;
-  empty.textContent = `MD ${md.status || "pending"}: no temperature or energy series yet. They are drawn here once md.json carries them.`;
+  empty.textContent = "MD not run: no T(t) or E(t) yet";
   $("#plot-cap").textContent = "";
 }
 function plotRemote() {
@@ -376,7 +379,7 @@ function plotRemote() {
   S("rect", { class: "bar-b", x: p2.x(wall - opt), y: yb, width: p2.x(wall) - p2.x(wall - opt), height: hb }, svg);
   S("text", { class: "ann m", x: p2.x(0) + 4, y: yb - 6 }, svg, `${narrow ? "model load" : "model load and setup"} ${num(wall - opt, 1)} s`);
   S("text", { class: "ann", x: p2.x(wall), y: yb + hb + 16, "text-anchor": "end" }, svg, `relaxation ${num(opt, 1)} s`);
-  $("#plot-cap").textContent = "Left: the web app job (dots) retraces the command-line relaxation (line) step for step. Right: where the job's wall time went.";
+  $("#plot-cap").textContent = "Web app and CLI energies; job wall time";
 }
 
 // ------------------------------------------------------------------ HUD + legend + captions
@@ -411,7 +414,7 @@ function legend(show) {
   L.hidden = !show;
   if (!show) return;
   const smax = Math.max(...pack.committee.series.peratom_final_sigma_free_eV_per_A);
-  L.innerHTML = `<div><span class="lg-long">per-atom σ, final step (eV/Å)</span><span class="lg-short">σ (eV/Å)</span></div><div class="bar" style="background:linear-gradient(90deg,${rampColours().join(",")})"></div><div class="ticks"><span>0</span><span>${num(smax / 2, 3)}</span><span>${num(smax, 3)}</span></div>`;
+  L.innerHTML = `<span><span class="lg-long">per-atom σ, final step (eV/Å)</span><span class="lg-short">σ (eV/Å)</span></span><span>0</span><span class="bar" style="background:linear-gradient(90deg,${rampColours().join(",")})"></span><span>${num(smax, 3)}</span>`;
 }
 
 // ------------------------------------------------------------------ chapter 1 slice
@@ -489,14 +492,14 @@ function sigmaRestyle(viewer) {
 // Fixed scene aspect per layout, so a framing camera baked once per scene and layout
 // (data/cameras.json, made by bake_cameras.py) can be reused: loads then skip the
 // viewer's pixel auto-fit, the slow part of a build.
-const ASPECT = { desk: 1.5, mobile: 1.75 };
+const ASPECT = { desk: 1.5, mobile: 1.0 }; // phones: near-square box, ~45svh with the readouts
 const layoutKey = () => (window.innerWidth <= 900 ? "mobile" : "desk");
 const BAKE = new URLSearchParams(location.search).has("bake");
 let cameras = null;
 let builtLayout = null;
 function sizeScene() {
   const vp = $("#viewport");
-  const top = layoutKey() === "mobile" ? 24 : 0;
+  const top = layoutKey() === "mobile" ? 24 : 28; // the readout strip sits above the atoms
   const W = vp.clientWidth, H = Math.max(10, vp.clientHeight - top);
   const A = ASPECT[layoutKey()];
   const w = Math.min(W, H * A), h = w / A;
@@ -670,7 +673,9 @@ function enterChapter(ch) {
   });
   legend(ch === "committee");
   $("#rail-now").textContent = at >= 0 ? `${at + 1} ${railLinks[at].querySelector(".rail-t").textContent}` : "";
-  sceneHost.setAttribute("aria-label", SCENE_LABELS[ch] || "");
+  sceneHost.setAttribute("aria-label", ch === "water"
+    ? `3D view, static structure, not a simulation: ${pack.md.structures?.built?.label || "water bilayer as built"}`
+    : SCENE_LABELS[ch] || "");
   playBtn.hidden = ch !== "ts";
   sceneCaption(ch);
   requestScene(CHAPTERS[ch].scene);
@@ -686,33 +691,25 @@ const SCENE_LABELS = {
   committee: "3D view of the Pt(111) slab with each atom coloured by the committee's force disagreement",
   neb: "3D view from above of the NEB band image for the current scroll position",
   ts: "3D view of the transition state moving along its imaginary mode",
-  water: "3D view of the water bilayer on Pt(111) as built, a static structure, not a simulation",
+  water: "",
   remote: "",
 };
 function sceneCaption(ch) {
-  const cap = $("#scene-cap");
-  const ts = pack.neb.ts_image_index;
-  const nImg = pack.neb.series.image_index.length;
-  const amp = knText("neb", "TS mode animation peak displacement", 1);
+  // one rough line per scene (ruling AG); numbers still come from the pack
   const t = {
-    intro: `O at the fcc hollow, near-side view of a slice through the slab: the Pt atoms at or behind the O, within ${num(SLICE_HALF_W, 1)} Å either side. ${pack.relax.notes[2] || ""}`,
-    relax: `Slice through the slab; positions are the real ones in relax.xyz, nothing is scaled. The O height is in the readout and the plot below. The frame follows your scroll.`,
-    committee: "Atoms coloured by the committee's per-atom force disagreement at its final step, drawn on the chapter 1 geometry (the committee run saves no frames). Fixed atoms are 0 by definition; O stays red.",
-    neb: `View from above. The frame follows your scroll along the ${nImg} images of the final band, fcc (0) to hcp (${nImg - 1}).`,
-    ts: `Transition state (image ${ts}) displaced along its imaginary mode, peak displacement ${amp}. An illustration of the mode, not dynamics.`,
-    water: `Static structure, not a simulation: ${pack.md.structures?.built?.label || "water bilayer as built"}, shown with its periodic images.`,
-    remote: `Screen recording of the web app. The waiting part is sped up ${num(knv("webapp", "video speed-up"), 0)}× and labelled so in the video.`,
+    intro: "O on Pt(111), fcc hollow; slice through the slab",
+    relax: "BFGS relaxation, step by step",
+    committee: "Committee force disagreement σ, on ch. 1 geometry",
+    neb: `O hops fcc → hcp; barrier ${knText("neb", "forward barrier", 2)}`,
+    ts: `Imaginary mode, ${parsed.nuText}; mode, not dynamics`,
+    water: "Water bilayer as built; static, not a simulation",
+    remote: `Web app to a remote GPU; waiting part ×${num(knv("webapp", "video speed-up"), 0)}`,
   }[ch];
-  const short = {
-    intro: "O at the fcc hollow: a slice through the Pt(111) slab, real positions.",
-    relax: "Slice through the slab, real positions, nothing scaled. Follows your scroll.",
-    committee: "Colour: per-atom force disagreement σ at the final step, on the chapter 1 geometry.",
-    neb: "View from above; scroll moves along the final band, fcc (0) to hcp.",
-    ts: `TS displaced along its imaginary mode (${amp} peak). Illustration, not dynamics.`,
-    water: "Static structure, not a simulation: the bilayer as built.",
-    remote: `Web app recording; the waiting part is sped up ${num(knv("webapp", "video speed-up"), 0)}×.`,
-  }[ch];
-  cap.textContent = (layoutKey() === "mobile" ? short : t) || "";
+  const cap = $("#scene-cap");
+  cap.textContent = t || "";
+  // the water caption is short (ruling AG); the md.json label stays reachable verbatim
+  if (ch === "water" && pack.md.structures?.built?.label) cap.title = pack.md.structures.built.label;
+  else cap.removeAttribute("title");
 }
 function commHud() {
   hud([
@@ -820,49 +817,40 @@ function bindText() {
   }
   for (const e of $$("[data-command]")) renderCommand(e, e.dataset.command);
 
+  const set = (sel, t) => { const e = $(sel); if (e) e.textContent = t; };
   // relax, computed from the frames and series
   const rs = pack.relax.series;
-  const fr = parsed.relax;
-  $("#relax-f0").textContent = withUnit(rs.fmax_eV_per_A[0], 2, "eV/Å");
-  $("#relax-h0").textContent = withUnit(parsed.relaxH[0], 2, "Å");
-  $("#relax-h1").textContent = withUnit(parsed.relaxH[parsed.relaxH.length - 1], 2, "Å");
-  $("#relax-dpt").textContent = withUnit(maxPtShift(fr[0], fr[fr.length - 1]), 2, "Å");
-  const E = rs.energy_eV, drop = E[0] - E[E.length - 1];
-  $("#relax-de").textContent = withUnit(drop, 3, "eV");
-  const k90 = E.findIndex((e) => E[0] - e >= 0.9 * drop);
-  $("#relax-de-steps").textContent = `${k90} steps`;
+  const E = rs.energy_eV;
+  set("#relax-de", withUnit(E[E.length - 1] - E[0], 3, "eV"));
+  set("#relax-h", `${num(parsed.relaxH[0], 2)} → ${num(parsed.relaxH[parsed.relaxH.length - 1], 2)}${NB}Å`);
 
   // committee
   const cs = pack.committee.series;
-  const members = pack.committee.key_numbers.filter((k) => k.label.startsWith("final energy, member "));
-  $("#comm-n").textContent = num(knv("committee", "committee members"), 0);
-  $("#comm-members").textContent = pack.committee.notes[0] || "";
+  set("#comm-n", num(knv("committee", "committee members"), 0));
+  const members = pack.committee.key_numbers.filter((k) => k.label.startsWith("final energy, member "))
+    .map((k) => k.label.replace(/^final energy, member /, "").replace(/ \(.*$/, ""));
+  set("#comm-members", members.join(", "));
   const cross = cs.step.findIndex((_, i) => cs.fmax_eV_per_A[i] < cs.sigma_max_free_eV_per_A[i]);
-  $("#comm-cross").textContent = cross >= 0 ? num(cs.step[cross], 0) : "n/a";
-  const ev = members.map((m) => m.value);
-  $("#comm-offset").textContent = withUnit(Math.max(...ev) - Math.min(...ev), 2, "eV");
+  set("#comm-cross", cross >= 0 ? `from step ${num(cs.step[cross], 0)}` : "never");
 
-  // neb + ts
-  $("#neb-nimg").textContent = `${pack.neb.series.image_index.length - 2} images`;
+  // ts
   const nu = kn("neb", "TS imaginary frequency");
   parsed.nuText = nu ? `${num(nu.value, 1)}i${NB}${nu.unit}` : "n/a";
-  $("#ts-nu").textContent = parsed.nuText;
-  const flagNote = pack.neb.flags.includes("ts_verify_endpoint_fmax_above_relax_fmax") ? pack.neb.notes[0] : "";
-  $("#ts-flag").textContent = flagNote ? `Flag raised by the check: ${flagNote}` : "";
-  $("#ts-illus").textContent = `The moving scene is the mode itself, scaled so the most-displaced atom moves ${knText("neb", "TS mode animation peak displacement", 1)}. It illustrates the direction of the saddle, not dynamics.`;
+  set("#ts-nu", parsed.nuText);
+  set("#ts-overlap", `${num(knv("neb", "overlap of imaginary mode"), 3)} (≥${NB}${num(knv("neb", "overlap threshold"), 1)})`);
+  const flagged = pack.neb.flags.includes("ts_verify_endpoint_fmax_above_relax_fmax");
+  set("#ts-flag", flagged ? pack.neb.notes[0] : "");
+  const more = $("#ts-flag")?.closest("details");
+  if (more) more.hidden = !flagged;
 
   // water
-  $("#water-n").textContent = String(parsed.nWater);
-  if (pack.md.status !== "pending") {
-    $("#water-lede").textContent = `MD status: ${pack.md.status || (pack.md.converged ? "done" : "not converged")}.`;
-  }
+  set("#water-n", `${parsed.nWater} H₂O`);
+  if (pack.md.status !== "pending") set("#water-lede", `MD status: ${pack.md.status || (pack.md.converged ? "done" : "not converged")}.`);
 
   // remote
-  $("#remote-machine").textContent = pack.webapp.target?.machine || "";
-  $("#remote-de").textContent = knText("webapp", "energy difference, web app − CLI", 1);
-  const speed = knv("webapp", "video speed-up");
-  const len = knv("webapp", "video length");
-  $("#remote-speed").textContent = `The recording runs ${num(len, 1)} s. The waiting part is sped up ${num(speed, 0)}× and labelled so; the form and the result play at normal speed.`;
+  set("#remote-machine", `${pack.webapp.target?.machine || ""} (showcase)`);
+  set("#remote-wall", `${knText("webapp", "job wall time", 1)} (relax ${knText("webapp", "relaxation wall time", 1)})`);
+  set("#remote-de", knText("webapp", "energy difference, web app − CLI", 1));
 }
 
 // ------------------------------------------------------------------ boot
