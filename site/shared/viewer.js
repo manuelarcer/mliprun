@@ -62,7 +62,9 @@
 //                  a user-pressed control (button), never to page load.
 //   pause(), setFrame(i) (clamps, pauses, returns index), frame, playing,
 //   nFrames, frames (per-frame info objects), cell, symbols, reducedMotion,
-//   setView(v, {fit=true}), getView(), snapshot() (PNG data URL), resize(),
+//   setView(v, {fit=true}), getView(), resize(),
+//   snapshot()     PNG data URL matching the SCREEN orientation. Do not use
+//                  ctrl.viewer.pngURI(): in Chromium it is vertically mirrored.
 //   destroy(), viewer (raw 3Dmol viewer for labels/arrows), ready.
 //
 // CONTRACT NOTES
@@ -271,9 +273,10 @@ function cssToHex(css) {
 function quatFromView(elevationDeg, azimuthDeg) {
   // Rotate about the model z (surface normal) by azimuth, then about screen x
   // so the surface normal points up on screen, tilted toward the camera.
-  // (3Dmol applies the quaternion as the inverse of the three.js convention,
-  // hence +90: verified visually, the surface normal points up on screen.)
-  const th = ((90 - elevationDeg) * Math.PI) / 180;
+  // Verified ON SCREEN (page screenshot, not the 3Dmol readback, which is
+  // vertically mirrored): -90 + elevation puts the surface normal up and the
+  // adsorbate above the slab; top view shows +x right, +y up.
+  const th = ((-90 + elevationDeg) * Math.PI) / 180;
   const ph = (azimuthDeg * Math.PI) / 180;
   const sx = Math.sin(th / 2), cx = Math.cos(th / 2);
   const sz = Math.sin(ph / 2), cz = Math.cos(ph / 2);
@@ -673,7 +676,18 @@ export async function loadScene(el, xyzUrl, opts = {}) {
     },
     getView() { return { ...viewState }; },
     /** PNG data URL of the current canvas (device pixels; alpha kept if transparent). */
-    snapshot() { viewer.render(); return viewer.pngURI(); },
+    snapshot() {
+      // viewer.pngURI() (toDataURL on 3Dmol's bitmaprenderer canvas) returns
+      // the image vertically MIRRORED relative to the screen in Chromium.
+      // drawImage of the same canvas matches the screen, so read back that way.
+      viewer.render();
+      const src = viewer.getCanvas();
+      const c = document.createElement("canvas");
+      c.width = src.width;
+      c.height = src.height;
+      c.getContext("2d").drawImage(src, 0, 0);
+      return c.toDataURL("image/png");
+    },
     resize: onResize,
     destroy() {
       stop();

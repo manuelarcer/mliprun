@@ -3,6 +3,7 @@
 Run: site/.venv/bin/python -m pytest site/shared/test_capture.py -v
 Input is the SYNTHETIC fixture fixtures/relax_fixture.xyz (see make_fixture.py).
 """
+import base64
 import json
 import shutil
 import subprocess
@@ -183,6 +184,69 @@ def test_autofit_frames_slab_without_cropping(rep):
     assert x0 > 0.01 and y0 > 0.01 and x1 < 0.99 and y1 < 0.99   # not cropped
     assert max(x1 - x0, y1 - y0) > 0.8                            # fills the frame
     assert abs((x0 + x1) / 2 - 0.5) < 0.05 and abs((y0 + y1) / 2 - 0.5) < 0.05
+
+
+# ------------------------------------------------ orientation (screen truth)
+CHIRAL_XYZ = """3
+chirality: Pt at origin, O on +x, H on +y
+Pt 0.0 0.0 0.0
+O 3.0 0.0 0.0
+H 0.0 3.0 0.0
+"""
+
+# Colour-class centroids (x, y as image fractions; y grows DOWN) of a PNG data URL.
+CENTROIDS_JS = """async (src) => {
+  const img = new Image(); img.src = src; await img.decode();
+  const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height).data;
+  const acc = {red: [0, 0, 0], white: [0, 0, 0], grey: [0, 0, 0]};
+  for (let y = 0; y < c.height; y++) for (let x = 0; x < c.width; x++) {
+    const i = 4 * (y * c.width + x), r = d[i], gg = d[i+1], b = d[i+2];
+    let k = null;
+    if (r > 150 && gg < 90 && b < 90) k = 'red';
+    else if (r > 225 && gg > 225 && b > 225) k = 'white';
+    else if (r > 60 && Math.abs(r - gg) < 20 && b >= r && r < 215) k = 'grey';
+    if (k) { acc[k][0] += x / c.width; acc[k][1] += y / c.height; acc[k][2]++; } }
+  const out = {};
+  for (const [k, v] of Object.entries(acc)) out[k] = v[2] ? [v[0] / v[2], v[1] / v[2]] : null;
+  return out; }"""
+
+
+def _screen_and_snapshot(page):
+    """Centroids from what the screen shows (element screenshot) and from snapshot()."""
+    shot = page.locator("#scene").screenshot()
+    screen = "data:image/png;base64," + base64.b64encode(shot).decode()
+    return (page.evaluate(CENTROIDS_JS, screen),
+            page.evaluate(CENTROIDS_JS, page.evaluate("() => window.__scene.snapshot()")))
+
+
+def test_top_view_chirality_on_screen_and_snapshot_agree():
+    """Top view: +x right, +y up on SCREEN; snapshot() is not mirrored."""
+    with capture.scene_page(CHIRAL_XYZ, width=300, height=300, background="#000000",
+                            replicate=[1, 1], view="top",
+                            ambientOcclusion=False) as page:
+        page.evaluate("() => window.__scene.setView({elevation: 90, azimuth: 0})")
+        screen, snap = _screen_and_snapshot(page)
+    pt, o, h = screen["grey"], screen["red"], screen["white"]
+    assert o[0] > pt[0] + 0.2 and abs(o[1] - pt[1]) < 0.05     # O to the right
+    assert h[1] < pt[1] - 0.2 and abs(h[0] - pt[0]) < 0.05     # H above
+    for k in ("grey", "red", "white"):
+        assert abs(screen[k][0] - snap[k][0]) < 0.02, k
+        assert abs(screen[k][1] - snap[k][1]) < 0.02, k
+
+
+@pytest.mark.parametrize("view", ["tilted", "side", "hero"])
+def test_adsorbate_above_slab_on_screen(view):
+    """O sits on the top surface, so on SCREEN it must be above the Pt centroid."""
+    with capture.scene_page(FIXTURE.read_text(), width=400, height=300,
+                            background="#000000", replicate=[1, 1], view=view,
+                            ambientOcclusion=False) as page:
+        screen, snap = _screen_and_snapshot(page)
+    margin = {"tilted": 0.05, "side": 0.1, "hero": 0.05}[view]
+    assert screen["red"][1] < screen["grey"][1] - margin
+    assert abs(screen["red"][1] - snap["red"][1]) < 0.02
+    assert abs(screen["grey"][1] - snap["grey"][1]) < 0.02
 
 
 def test_frame_plan_bounce_and_hold():
