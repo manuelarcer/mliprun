@@ -24,7 +24,7 @@ pip install mace-torch      # simplest — works immediately, no access request
 mlip doctor                 # verify what the environment can run
 ```
 
-The `mlip` (including `mlip doctor`), `optimize`, `md`, `neb`, `autoneb`, `autoneb-results`, and `benchmark` commands all become available after `pip install -e .`. See the [README](README.md) for usage and [docs/PYTHON_API.md](docs/PYTHON_API.md) for the public Python API.
+The `mlip` (including `mlip doctor`), `optimize`, `md`, `neb`, `autoneb`, `autoneb-results`, and `benchmark` commands all become available after `pip install -e .`. See the [command reference](docs/CLI.md) for usage and [docs/PYTHON_API.md](docs/PYTHON_API.md) for the public Python API.
 
 ## Running tests
 
@@ -72,7 +72,7 @@ pytestmark = pytest.mark.uma   # entire module gated on fairchem-core
 1. Branch from `main`.
 2. Keep the PR focused. One feature or one fix per PR.
 3. Update documentation in the same PR:
-   - User-visible flag changes → README and the relevant `docs/*.md` page.
+   - User-visible flag changes → `docs/CLI.md` and the relevant `docs/*.md` page. The README is generated (`site/alt-5-cinematic/build_readme.py --root`); do not edit it by hand.
    - New output files → `docs/OUTPUTS.md`.
    - Public Python API changes → `docs/PYTHON_API.md`.
 4. Add or update tests. Unit tests should run without any MLIP installed; mark MLIP-dependent tests as above.

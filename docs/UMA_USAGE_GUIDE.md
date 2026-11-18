@@ -140,7 +140,7 @@ benchmark run --structure structure.vasp --models uma-s-1p2 --uma-task omat
 benchmark run --structure structure.vasp --models uma-s-1p2,mace --output bench.json
 ```
 
-`benchmark run` times one `get_potential_energy()` call per model in-process. With no `--models`, it benchmarks every MLIP installed in the current environment. See the [main README](../README.md#benchmark) for the full option list.
+`benchmark run` times one `get_potential_energy()` call per model in-process. With no `--models`, it benchmarks every MLIP installed in the current environment. See the [command reference](CLI.md#benchmark) for the full option list.
 
 ---
 
@@ -250,7 +250,7 @@ The platform configures UMA for CPU only. For systems beyond ~500 atoms you will
 
 ## Output files
 
-The output files produced by each command are listed in the relevant section of the [main README](../README.md). UMA-specific runs add the model name and (for UMA) the task name to the parameter file written by every command (`opt_params.txt`, `md_params.txt`, `neb_parameters.txt`, `autoneb_parameters.txt`).
+The output files produced by each command are listed in [OUTPUTS.md](OUTPUTS.md). UMA-specific runs add the model name and (for UMA) the task name to the parameter file written by every command (`opt_params.txt`, `md_params.txt`, `neb_parameters.txt`, `autoneb_parameters.txt`).
 
 ---
 
