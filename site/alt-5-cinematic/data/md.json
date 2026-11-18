@@ -1,0 +1,56 @@
+{
+ "use_case": "md",
+ "command": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/bin/mlip optimize run --structure /scratchb/juar/mliprun-showcase/04_md/bilayer_relax/POSCAR --mlip uma-s-1p2 --uma-task oc20 --device cuda --fmax 0.02 --optimizer bfgs --max-steps 500",
+ "converged": false,
+ "flags": [
+  "md_not_run",
+  "pending_scientist_decision"
+ ],
+ "key_numbers": [
+  {
+   "label": "bilayer relaxation (not MD): highest water O above top Pt layer",
+   "value": 5.197149551691403,
+   "unit": "Å"
+  },
+  {
+   "label": "bilayer relaxation (not MD): lowest water O above top Pt layer",
+   "value": 4.683417796247529,
+   "unit": "Å"
+  },
+  {
+   "label": "bilayer relaxation (not MD): longest O–H bond",
+   "value": 1.0040048079905892,
+   "unit": "Å"
+  },
+  {
+   "label": "bilayer relaxation (not MD): water-check height limit",
+   "value": 4.0,
+   "unit": "Å"
+  },
+  {
+   "label": "bilayer relaxation (not MD): final fmax",
+   "value": 0.018360598012804985,
+   "unit": "eV/Å"
+  }
+ ],
+ "series": {},
+ "frames": null,
+ "status": "pending",
+ "run_dir": "04_md/bilayer_relax",
+ "structures": {
+  "built": {
+   "file": "md_bilayer_built.xyz",
+   "label": "6-H2O bilayer on Pt(111) as built (input to the bilayer relaxation)"
+  },
+  "relaxed_oc20": {
+   "file": "md_bilayer_relaxed.xyz",
+   "label": "same bilayer after uma-s-1p2/oc20 relaxation (planned MD start in run_04_md.sh); water O 4.7–5.2 Å above the top Pt layer"
+  }
+ },
+ "notes": [
+  "The 6-H2O bilayer relaxation converged with uma-s-1p2/oc20. The intact water layer ended at O heights 4.7–5.2 Å above the top Pt layer (water-check limit 4.0 Å).",
+  "The MD was not run. How to proceed is pending the scientist's decision.",
+  "command is the bilayer relaxation that ran, not an MD command.",
+  "converged refers to the MD (false: it never ran); frames and series are empty."
+ ]
+}

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>mliprun on Pt(111)</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="mliprun: relaxations, committees, NEB with TS checks and remote runs, shown on real runs of O on Pt(111).">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body data-chapter="hero">
+
+<!-- The 3D scene sits behind everything; it is fixed and changes with the chapter. -->
+<div id="stage" class="stage" role="img" aria-label="3D scene: loading"></div>
+<div class="scrim" aria-hidden="true"></div>
+<div id="scene-tags" class="scene-tags" aria-hidden="true"></div>
+
+<div class="scene-bar" id="scene-bar">
+  <div class="scene-text"><p class="scene-caption"><span id="cap-text">Loading the 3D scene</span><span id="cap-live" class="cap-live" aria-live="polite"></span></p><div id="cap-extra" class="cap-extra" hidden></div></div>
+  <div class="scene-controls">
+    <button type="button" id="btn-play" class="ctl" hidden>Play</button>
+    <button type="button" id="btn-mode" class="ctl" hidden>Show TS mode</button>
+    <button type="button" id="btn-rotate" class="ctl ctl-touch" aria-pressed="false">Rotate scene</button>
+  </div>
+</div>
+
+<nav class="chapters" aria-label="Use cases">
+  <a href="#hero" data-for="hero">Overview</a>
+  <a href="#relax" data-for="relax">Relaxation</a>
+  <a href="#committee" data-for="committee">Committee</a>
+  <a href="#neb" data-for="neb">Reaction path</a>
+  <a href="#md" data-for="md">MD</a>
+  <a href="#webapp" data-for="webapp">Web app</a>
+</nav>
+
+<main>
+  <header class="hero" id="hero" data-scene="hero">
+    <div class="hero-copy">
+      <h1 class="wordmark">mliprun</h1>
+      <p class="lede">One CLI and one web app for machine-learning interatomic potentials: relax, compare models, find reaction paths, and run on a remote GPU machine you add.</p>
+      <p class="hero-note">Behind: O hopping fcc → hcp on Pt(111), from a real NEB run.<span class="fine-only"> Drag to rotate.</span></p>
+      <p class="hero-links"><a href="#relax" class="btn-primary">Step through the five workflows</a> <a href="#install" class="btn-quiet">Install</a></p>
+    </div>
+  </header>
+
+  <section class="chapter" id="relax" data-scene="relax" aria-labelledby="h-relax">
+    <article class="card" id="card-relax">
+      <h2 id="h-relax">Relax an adsorbate</h2>
+      <p class="card-sub">O on Pt(111), BFGS to the fmax target.</p>
+      <div class="card-body" data-fill="relax"><p class="loading">Loading relax.json</p></div>
+    </article>
+  </section>
+
+  <section class="chapter" id="committee" data-scene="committee" aria-labelledby="h-committee">
+    <article class="card" id="card-committee">
+      <h2 id="h-committee">Relax with a committee</h2>
+      <p class="card-sub">Several models relax together and report how far their forces disagree.</p>
+      <div class="card-body" data-fill="committee"><p class="loading">Loading committee.json</p></div>
+    </article>
+  </section>
+
+  <section class="chapter" id="neb" data-scene="neb" aria-labelledby="h-neb">
+    <article class="card" id="card-neb">
+      <h2 id="h-neb">Find the path, verify the TS</h2>
+      <p class="card-sub">Climbing-image NEB fcc → hcp, then a TS check.</p>
+      <div class="card-body" data-fill="neb"><p class="loading">Loading neb.json</p></div>
+    </article>
+  </section>
+
+  <section class="chapter" id="md" data-scene="md" aria-labelledby="h-md">
+    <article class="card" id="card-md">
+      <h2 id="h-md">Finite-temperature MD</h2>
+      <p class="card-sub">Water bilayer on Pt(111).</p>
+      <div class="card-body" data-fill="md"><p class="loading">Loading md.json</p></div>
+    </article>
+  </section>
+
+  <section class="chapter chapter-wide" id="webapp" data-scene="webapp" aria-labelledby="h-webapp">
+    <article class="card card-wide" id="card-webapp">
+      <h2 id="h-webapp">Run it on your own GPU machine from the web app</h2>
+      <p class="card-sub">No preconfigured machines: add your own in the web app.</p>
+      <details class="notes"><summary>How to add a machine</summary><ol class="steps"><li>Machines, Add machine: Name, Host (<code>&lt;your ssh alias&gt;</code> from ~/.ssh/config), Default remote location (<code>&lt;your remote folder&gt;</code>).</li><li>On the saved machine: Add environment, Python path <code>&lt;your uma env&gt;/bin/python</code>.</li><li>Test connection, then submit.</li></ol></details>
+      <div class="card-body" data-fill="webapp"><p class="loading">Loading webapp.json</p></div>
+    </article>
+  </section>
+
+  <footer class="coda" id="install">
+    <div class="coda-inner">
+      <section class="coda-col" aria-labelledby="h-install">
+        <h2 id="h-install">Install</h2>
+        <p>One MLIP per environment.</p>
+        <pre class="cmd-block"><code>git clone https://github.com/manuelarcer/mliprun.git
+cd mliprun
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -e .
+mlip doctor</code></pre>
+        <p><a href="https://github.com/manuelarcer/mliprun/blob/main/docs/INSTALL.md">Full installation instructions (docs/INSTALL.md)</a></p>
+      </section>
+      <section class="coda-col" aria-labelledby="h-also">
+        <h2 id="h-also">Also in mliprun</h2>
+        <ul class="caps">
+          <li><code>freq run</code> vibrational frequencies, imaginary-mode count and zero-point energy</li>
+          <li><code>autoneb run</code> NEB with dynamic image insertion</li>
+          <li><code>benchmark</code> compare models on one set of structures</li>
+          <li><code>singlepoint run</code> energy, forces and stress without relaxing</li>
+          <li>UMA, MACE, SevenNet and CHGNet, each in its own environment</li>
+          <li><code>mlip doctor</code> checks that an environment can run its model</li>
+        </ul>
+      </section>
+      <section class="coda-col" aria-labelledby="h-prov">
+        <h2 id="h-prov">Where the numbers come from</h2>
+        <p id="prov-text">Demonstration runs; every number is read from the data pack.</p>
+        <p id="prov-slab" class="muted"></p>
+        <p><a href="https://github.com/manuelarcer/mliprun/blob/main/docs/showcase/data/pack/PROVENANCE.md">Provenance of the data pack</a></p>
+      </section>
+    </div>
+  </footer>
+</main>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>
