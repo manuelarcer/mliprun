@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="444" viewBox="0 0 960 444" role="img" aria-label="Animated terminal: mlip neb run with --verify-ts both on O fcc to hcp on Pt(111); real log lines and the resulting image-energy profile">
+<style>
+  .ln, .pop { animation: show .01s step-end backwards; }
+  .type { transform-box: fill-box; transform-origin: right center;
+           animation-name: type; animation-fill-mode: backwards; transform: scaleX(0); }
+  .draw { animation: draw 1.6s ease-out backwards; stroke-dashoffset: 0; }
+  @keyframes show { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes type { from { transform: scaleX(1) } to { transform: scaleX(0) } }
+  @keyframes draw { from { stroke-dashoffset: var(--len, 1200) } to { stroke-dashoffset: 0 } }
+  @media (prefers-reduced-motion: reduce) { .ln, .pop, .type, .draw { animation: none !important; } }
+</style>
+<rect width="960" height="444" rx="10" fill="#0d1117" stroke="#30363d"/>
+<rect x="8" y="8" width="582" height="428" rx="7" fill="#11161d" stroke="#30363d"/>
+<text x="18" y="28" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" fill="#94a0ad">ran on cos-cluster  …/juar/mliprun-showcase/03_neb   ·   real output, excerpted</text>
+<line x1="8" x2="590" y1="38" y2="38" stroke="#30363d"/>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="11.6">
+<g><text x="18" y="63" fill="#e2e8ee" xml:space="preserve">$ …/uma/bin/mlip neb run \</text><rect class="type" x="18" y="50" width="560" height="17" fill="#11161d" style="animation-duration:0.29s;animation-delay:0.40s;animation-timing-function:steps(26)"/></g>
+<g><text x="18" y="80" fill="#e2e8ee" xml:space="preserve">    --initial o_fcc/opt_final.vasp --final o_hcp/opt_final.vasp \</text><rect class="type" x="18" y="67" width="560" height="17" fill="#11161d" style="animation-duration:0.71s;animation-delay:0.74s;animation-timing-function:steps(65)"/></g>
+<g><text x="18" y="97" fill="#e2e8ee" xml:space="preserve">    --mlip uma-s-1p2 --uma-task oc20 --device cuda \</text><rect class="type" x="18" y="84" width="560" height="17" fill="#11161d" style="animation-duration:0.57s;animation-delay:1.50s;animation-timing-function:steps(52)"/></g>
+<g><text x="18" y="114" fill="#e2e8ee" xml:space="preserve">    --num-images 7 --k 0.1 --climb --fmax 0.02 \</text><rect class="type" x="18" y="101" width="560" height="17" fill="#11161d" style="animation-duration:0.53s;animation-delay:2.12s;animation-timing-function:steps(48)"/></g>
+<g><text x="18" y="131" fill="#e2e8ee" xml:space="preserve">    --optimize-endpoints --endpoint-fmax 0.02 \</text><rect class="type" x="18" y="118" width="560" height="17" fill="#11161d" style="animation-duration:0.52s;animation-delay:2.70s;animation-timing-function:steps(47)"/></g>
+<g><text x="18" y="148" fill="#e2e8ee" xml:space="preserve">    --endpoint-optimizer bfgs --verify-ts both --plot</text><rect class="type" x="18" y="135" width="560" height="17" fill="#11161d" style="animation-duration:0.58s;animation-delay:3.27s;animation-timing-function:steps(53)"/></g>
+<text class="ln" x="18" y="165" fill="#94a0ad" xml:space="preserve" style="animation-delay:4.15s">Using MLIP: uma-s-1p2</text>
+<text class="ln" x="18" y="182" fill="#94a0ad" font-style="italic" xml:space="preserve" style="animation-delay:4.21s"># not shown: 2 min 7 s of model load, endpoint relaxation and IDPP</text>
+<text class="ln" x="18" y="199" fill="#94a0ad" xml:space="preserve" style="animation-delay:4.27s">Running NEB optimization (optimizer=FIRE, climb=True, max_steps=600)...</text>
+<text class="ln" x="18" y="216" fill="#94a0ad" font-style="italic" xml:space="preserve" style="animation-delay:4.33s"># neb.log, every 9th of 46 Step lines</text>
+<text class="ln" x="18" y="233" fill="#e2e8ee" xml:space="preserve" style="animation-delay:4.39s">Step    0  Fmax: 3.174757 eV/A  Barrier: 0.860359 eV</text>
+<text class="ln" x="18" y="250" fill="#e2e8ee" xml:space="preserve" style="animation-delay:4.47s">Step    9  Fmax: 0.407500 eV/A  Barrier: 0.584314 eV</text>
+<text class="ln" x="18" y="267" fill="#e2e8ee" xml:space="preserve" style="animation-delay:4.55s">Step   18  Fmax: 0.208713 eV/A  Barrier: 0.551712 eV</text>
+<text class="ln" x="18" y="284" fill="#e2e8ee" xml:space="preserve" style="animation-delay:4.63s">Step   27  Fmax: 0.159534 eV/A  Barrier: 0.547610 eV</text>
+<text class="ln" x="18" y="301" fill="#e2e8ee" xml:space="preserve" style="animation-delay:4.71s">Step   36  Fmax: 0.040658 eV/A  Barrier: 0.544602 eV</text>
+<text class="ln" x="18" y="318" fill="#e2e8ee" xml:space="preserve" style="animation-delay:4.79s">Step   45  Fmax: 0.017678 eV/A  Barrier: 0.544238 eV</text>
+<text class="ln" x="18" y="335" fill="#94a0ad" font-style="italic" xml:space="preserve" style="animation-delay:4.87s"># not shown: 5 min 56 s (results, TS verification)</text>
+<text class="ln" x="18" y="352" fill="#5cc28a" xml:space="preserve" style="animation-delay:5.18s">TS verification: verified</text>
+<text class="ln" x="18" y="369" fill="#e2e8ee" xml:space="preserve" style="animation-delay:5.24s">Imaginary modes: 1 (128.3i cm⁻¹)</text>
+<text class="ln" x="18" y="386" fill="#e2e8ee" xml:space="preserve" style="animation-delay:5.30s">TS fmax (free components): 0.0123 eV/Å (limit 0.0300)</text>
+<text class="ln" x="18" y="403" fill="#5cc28a" xml:space="preserve" style="animation-delay:5.36s">Overlap with neb_tangent: 0.9622 (threshold 0.70) -&gt; pass</text>
+<text class="ln" x="18" y="420" fill="#5cc28a" xml:space="preserve" style="animation-delay:5.42s">Displace-and-relax: connects</text>
+</g>
+<text x="610" y="28" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#e2e8ee">Image energies, final band (9 images)</text>
+<g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#94a0ad">
+<line x1="654.0" x2="938.0" y1="295.5" y2="295.5" stroke="#1f262e" stroke-width="1"/>
+<text x="648.0" y="299.5" text-anchor="end">0</text>
+<line x1="654.0" x2="938.0" y1="226.5" y2="226.5" stroke="#1f262e" stroke-width="1"/>
+<text x="648.0" y="230.5" text-anchor="end">0.2</text>
+<line x1="654.0" x2="938.0" y1="157.5" y2="157.5" stroke="#1f262e" stroke-width="1"/>
+<text x="648.0" y="161.5" text-anchor="end">0.4</text>
+<line x1="654.0" x2="938.0" y1="88.5" y2="88.5" stroke="#1f262e" stroke-width="1"/>
+<text x="648.0" y="92.5" text-anchor="end">0.6</text>
+<text x="654.0" y="346.0" text-anchor="middle">0</text>
+<text x="725.0" y="346.0" text-anchor="middle">0.5</text>
+<text x="796.0" y="346.0" text-anchor="middle">1</text>
+<text x="867.0" y="346.0" text-anchor="middle">1.5</text>
+<text x="938.0" y="346.0" text-anchor="middle">2</text>
+<line x1="654.0" x2="938.0" y1="330.0" y2="330.0" stroke="#30363d"/>
+<text x="796.0" y="366.0" text-anchor="middle">reaction coordinate (Å)</text>
+<text transform="translate(621.0 192.0) rotate(-90)" text-anchor="middle">E − E<tspan font-size="8" dy="2">IS</tspan><tspan dy="-2"> (eV)</tspan></text>
+</g>
+<polyline class="draw" style="--len:396;stroke-dasharray:396;animation-delay:4.48s" points="654.0,295.5 696.7,280.7 732.4,206.8 766.7,148.0 801.1,118.5 835.3,107.7 864.9,118.0 898.0,154.2 930.2,168.5" fill="none" stroke="#f2705f" stroke-width="2" stroke-linejoin="round"/>
+<g class="pop" style="animation-delay:5.68s">
+<circle cx="654.0" cy="295.5" r="3" fill="#0d1117" stroke="#f2705f" stroke-width="1.6"/>
+<circle cx="696.7" cy="280.7" r="3" fill="#0d1117" stroke="#f2705f" stroke-width="1.6"/>
+<circle cx="732.4" cy="206.8" r="3" fill="#0d1117" stroke="#f2705f" stroke-width="1.6"/>
+<circle cx="766.7" cy="148.0" r="3" fill="#0d1117" stroke="#f2705f" stroke-width="1.6"/>
+<circle cx="801.1" cy="118.5" r="3" fill="#0d1117" stroke="#f2705f" stroke-width="1.6"/>
+<circle cx="835.3" cy="107.7" r="4.5" fill="#f2705f" stroke="#f2705f" stroke-width="1.6"/>
+<circle cx="864.9" cy="118.0" r="3" fill="#0d1117" stroke="#f2705f" stroke-width="1.6"/>
+<circle cx="898.0" cy="154.2" r="3" fill="#0d1117" stroke="#f2705f" stroke-width="1.6"/>
+<circle cx="930.2" cy="168.5" r="3" fill="#0d1117" stroke="#f2705f" stroke-width="1.6"/>
+<line x1="654.0" x2="835.3" y1="295.5" y2="295.5" stroke="#94a0ad" stroke-dasharray="3 3"/>
+<line x1="835.3" x2="835.3" y1="295.5" y2="113.7" stroke="#e2e8ee" stroke-width="1"/>
+<text x="829.3" y="201.6" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#e2e8ee">E<tspan font-size="9" dy="3">a</tspan><tspan dy="-3"> = 0.544 eV</tspan></text>
+<text x="930.2" y="186.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#e2e8ee">ΔE = +0.368 eV</text>
+<text x="656.0" y="311.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#94a0ad">O fcc</text>
+<text x="930.2" y="202.5" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" fill="#94a0ad">O hcp</text>
+</g>
+</svg>
