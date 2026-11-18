@@ -130,13 +130,14 @@ def _threedmol_bytes() -> bytes | None:
     return THREEDMOL_CACHE.read_bytes()
 
 
-def _page_html(width: int, height: int, background: str, opts: dict) -> str:
+def _page_html(width: int, height: int, background: str, opts: dict,
+               below_px: int = 0) -> str:
     bg = "transparent" if background == "transparent" else background
     return f"""<!doctype html>
 <html><head><meta charset="utf-8">
-<style>html,body{{margin:0;padding:0;background:{bg};overflow:hidden}}
+<style>html,body{{margin:0;padding:0;background:{bg};{'overflow:hidden' if not below_px else ''}}}
 #scene{{width:{width}px;height:{height}px}}</style></head>
-<body><div id="scene"></div>
+<body><div id="scene"></div><div id="below" style="height:{below_px}px"></div>
 <script type="module">
 import {{ loadScene }} from "./viewer.js";
 const opts = {json.dumps(opts)};
@@ -148,16 +149,21 @@ loadScene(document.getElementById("scene"), "./scene.xyz", opts)
 @contextlib.contextmanager
 def scene_page(xyz_text: str, width: int = 640, height: int = 480, scale: float = 2,
                reduced_motion: bool = False, background: str = "#ffffff",
-               timeout_ms: int = 60000, **opts):
+               timeout_s: float = 120.0, has_touch: bool = False,
+               is_mobile: bool = False, below_px: int = 0, **opts):
     """Yield a Playwright page whose window.__scene is a ready viewer.
 
     Extra keyword arguments are passed to loadScene as opts (camelCase keys).
+    timeout_s bounds page load and scene readiness (auto-fit is slow under
+    SwiftShader on a loaded machine). has_touch / is_mobile emulate a phone;
+    below_px adds page content under the scene (for scroll tests).
     """
+    timeout_ms = int(timeout_s * 1000)
     from playwright.sync_api import sync_playwright
 
     scene_opts = {"capture": True, "autoplay": False, "background": background,
                   "pauseOffscreen": False, "interactive": False, **opts}
-    html = _page_html(width, height, background, scene_opts)
+    html = _page_html(width, height, background, scene_opts, below_px)
     viewer_js = (HERE / "viewer.js").read_bytes()
     lib = _threedmol_bytes()
 
@@ -181,13 +187,13 @@ def scene_page(xyz_text: str, width: int = 640, height: int = 480, scale: float 
         try:
             ctx = browser.new_context(
                 viewport={"width": width, "height": height},
-                device_scale_factor=scale,
+                device_scale_factor=scale, has_touch=has_touch, is_mobile=is_mobile,
                 reduced_motion="reduce" if reduced_motion else "no-preference")
             page = ctx.new_page()
             errors = []
             page.on("pageerror", lambda e: errors.append(str(e)))
             page.route("**/*", handle)
-            page.goto(ORIGIN + "/index.html")
+            page.goto(ORIGIN + "/index.html", timeout=timeout_ms)
             page.wait_for_function(
                 "() => (window.__scene && window.__scene.ready) || window.__sceneError",
                 timeout=timeout_ms)
@@ -258,7 +264,8 @@ def encode_mp4(frames_dir: Path, fps: float, out: Path, width: int) -> dict:
 def render_frames(xyz: Path, frames_dir: Path, *, n_frames=None, width=640, height=480,
                   replicate=(2, 2), view="tilted", style="spacefill", fps=20.0,
                   hold=0.8, bounce=False, spin=0.0, background="#ffffff",
-                  camera=None, image_tint=0.0, scale=2) -> list[int]:
+                  camera=None, image_tint=0.0, scale=2,
+                  timeout_s=120.0) -> list[int]:
     """Write f00000.png ... into frames_dir; return the frame plan."""
     frames_dir.mkdir(parents=True, exist_ok=True)
     stale = sorted(frames_dir.glob("f*.png"))
@@ -269,7 +276,7 @@ def render_frames(xyz: Path, frames_dir: Path, *, n_frames=None, width=640, heig
     opts = {"replicate": list(replicate), "view": view, "style": style,
             "imageTint": image_tint, "fitSpin": bool(spin)}
     with scene_page(text, width=width, height=height, scale=scale,
-                    background=background, **opts) as page:
+                    background=background, timeout_s=timeout_s, **opts) as page:
         n_src = page.evaluate("() => window.__scene.nFrames")
         if camera:
             page.evaluate("(v) => window.__scene.setView(v)", camera)
@@ -321,6 +328,8 @@ def main(argv=None) -> int:
                    help="0..1 fade of periodic images toward the background")
     p.add_argument("--scale", type=float, default=2.0,
                    help="supersampling factor (render at scale x size, downscale)")
+    p.add_argument("--timeout", type=float, default=120.0,
+                   help="seconds allowed for page load and scene auto-fit (default 120)")
     p.add_argument("--keep-frames", type=Path, default=None,
                    help="write the PNG frames here (must be new or hold no f*.png)")
     a = p.parse_args(argv)
@@ -335,7 +344,8 @@ def main(argv=None) -> int:
                              height=a.height, replicate=a.replicate, view=a.view,
                              style=a.style, fps=a.fps, hold=a.hold, bounce=a.bounce,
                              spin=a.spin, background=a.background, camera=camera or None,
-                             image_tint=a.image_tint, scale=a.scale)
+                             image_tint=a.image_tint, scale=a.scale,
+                             timeout_s=a.timeout)
         gif = encode_gif(frames_dir, a.fps, a.out_stem.with_suffix(".gif"), a.width)
         mp4 = encode_mp4(frames_dir, a.fps, a.out_stem.with_suffix(".mp4"), a.width)
     finally:

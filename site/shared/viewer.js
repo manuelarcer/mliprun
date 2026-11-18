@@ -50,6 +50,33 @@
 //   restFrame ("last") frame shown when not playing: "last" | "first" | index
 //   interactive (true) mouse rotation; scrollZoom (false): the wheel scrolls
 //                      the page, not the scene, unless scrollZoom is true
+//   touchRotate        null (default) = auto: OFF on coarse pointers (phones,
+//                      tablets), ON otherwise. When off, touches pass through
+//                      the canvas so a swipe on a scene SCROLLS THE PAGE (3Dmol
+//                      itself calls preventDefault on touch). Enable rotation
+//                      deliberately with touchRotate:true, or at runtime with
+//                      ctrl.setTouchRotate(true) (e.g. behind a "rotate" toggle).
+//   restyle(viewer, model, frameIndex)
+//                      page styling hook. The viewer REBUILDS the model on every
+//                      frame (playback, setFrame), on every auto-fit (window
+//                      resize, setView, resize()) and at load, and each rebuild
+//                      re-applies the default element style. Anything styled
+//                      directly on ctrl.viewer is therefore wiped. Put custom
+//                      colouring (e.g. per-atom sigma) in restyle: it runs after
+//                      the default style on EVERY rebuild, before rendering.
+//                      model.selectedAtoms({}) gives atoms with .properties.src
+//                      (index in the xyz frame) and .properties.image (periodic
+//                      copy). Change it later with ctrl.setRestyle(fn) (redraws).
+//                      Errors thrown inside it are logged, not raised.
+//   fit (true)         pixel auto-fit of the framing. It is the slow part of a
+//                      load under software WebGL (SwiftShader: 15-40 s for a
+//                      scene swap). To skip it: load once with fit on, read
+//                      ctrl.getCamera(), and pass that array back as `camera`
+//                      on later loads with the SAME view, replicate and element
+//                      aspect ratio. fit:false without camera uses 3Dmol's
+//                      zoomTo framing plus view.zoom (may crop a tilted slab).
+//   camera             null | 8-number array from ctrl.getCamera(): fixed
+//                      framing, no auto-fit at load or on resize
 //   pauseOffscreen (true) pause while the element is out of the viewport
 //   capture (false)    set window.__scene = ctrl (used by capture.py)
 //   onFrame(i)         called after each frame is drawn. It FIRES BEFORE the
@@ -63,6 +90,9 @@
 //   pause(), setFrame(i) (clamps, pauses, returns index), frame, playing,
 //   nFrames, frames (per-frame info objects), cell, symbols, reducedMotion,
 //   setView(v, {fit=true}), getView(), resize(),
+//   getCamera()    8-number framing array (pass back as opts.camera)
+//   setRestyle(fn) replace the restyle hook and redraw the current frame
+//   setTouchRotate(on) switch touch rotation at runtime
 //   snapshot()     PNG data URL matching the SCREEN orientation. Do not use
 //                  ctrl.viewer.pngURI(): in Chromium it is vertically mirrored.
 //   destroy(), viewer (raw 3Dmol viewer for labels/arrows), ready.
@@ -150,6 +180,10 @@ const DEFAULTS = {
   pauseOffscreen: true,
   capture: false, // expose window.__scene for scripted frame stepping
   onFrame: null,
+  restyle: null, // (viewer, model, frameIndex) => void; runs after every rebuild
+  touchRotate: null, // null = auto (off on coarse pointers)
+  fit: true, // pixel auto-fit of the framing
+  camera: null, // fixed framing from ctrl.getCamera(); skips auto-fit
 };
 
 // ------------------------------------------------------------------ parsing
@@ -406,6 +440,16 @@ export async function loadScene(el, xyzUrl, opts = {}) {
   const wheelGuard = (e) => { if (!o.scrollZoom) e.stopPropagation(); };
   el.addEventListener("wheel", wheelGuard, { capture: true });
 
+  // Touch: 3Dmol calls preventDefault on touchstart/touchmove, which blocks page
+  // scrolling. Unless touch rotation is on, stop touch events before they reach
+  // the canvas (capture phase, passive) so the browser scrolls the page.
+  const coarse = typeof window !== "undefined" && !!window.matchMedia &&
+    window.matchMedia("(pointer: coarse)").matches;
+  let touchOn = o.touchRotate === null || o.touchRotate === undefined ? !coarse : !!o.touchRotate;
+  const touchGuard = (e) => { if (!touchOn) e.stopPropagation(); };
+  const TOUCH_EVENTS = ["touchstart", "touchmove", "touchend", "touchcancel"];
+  for (const t of TOUCH_EVENTS) el.addEventListener(t, touchGuard, { capture: true, passive: true });
+
   const colorOf = (atom) => {
     const base = (ELEMENT_STYLE[atom.elem] || FALLBACK).color;
     return atom.properties && atom.properties.image && o.imageTint > 0
@@ -450,12 +494,20 @@ export async function loadScene(el, xyzUrl, opts = {}) {
 
   let current = -1;
   let silent = false; // no onFrame callbacks while the camera fit renders frames
+  let restyleFn = typeof o.restyle === "function" ? o.restyle : null;
   const show = (i) => {
     const k = Math.max(0, Math.min(nFrames - 1, Math.round(i)));
     viewer.removeAllModels();
     const m = viewer.addModel();
     m.addAtoms(buildAtoms(frames[k], rep, o.replicateElements, center));
     applyStyle();
+    if (restyleFn) {
+      try {
+        restyleFn(viewer, m, k);
+      } catch (err) {
+        console.error("viewer.js restyle hook failed:", err);
+      }
+    }
     viewer.render();
     current = k;
     if (o.onFrame && !silent) o.onFrame(k);
@@ -553,7 +605,16 @@ export async function loadScene(el, xyzUrl, opts = {}) {
     if (keep >= 0) show(keep);
     silent = false;
   };
-  fit({ spinFit: !!(o.spin || o.fitSpin) });
+  const fixedCamera = Array.isArray(o.camera) && o.camera.length >= 8;
+  const autoFit = !!o.fit && !fixedCamera;
+  if (fixedCamera) {
+    fitted = o.camera.slice(0, 8);
+    applyView();
+  } else if (autoFit) {
+    fit({ spinFit: !!(o.spin || o.fitSpin) });
+  } else {
+    applyView();
+  }
 
   const restIndex = o.restFrame === "first" ? 0
     : o.restFrame === "last" ? nFrames - 1 : Math.max(0, Math.min(nFrames - 1, o.restFrame | 0));
@@ -626,7 +687,8 @@ export async function loadScene(el, xyzUrl, opts = {}) {
   const onResize = () => {
     if (destroyed) return;
     viewer.resize();
-    fit({ spinFit: !!(o.spin || o.fitSpin) });
+    if (autoFit) fit({ spinFit: !!(o.spin || o.fitSpin) });
+    else { applyView(); show(current); }
   };
   // Window resizes fire in bursts; refit once they settle (~150 ms).
   let resizeTimer = 0;
@@ -671,10 +733,19 @@ export async function loadScene(el, xyzUrl, opts = {}) {
      */
     setView(v, { fit: refit = true } = {}) {
       viewState = typeof v === "string" ? { ...(VIEWS[v] || VIEWS.tilted) } : { ...viewState, ...v };
-      if (refit) fit({ spinFit: !!(o.spin || o.fitSpin) });
+      if (refit && autoFit) fit({ spinFit: !!(o.spin || o.fitSpin) });
       else applyView();
     },
     getView() { return { ...viewState }; },
+    /** Framing array (before view.zoom); pass back as opts.camera to skip auto-fit. */
+    getCamera() { return fitted.slice(0, 8); },
+    /** Replace the restyle hook (null removes it) and redraw the current frame. */
+    setRestyle(fn) {
+      restyleFn = typeof fn === "function" ? fn : null;
+      show(current);
+    },
+    /** Turn touch rotation on (touches rotate) or off (touches scroll the page). */
+    setTouchRotate(on) { touchOn = !!on; },
     /** PNG data URL of the current canvas (device pixels; alpha kept if transparent). */
     snapshot() {
       // viewer.pngURI() (toDataURL on 3Dmol's bitmaprenderer canvas) returns
@@ -696,6 +767,7 @@ export async function loadScene(el, xyzUrl, opts = {}) {
       clearTimeout(resizeTimer);
       window.removeEventListener("resize", onWindowResize);
       el.removeEventListener("wheel", wheelGuard, { capture: true });
+      for (const t of TOUCH_EVENTS) el.removeEventListener(t, touchGuard, { capture: true });
       el.removeEventListener("pointerdown", stopSpinOnTouch);
       const canvas = viewer.getCanvas();
       const gl = viewer.renderer && viewer.renderer._gl;

@@ -249,6 +249,95 @@ def test_adsorbate_above_slab_on_screen(view):
     assert abs(screen["grey"][1] - snap["grey"][1]) < 0.02
 
 
+# ------------------------------------------------ page styles, touch, camera
+GREEN_JS = """async (src) => {
+  const img = new Image(); img.src = src; await img.decode();
+  const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  const g = c.getContext('2d'); g.drawImage(img, 0, 0);
+  const d = g.getImageData(0, 0, c.width, c.height).data;
+  let green = 0, grey = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = d[i], gg = d[i+1], b = d[i+2];
+    if (gg > 100 && gg > r + 50 && gg > b + 50) green++;
+    else if (r > 60 && Math.abs(r - gg) < 20 && b >= r && r < 215) grey++; }
+  return {green: green / (d.length / 4), grey: grey / (d.length / 4)}; }"""
+
+RESTYLE_GREEN_PT = """() => window.__scene.setRestyle((viewer, model) => {
+  viewer.setStyle({elem: 'Pt'}, {sphere: {radius: 1.39, color: '#00c000'}}); })"""
+
+
+def _element_colours(page):
+    shot = page.locator("#scene").screenshot()
+    return page.evaluate(GREEN_JS, "data:image/png;base64," + base64.b64encode(shot).decode())
+
+
+def test_restyle_survives_height_resize_frames_and_playback():
+    """A page style given through restyle stays on screen after every rebuild."""
+    with capture.scene_page(FIXTURE.read_text(), width=320, height=240,
+                            background="#000000") as page:
+        page.evaluate(RESTYLE_GREEN_PT)
+        page.set_viewport_size({"width": 320, "height": 420})   # height-only resize
+        page.wait_for_timeout(600)                              # debounced refit runs
+        page.evaluate("() => { window.__scene.setFrame(5); window.__scene.setFrame(20); }")
+        after_frames = _element_colours(page)
+        page.evaluate("""async () => { const s = window.__scene; s.play({force: true});
+                          await new Promise(r => setTimeout(r, 400)); s.pause(); }""")
+        after_play = _element_colours(page)
+        page.evaluate("() => window.__scene.setRestyle(null)")
+        cleared = _element_colours(page)
+    for c in (after_frames, after_play):
+        assert c["green"] > 0.2 and c["grey"] < 0.02, c
+    assert cleared["green"] < 0.01 and cleared["grey"] > 0.2        # control
+
+
+def _swipe_up(page, x, y0, y1):
+    cdp = page.context.new_cdp_session(page)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart",
+                                          "touchPoints": [{"x": x, "y": y0}]})
+    steps = 12
+    for k in range(1, steps + 1):
+        y = y0 + (y1 - y0) * k / steps
+        cdp.send("Input.dispatchTouchEvent", {"type": "touchMove",
+                                              "touchPoints": [{"x": x, "y": y}]})
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    page.wait_for_timeout(500)
+    return page.evaluate("() => window.scrollY")
+
+
+def test_touch_swipe_on_scene_scrolls_page():
+    """On a phone (coarse pointer) a swipe that starts on the scene scrolls the page."""
+    with capture.scene_page(FIXTURE.read_text(), width=360, height=300,
+                            has_touch=True, is_mobile=True, below_px=2000,
+                            interactive=True) as page:   # 3Dmol touch handlers on
+        assert page.evaluate("() => matchMedia('(pointer: coarse)').matches") is True
+        scrolled = _swipe_up(page, 180, 250, 60)
+        assert scrolled > 50
+        # Control: with touch rotation switched on, the same swipe rotates instead.
+        page.evaluate("() => { window.scrollTo(0, 0); window.__scene.setTouchRotate(true); }")
+        page.wait_for_timeout(200)
+        assert _swipe_up(page, 180, 250, 60) == 0
+
+
+def test_fixed_camera_skips_autofit_and_matches_framing():
+    """getCamera() from a fitted load, passed back as camera, gives the same picture."""
+    xyz = FIXTURE.read_text()
+    with capture.scene_page(xyz, width=320, height=240) as page:
+        cam = page.evaluate("() => window.__scene.getCamera()")
+        ref = page.evaluate(BBOX_JS)
+    with capture.scene_page(xyz, width=320, height=240, camera=cam) as page:
+        got = page.evaluate(BBOX_JS)
+    assert len(cam) == 8
+    assert all(abs(a - b) < 0.02 for a, b in zip(ref, got)), (ref, got)
+
+
+def test_capture_timeout_is_a_parameter():
+    import inspect
+    assert inspect.signature(capture.scene_page).parameters["timeout_s"].default == 120.0
+    assert inspect.signature(capture.render_frames).parameters["timeout_s"].default == 120.0
+    with pytest.raises(SystemExit):           # --timeout is a known flag (help exits 0)
+        capture.main(["--help"])
+
+
 def test_frame_plan_bounce_and_hold():
     plan = capture.frame_plan(n_src=40, n_frames=10, bounce=True, hold=2)
     fwd = [0, 4, 9, 13, 17, 22, 26, 30, 35, 39]     # 10 evenly spaced of 40
