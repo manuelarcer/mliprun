@@ -657,9 +657,13 @@ def build_md(runs: Path, out: Path) -> dict:
         status="pending", run_dir="04_md/bilayer_relax",
         structures={
             "built": {"file": "md_bilayer_built.xyz",
-                      "label": "6-H2O bilayer on Pt(111) as built (intended MD start)"},
+                      "label": "6-H2O bilayer on Pt(111) as built "
+                               "(input to the bilayer relaxation)"},
             "relaxed_oc20": {"file": "md_bilayer_relaxed.xyz",
-                             "label": "same bilayer after uma-s-1p2/oc20 relaxation"},
+                             "label": "same bilayer after uma-s-1p2/oc20 relaxation (planned "
+                                      "MD start in run_04_md.sh); water O "
+                                      f"{min(heights):.1f}–{max(heights):.1f} Å above the "
+                                      "top Pt layer"},
         },
         notes=[f"The 6-H2O bilayer relaxation {'converged' if relax_ok else 'did NOT converge'}"
                f" with uma-s-1p2/oc20. The {'intact' if intact else 'partly dissociated'} "

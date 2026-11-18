@@ -188,6 +188,8 @@ def test_real_md_is_not_md():
     assert all("relaxation" in k["label"] for k in rec["key_numbers"])
     from ase.io import read
     assert set(rec["structures"]) == {"built", "relaxed_oc20"}
+    assert "MD start" not in rec["structures"]["built"]["label"]   # run_04_md.sh starts MD from the relaxed bilayer
+    assert "MD start" in rec["structures"]["relaxed_oc20"]["label"]
     for entry in rec["structures"].values():
         assert entry["label"]
         f = PACK / entry["file"]

@@ -53,8 +53,9 @@ is the run directory relative to the repository root.
   proceed is pending the scientist's decision (flag `pending_scientist_decision`).
   `md.json` carries only the bilayer-relaxation facts, labelled as relaxation, with
   `converged: false` and no frames. There is no `md.xyz`. Two one-frame structures are in
-  the pack: `md_bilayer_built.xyz` (as built, the intended MD start) and
-  `md_bilayer_relaxed.xyz` (after the uma-s-1p2/oc20 relaxation).
+  the pack: `md_bilayer_built.xyz` (as built, the input to the bilayer relaxation) and
+  `md_bilayer_relaxed.xyz` (after the uma-s-1p2/oc20 relaxation; the planned MD start in
+  `run_04_md.sh`).
 - **webapp:** converged (last fmax 0.0134 eV/Å, target 0.02 eV/Å, 12 BFGS steps). The
   local web app (`mlip webapp`) submitted the unrelaxed `01_relax/o_fcc/POSCAR` to
   cos-cluster env `cos-cluster-uma` (shared install at commit `2b3044b`), GPU card 0, on
