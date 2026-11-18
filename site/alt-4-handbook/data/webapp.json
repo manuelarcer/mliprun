@@ -1,0 +1,125 @@
+{
+ "use_case": "webapp",
+ "command": "mlip optimize run --structure POSCAR --mlip uma-s-1p2 --uma-task oc20 --device cuda --optimizer bfgs --fmax 0.02 --max-steps 500 --no-plot",
+ "converged": true,
+ "flags": [],
+ "key_numbers": [
+  {
+   "label": "total energy, O at fcc hollow (relaxed, web app job)",
+   "value": -192.46915139776362,
+   "unit": "eV"
+  },
+  {
+   "label": "final fmax",
+   "value": 0.013398115523159504,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "fmax target",
+   "value": 0.02,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "BFGS steps",
+   "value": 12.0,
+   "unit": "steps"
+  },
+  {
+   "label": "total energy, same input via the CLI (relax.json)",
+   "value": -192.46915355747834,
+   "unit": "eV"
+  },
+  {
+   "label": "energy difference, web app − CLI",
+   "value": 2.1597147110696824e-06,
+   "unit": "eV"
+  },
+  {
+   "label": "final fmax, same input via the CLI (relax.json)",
+   "value": 0.01339839305728674,
+   "unit": "eV/Å"
+  },
+  {
+   "label": "job wall time on cos-cluster (model load + relaxation)",
+   "value": 28.229,
+   "unit": "s"
+  },
+  {
+   "label": "relaxation wall time (optimizer only)",
+   "value": 3.093,
+   "unit": "s"
+  },
+  {
+   "label": "video speed-up of the waiting part",
+   "value": 3.0,
+   "unit": "dimensionless"
+  },
+  {
+   "label": "video length",
+   "value": 26.5,
+   "unit": "s"
+  }
+ ],
+ "series": {
+  "step": [
+   0.0,
+   1.0,
+   2.0,
+   3.0,
+   4.0,
+   5.0,
+   6.0,
+   7.0,
+   8.0,
+   9.0,
+   10.0,
+   11.0,
+   12.0
+  ],
+  "energy_eV": [
+   -192.215645,
+   -192.31585,
+   -192.419751,
+   -192.433522,
+   -192.445865,
+   -192.458938,
+   -192.463461,
+   -192.464976,
+   -192.466409,
+   -192.467942,
+   -192.468833,
+   -192.469088,
+   -192.469151
+  ],
+  "fmax_eV_per_A": [
+   1.488771,
+   1.003448,
+   0.481028,
+   0.526734,
+   0.429531,
+   0.197272,
+   0.102556,
+   0.084752,
+   0.099663,
+   0.102865,
+   0.060936,
+   0.022791,
+   0.013398
+  ]
+ },
+ "frames": null,
+ "video": "webapp.mp4",
+ "cwd": "/scratchb/juar/mlip-webapp/showcase-o-fcc-webapp-2 (cos-cluster; reproduce.sh copies inputs/structure/POSCAR into reproduce/ and runs there)",
+ "run_dir": "05_webapp/showcase-o-fcc-webapp-2",
+ "target": {
+  "machine": "cos-cluster",
+  "env": "cos-cluster-uma",
+  "python": "/scratchb/juar/EWaste2GreenCat/explicit_solvation/.venv/uma/bin/python"
+ },
+ "notes": [
+  "Submitted from the local mliprun web app (mlip webapp); the calculation ran on cos-cluster (cosrnode01g), GPU card 0. The laptop only submitted.",
+  "Input: 01_relax/o_fcc/POSCAR, byte-identical, with selective dynamics (bottom 2 Pt layers fixed, 18 atoms).",
+  "The energy difference to relax.json is GPU floating-point noise: same input, model, task, optimizer and fmax, same 12 BFGS steps.",
+  "webapp.mp4: waiting part sped up x3 and labelled so; form and result parts at normal speed."
+ ]
+}

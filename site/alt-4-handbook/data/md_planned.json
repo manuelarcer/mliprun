@@ -1,0 +1,7 @@
+{
+ "status": "pending",
+ "ran": false,
+ "command": "mlip md run --structure $MD/POSCAR --mlip uma-s-1p2 --uma-task oc20 --device cuda --ensemble nvt --thermostat langevin --friction 0.01 --temperature 300 --timestep 0.5 --traj-interval 10 --steps 10000",
+ "source": "docs/showcase/scripts/run_04_md.sh",
+ "structure_note": "$MD/POSCAR is the relaxed bilayer (opt_final.vasp of 04_md/bilayer_relax), copied by the script."
+}

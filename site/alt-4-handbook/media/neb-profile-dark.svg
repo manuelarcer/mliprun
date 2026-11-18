@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 230" width="560" height="230" font-family="-apple-system,Segoe UI,Helvetica,Arial,sans-serif" font-size="11">
+<rect width="560" height="230" fill="#0d1117"/>
+<line x1="54" x2="544" y1="186.0" y2="186.0" stroke="#262c33"/>
+<text x="48" y="189.5" text-anchor="end" fill="#9198a1">0</text>
+<line x1="54" x2="544" y1="133.3" y2="133.3" stroke="#262c33"/>
+<text x="48" y="136.8" text-anchor="end" fill="#9198a1">0.2</text>
+<line x1="54" x2="544" y1="80.7" y2="80.7" stroke="#262c33"/>
+<text x="48" y="84.2" text-anchor="end" fill="#9198a1">0.4</text>
+<line x1="54" x2="544" y1="28.0" y2="28.0" stroke="#262c33"/>
+<text x="48" y="31.5" text-anchor="end" fill="#9198a1">0.6</text>
+<line x1="54.0" x2="54.0" y1="186" y2="190" stroke="#9198a1"/>
+<text x="54.0" y="202" text-anchor="middle" fill="#9198a1">0</text>
+<line x1="179.9" x2="179.9" y1="186" y2="190" stroke="#9198a1"/>
+<text x="179.9" y="202" text-anchor="middle" fill="#9198a1">0.5</text>
+<line x1="305.9" x2="305.9" y1="186" y2="190" stroke="#9198a1"/>
+<text x="305.9" y="202" text-anchor="middle" fill="#9198a1">1</text>
+<line x1="431.8" x2="431.8" y1="186" y2="190" stroke="#9198a1"/>
+<text x="431.8" y="202" text-anchor="middle" fill="#9198a1">1.5</text>
+<path d="M54,24V186H544" fill="none" stroke="#9198a1"/>
+<text x="54" y="13" fill="#e6edf3" font-weight="600">E − E(IS) (eV)</text>
+<text x="299.0" y="222" text-anchor="middle" fill="#9198a1">reaction coordinate (Å)</text>
+<path d="M54.0,186.0L129.7,174.7L193.1,118.3L253.9,73.4L314.9,50.9L375.5,42.7L428.1,50.5L486.7,78.1L544.0,89.1" fill="none" stroke="#7cb5dc" stroke-width="2"/>
+<circle cx="54.0" cy="186.0" r="3.2" fill="#7cb5dc"/>
+<circle cx="129.7" cy="174.7" r="3.2" fill="#7cb5dc"/>
+<circle cx="193.1" cy="118.3" r="3.2" fill="#7cb5dc"/>
+<circle cx="253.9" cy="73.4" r="3.2" fill="#7cb5dc"/>
+<circle cx="314.9" cy="50.9" r="3.2" fill="#7cb5dc"/>
+<circle cx="375.5" cy="42.7" r="3.2" fill="#7cb5dc"/>
+<circle cx="428.1" cy="50.5" r="3.2" fill="#7cb5dc"/>
+<circle cx="486.7" cy="78.1" r="3.2" fill="#7cb5dc"/>
+<circle cx="544.0" cy="89.1" r="3.2" fill="#7cb5dc"/>
+<circle cx="375.5" cy="42.7" r="5" fill="#e47f9a"/>
+<text x="375.5" y="32.7" text-anchor="middle" fill="#e6edf3" font-weight="600">TS, image 5 (0–8): 0.544 eV</text>
+</svg>
