@@ -26,10 +26,8 @@
 <section class="hero" aria-labelledby="hero-title">
   <div class="intro">
     <h1 id="hero-title">Run machine-learning potentials with one command.</h1>
-    <p class="lede">mliprun is a CLI and a small web app for machine-learning interatomic
-      potentials (UMA, MACE, SevenNet, CHGNet): relaxations, committees, NEB with
-      transition-state checks, MD, and remote runs on GPU machines you add yourself. This page
-      replays real runs of O on Pt(111): the commands as typed, the output as logged.</p>
+    <p class="lede">A CLI and web app for UMA, MACE, SevenNet and CHGNet. Below: real runs of
+      O on Pt(111), replayed as they were logged.</p>
   </div>
 
   <div class="stage">
@@ -70,7 +68,7 @@
       </figure>
       <div class="plot-row">
         <figure class="trace">
-        <figcaption class="fig-title">Barrier at each band step, as neb.log reports it</figcaption>
+        <figcaption class="fig-title">Barrier per band step (neb.log)</figcaption>
         <div id="trace" class="svgbox"></div>
       </figure>
         <figure class="mode">
@@ -84,67 +82,65 @@
 </section>
 
 <main id="runs" aria-label="Use cases">
-  <p class="section-lede">Each use case as the command that ran and what it returned.
-    Numbers are read at load time from the run data, with units and convergence status.
-    All runs ran on cos-cluster; paths in the commands are where these runs happened (elided,
-    full form one click away), not paths to use.</p>
+  <p class="section-lede">Each use case: the command, then what it returned. All runs ran on cos-cluster; paths are where these runs ran.</p>
 
   <section class="pair" id="relax" aria-labelledby="relax-h">
     <div class="cmd">
       <h2 id="relax-h"><code>mlip optimize run</code></h2>
-      <p>Relax one adsorbate: O placed at the fcc hollow of a 3×3 Pt(111) slab.</p>
+      <p>O relaxes into the fcc hollow of Pt(111).</p>
       <div class="cmdbox" data-cmd="relax"></div>
     </div>
     <div class="res">
       <div class="status" data-status="relax"></div>
-      <div class="res-grid">
-        <pre class="out" data-log="relax_opt.log" aria-label="opt.log"></pre>
-        <figure class="mini3d">
-          <div class="scene" id="relax-scene" role="img" aria-label="Side view of O relaxing into the fcc hollow, 2×2 periodic images"></div>
-          <figcaption><span><span id="relax-frame">step –</span><br><span class="dim">side view, 2×2 periodic images</span></span> <button type="button" id="btn-relax">Play</button></figcaption>
-        </figure>
-      </div>
+      <figure class="big3d">
+        <div class="scene" id="relax-scene" role="img" aria-label="O relaxing into the fcc hollow of Pt(111), periodic images"></div>
+        <figcaption><span id="relax-frame">step –</span> <button type="button" id="btn-relax">Play</button></figcaption>
+      </figure>
       <div id="relax-chart" class="svgbox"></div>
       <dl class="nums" data-nums="relax"></dl>
+      <details class="more"><summary>opt.log</summary><pre class="out" data-log="relax_opt.log" aria-label="opt.log"></pre></details>
     </div>
   </section>
 
   <section class="pair" id="committee" aria-labelledby="com-h">
     <div class="cmd">
       <h2 id="com-h"><code>mlip optimize run --committee</code></h2>
-      <p>The same relaxation driven by the mean force of three models, each in its own
-        environment. Their disagreement is the error bar.</p>
+      <p>Three models relax it together; their disagreement is the error bar.</p>
       <div class="cmdbox" data-cmd="committee"></div>
     </div>
     <div class="res">
       <div class="status" data-status="committee"></div>
-      <pre class="out" id="com-out" aria-label="committee stdout, excerpt"></pre>
       <div id="com-chart" class="svgbox"></div>
       <p class="fig-note" id="com-note"></p>
       <dl class="nums" data-nums="committee"></dl>
+      <details class="more"><summary>stdout</summary><pre class="out" id="com-out" aria-label="committee stdout, excerpt"></pre></details>
     </div>
   </section>
 
   <section class="pair" id="neb" aria-labelledby="neb-h">
     <div class="cmd">
       <h2 id="neb-h"><code>mlip neb run --verify-ts both</code></h2>
-      <p>Climbing-image NEB between the two hollows, then a check of the top image: one
-        imaginary mode, along the path, and relaxing down to both ends.
-        <a href="#hero-title">Replayed at the top of the page.</a></p>
+      <p>O hops fcc → hcp; the top image is checked as a TS. <a href="#hero-title">Replay above.</a></p>
       <div class="cmdbox" data-cmd="neb"></div>
     </div>
     <div class="res">
       <div class="status" data-status="neb"></div>
-      <pre class="out" data-log="ts_verify.txt" data-lines="0-11" aria-label="ts_verify.txt, first lines"></pre>
+      <figure class="big3d">
+        <div class="scene" id="neb-mode-scene" role="img" aria-label="The imaginary mode at the transition state, top view"></div>
+        <figcaption><span id="neb-mode-cap"></span> <button type="button" id="btn-neb-mode">Play</button></figcaption>
+      </figure>
       <dl class="nums" data-nums="neb"></dl>
-      <p class="fig-note" id="neb-flag"></p>
+      <details class="more"><summary>ts_verify.txt and flag</summary>
+        <pre class="out" data-log="ts_verify.txt" data-lines="0-11" aria-label="ts_verify.txt, first lines"></pre>
+        <p class="fig-note" id="neb-flag"></p>
+      </details>
     </div>
   </section>
 
   <section class="pair" id="md" aria-labelledby="md-h">
     <div class="cmd">
       <h2 id="md-h"><code>mlip md run</code></h2>
-      <p>Finite-temperature MD of a water bilayer on Pt(111).</p>
+      <p>Water bilayer on Pt(111), 300 K.</p>
       <div class="cmdbox" data-cmd="md"></div>
     </div>
     <div class="res">
@@ -156,15 +152,16 @@
   <section class="pair" id="webapp" aria-labelledby="web-h">
     <div class="cmd">
       <h2 id="web-h"><code>mlip webapp</code></h2>
-      <p id="web-path">No terminal: the relaxation from the first row, uploaded in the
-        browser and sent to a remote GPU machine.</p>
+      <p id="web-path">The same relaxation, sent from the browser to a remote GPU machine.</p>
+      <p class="dim small">No machines are preconfigured; you add your own.</p>
+      <details class="more"><summary>Add your machine</summary>
       <ol class="steps" aria-label="Set up your own machine">
         <li>Run <code>mlip webapp</code> on your laptop.</li>
         <li>Machines → Add machine: Name, Host <code>&lt;your ssh alias&gt;</code> (an alias from ~/.ssh/config), Default remote location <code>&lt;your remote folder&gt;</code>. Press Add machine.</li>
         <li>On the saved machine: Add environment, Python path <code>&lt;your uma env&gt;/bin/python</code>, and a name.</li>
         <li>Test connection on the saved machine, then submit a job to it.</li>
       </ol>
-      <p class="dim small">mliprun ships with no machines configured; everyone adds their own.</p>
+      </details>
       <p class="same">The same job is one command:</p>
       <div class="cmdbox" data-cmd="webapp"></div>
     </div>
@@ -181,19 +178,17 @@
   <section class="also" aria-labelledby="also-h">
     <h2 id="also-h">Also in the box</h2>
     <ul>
-      <li><code>mlip freq run</code> finite-difference frequencies, imaginary-mode count and zero-point energy</li>
-      <li><code>mlip autoneb run</code> NEB with dynamic image insertion</li>
-      <li><code>mlip benchmark run</code> per-call timings for every installed model</li>
-      <li><code>--mlip 7net-omni</code>, <code>--mlip chgnet</code> SevenNet and CHGNet next to UMA and MACE</li>
-      <li><code>mlip doctor</code> environment self-check: packages, MLIPs, torch and CUDA</li>
+      <li><code>mlip freq run</code> frequencies and ZPE</li>
+      <li><code>mlip autoneb run</code> NEB with image insertion</li>
+      <li><code>mlip benchmark run</code> model timings</li>
+      <li><code>--mlip 7net-omni</code>, <code>--mlip chgnet</code> SevenNet and CHGNet</li>
+      <li><code>mlip doctor</code> environment self-check</li>
     </ul>
   </section>
 
   <section class="install" id="install" aria-labelledby="install-h">
     <h2 id="install-h">Install</h2>
-    <p>One MLIP per environment. The full recipe, the asetools warning and the gated UMA
-      steps are in the <a href="https://github.com/manuelarcer/mliprun#installation">README</a>
-      and <a href="https://github.com/manuelarcer/mliprun/blob/main/AGENTS.md">AGENTS.md</a>.</p>
+    <p>One MLIP per environment. Full recipe: <a href="https://github.com/manuelarcer/mliprun/blob/main/docs/INSTALL.md">INSTALL</a>, <a href="https://github.com/manuelarcer/mliprun/blob/main/AGENTS.md">AGENTS.md</a>.</p>
     <pre class="out install-cmd" id="install-cmd">git clone https://github.com/manuelarcer/mliprun.git &amp;&amp; cd mliprun
 python3 -m venv .venv &amp;&amp; source .venv/bin/activate
 pip install -e ".[neb]"
@@ -203,9 +198,7 @@ mlip doctor</pre>
 </main>
 
 <footer class="foot">
-  <p>Every number and log line on this page is read from the showcase run data
-    (<a href="data/PROVENANCE.md">provenance</a>). Runs: <span id="foot-level"></span>.
-    These runs demonstrate the tool; they are not a publication.</p>
+  <p>Numbers and log lines are read from the run data (<a href="data/PROVENANCE.md">provenance</a>). Runs: <span id="foot-level"></span>.</p>
 </footer>
 
 </div>

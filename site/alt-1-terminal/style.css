@@ -229,6 +229,13 @@ pre.out {
 pre.out .ol { display: block; white-space: pre-wrap; overflow-wrap: anywhere; padding-left: 4ch; text-indent: -4ch; }
 pre.out .ol.on { font-family: var(--f-sans); font-style: italic; color: var(--muted); text-indent: 0; padding-left: 0; }
 .scene.fallback img, .mode-scene.fallback img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.big3d { margin: 0 0 1rem; }
+.big3d .scene { width: 100%; height: clamp(15rem, 28vw, 25rem); background: var(--scene-bg); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
+.big3d figcaption { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin-top: 0.45rem; font-size: var(--s-0); color: var(--muted); font-variant-numeric: tabular-nums; }
+details.more { margin-top: 1rem; font-size: var(--s-0); color: var(--muted); }
+details.more > summary { cursor: pointer; width: max-content; padding: 0.3rem 0; }
+details.more > summary:hover { color: var(--ink); }
+details.more[open] > summary { margin-bottom: 0.5rem; }
 .mini3d .scene { width: 12rem; height: 12rem; background: var(--scene-bg); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
 .mini3d figcaption { display: flex; justify-content: space-between; align-items: center; margin-top: 0.4rem; font-size: var(--s-0); color: var(--muted); font-variant-numeric: tabular-nums; }
 

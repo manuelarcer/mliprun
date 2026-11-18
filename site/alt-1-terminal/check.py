@@ -45,15 +45,20 @@ def check(cond: bool, msg: str) -> None:
         failures.append(msg)
 
 
+SERVED: dict[str, int] = {}  # bytes the route handler served, per URL
+
+
 def route(r):
     url = r.request.url
     if url.startswith(ORIGIN):
         p = SITE / url[len(ORIGIN) + 1:].split("?")[0]
         if p.is_file():
+            SERVED[url] = p.stat().st_size
             return r.fulfill(status=200, body=p.read_bytes(),
                              headers={"content-type": TYPES.get(p.suffix, "application/octet-stream")})
         return r.fulfill(status=404, body=b"not found")
     if "3dmol@2.4.2" in url and CACHE.is_file():
+        SERVED[url] = CACHE.stat().st_size
         return r.fulfill(status=200, body=CACHE.read_bytes(),
                          headers={"content-type": "text/javascript"})
     return r.continue_()
@@ -87,16 +92,19 @@ def open_page(browser, width, height, scheme="light", reduced="no-preference"):
     sizes: dict[str, int] = {}
 
     def on_resp(resp):
+        # Never call resp.body() here: on an aborted media request it can block forever.
+        # Local and cached files are counted from SERVED; external ones from content-length.
         try:
-            sizes[resp.url] = len(resp.body())
+            n = SERVED.get(resp.url) or int(resp.headers.get("content-length", 0))
+            sizes[resp.url] = n
         except Exception:
             pass
     page.on("response", on_resp)
-    page.goto(URL, wait_until="load")
+    page.goto(URL, wait_until="domcontentloaded", timeout=60000)  # a slow font host must not fail the page check
     try:
-        page.wait_for_selector("html[data-ready='1']", state="attached", timeout=30000)
-        page.wait_for_selector("html[data-scenes='1']", state="attached", timeout=60000)
-        page.wait_for_selector("html[data-fonts='1']", state="attached", timeout=30000)
+        page.wait_for_selector("html[data-ready='1']", state="attached", timeout=180000)
+        page.wait_for_selector("html[data-scenes='1']", state="attached", timeout=240000)  # SwiftShader auto-fit is slow
+        page.wait_for_selector("html[data-fonts='1']", state="attached", timeout=120000)
     except Exception:
         print("page did not get ready; console errors:", errs)
         raise
@@ -117,6 +125,13 @@ def no_clipping(page, where: str) -> None:
     fam = page.evaluate("getComputedStyle(document.querySelector('.cmdlines')).fontFamily")
     loaded = page.evaluate("document.fonts.check('12px \\'Martian Mono\\'')")
     print(f"  (mono font: {fam.split(',')[0]}, Martian Mono loaded: {loaded})")
+
+
+def shot(page, path=None, **kw):
+    """Screenshot with the 3D scenes paused: under SwiftShader, three playing scenes keep the
+    main thread too busy for Playwright's capture (it timed out). Frames on screen are real."""
+    page.evaluate("Object.values(window.__mliprunScenes || {}).forEach(c => c.pause())")
+    return page.screenshot(path=path, timeout=120000, **kw)
 
 
 def readme_media() -> None:
@@ -147,10 +162,10 @@ def main() -> int:
 
         # desktop light: let the replay finish, then screenshot
         ctx, page, errs, sizes = open_page(browser, 1440, 900, "light")
-        page.wait_for_selector("#term-state.done", timeout=60000)
+        page.wait_for_selector("#term-state.done", timeout=180000)
         page.wait_for_timeout(2200)
-        page.screenshot(path=SHOTS / "desktop-light.png")
-        page.screenshot(path=SHOTS / "desktop-light-full.png", full_page=True)
+        shot(page, path=SHOTS / "desktop-light.png")
+        shot(page, path=SHOTS / "desktop-light-full.png", full_page=True)
         no_clipping(page, "1440 px light")
         page.evaluate("document.querySelector('video').pause()")
         weight = sum(sizes.values())
@@ -159,22 +174,22 @@ def main() -> int:
         ctx.close()
 
         ctx, page, errs, _ = open_page(browser, 1440, 900, "dark")
-        page.wait_for_selector("#term-state.done", timeout=60000)
+        page.wait_for_selector("#term-state.done", timeout=180000)
         page.wait_for_timeout(2200)
-        page.screenshot(path=SHOTS / "desktop-dark.png")
-        page.screenshot(path=SHOTS / "desktop-dark-full.png", full_page=True)
+        shot(page, path=SHOTS / "desktop-dark.png")
+        shot(page, path=SHOTS / "desktop-dark-full.png", full_page=True)
         check(not errs, f"no console errors, desktop dark {errs[:3]}")
         ctx.close()
 
         # mid-replay frame (shows the live barrier line)
         ctx, page, errs, _ = open_page(browser, 1440, 900, "light")
         page.wait_for_function("document.querySelectorAll('#term-body .l.step').length > 20", timeout=30000)
-        page.screenshot(path=SHOTS / "desktop-light-midreplay.png")
+        shot(page, path=SHOTS / "desktop-light-midreplay.png")
         ctx.close()
 
         for scheme in ("light", "dark"):
             ctx, page, errs, _ = open_page(browser, 375, 812, scheme)
-            page.wait_for_selector("#term-state.done", timeout=60000)
+            page.wait_for_selector("#term-state.done", timeout=180000)
             page.wait_for_timeout(1500)
             sw = page.evaluate("document.documentElement.scrollWidth")
             cw = page.evaluate("document.documentElement.clientWidth")
@@ -185,12 +200,12 @@ def main() -> int:
                 .slice(0, 5).map(e => e.tagName + '.' + e.className)""")
             check(not wide, f"no element overflows the 375 px viewport, {scheme} {wide}")
             no_clipping(page, f"375 px {scheme}")
-            page.screenshot(path=SHOTS / f"mobile-{scheme}.png")
+            shot(page, path=SHOTS / f"mobile-{scheme}.png")
             h = page.evaluate("document.documentElement.scrollHeight")
             for k, y in enumerate(range(0, h, 1600)):
                 page.evaluate(f"window.scrollTo(0, {y})")
                 page.wait_for_timeout(250)
-                page.screenshot(path=SHOTS / f"mobile-{scheme}-part{k}.png",
+                shot(page, path=SHOTS / f"mobile-{scheme}-part{k}.png",
                                 clip={"x": 0, "y": y, "width": 375, "height": min(1600, h - y)},
                                 full_page=True)
             page.evaluate("window.scrollTo(0, 0)")
@@ -211,12 +226,12 @@ def main() -> int:
         page.mouse.wheel(0, 3000)  # bring the relax scene on screen too
         page.wait_for_timeout(1500)
         f2 = page.evaluate(js)
-        check(len(f1) == 2 and f1 == f2 and not any(p for _, _, p in f2),
+        check(len(f1) == 3 and f1 == f2 and not any(p for _, _, p in f2),
               f"reduced motion: 3D scenes rest on one frame over 1.5 s ({f1} -> {f2})")
         page.mouse.wheel(0, -3000)
         n_lines = page.evaluate("document.querySelectorAll('#term-body .l').length")
         check(n_lines > 50, f"reduced motion: full transcript shown ({n_lines} lines)")
-        page.screenshot(path=SHOTS / "desktop-reduced.png")
+        shot(page, path=SHOTS / "desktop-reduced.png")
         check(not errs, f"no console errors, reduced motion {errs[:3]}")
         ctx.close()
         browser.close()

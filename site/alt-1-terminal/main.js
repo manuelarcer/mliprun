@@ -7,6 +7,7 @@ const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 const DARK = () => getComputedStyle(document.documentElement).colorScheme.includes("dark");
 const $ = (s, r = document) => r.querySelector(s);
 const SVGNS = "http://www.w3.org/2000/svg";
+const RELAX_VIEW = { elevation: 38, azimuth: -30, zoom: 2.1 }; // same as build.py RELAX_VIEW
 const MODE_VIEW = { elevation: 90, azimuth: -30, zoom: 4.5 }; // same zoom as build.py MODE_ZOOM
 
 // ------------------------------------------------------------------ data
@@ -330,14 +331,14 @@ function buildTranscript(neb, logs) {
   const iInterp = stdout.findIndex((s) => s.includes("Interpolating"));
   for (const s of stdout.slice(0, iUma + 1)) add("out", s);
   const nOmit = iInterp - iUma - 1;
-  if (nOmit > 0) add("note", `${nOmit} lines omitted: an ASE UserWarning about the NEB method default, printed twice`);
+  if (nOmit > 0) add("note", `⋯ ${nOmit} lines omitted (ASE warning)`);
   add("out", stdout[iInterp].trim());
-  add("note", `not replayed: ${dur(tFirst - tStart)} from the start of the run to band step 0 (model load, endpoint relaxation, IDPP)`, { pause: true });
+  add("note", `not replayed: ${dur(tFirst - tStart)} (model load, endpoints, IDPP)`, { pause: true });
   const iRun = stdout.findIndex((s) => s.startsWith("Running NEB"));
   for (const s of stdout.slice(iInterp + 1, iRun + 1)) add("out", s.trim());
 
   const stepLines = nebLog.filter((s) => s.startsWith("Step"));
-  add("note", `neb.log, its ${stepLines.length} "Step" lines; the interleaved FIRE lines are left out`);
+  add("note", `neb.log, Step lines only`);
   const steps = [];
   for (const s of stepLines) {
     const m = s.match(/Step\s+(\d+)\s+Fmax:\s+([\d.]+).*Barrier:\s+([\d.]+)/);
@@ -350,8 +351,8 @@ function buildTranscript(neb, logs) {
   const block = stdout.slice(iProc, iVerify);
   const paths = block.filter((s) => s.startsWith(" - "));
   for (const s of block.filter((s) => !s.startsWith(" - "))) add("out", s);
-  add("note", `${paths.length} output paths omitted (CSV, trajectories, plots, POSCARs of the images)`);
-  add("note", `not replayed: ${dur(tExit - tLast)} between the last band step and the end of the run (results, TS verification)`, { pause: true });
+  add("note", `⋯ ${paths.length} output paths omitted`);
+  add("note", `not replayed: ${dur(tExit - tLast)} (results, TS verification)`, { pause: true });
   for (const s of stdout.slice(iVerify)) {
     if (!s.trim()) { add("out", ""); continue; }
     const ok = /verified|-> pass|connects/.test(s);
@@ -374,8 +375,8 @@ function heroTerminal(neb, logs) {
   const TYPE_MS = 6, STEP_MS = 55;
   const speed = realBand / ((nSteps + 1) * STEP_MS / 1000);
   const note = REDUCED
-    ? "Real output, excerpted. Shown at its final state (reduced motion)."
-    : `Real output, excerpted. Band steps replay at about ${Math.round(speed)}× the run (${nSteps} steps took ${dur(realBand)}).`;
+    ? "Real output, excerpted."
+    : `Real output, excerpted; replayed about ${Math.round(speed)}× faster.`;
 
   const meter = (s) => {
     $("#m-step").textContent = s.k;
@@ -455,10 +456,7 @@ function heroTerminal(neb, logs) {
   $("#btn-skip").onclick = showEnd;
   fullToggle($("#btn-full"), $("#full-neb"), $("#full-neb-text"), neb.command);
   $("#profile-note").textContent =
-    `Straight lines join the ${neb.series.reaction_coordinate_A.length} images of the converged band (no interpolation). ` +
-    `Reverse barrier ${withUnit(kn(neb, "reverse barrier"), 3)}. ` +
-    `Band fmax ${withUnit(kn(neb, "final band fmax"), 4)} after ${fx(kn(neb, "NEB optimizer steps").value, 0)} FIRE steps ` +
-    `(target ${withUnit(target, 2)}). While the log runs, the dashed line is the highest image of the current band.`;
+    `Converged band, ${neb.series.reaction_coordinate_A.length} images; reverse barrier ${withUnit(kn(neb, "reverse barrier"), 3)}.`;
   if (REDUCED) showEnd(); else play();
 }
 
@@ -562,22 +560,23 @@ async function relaxPair(rel, logs) {
   const onFrame = (i) => {
     const j = Math.min(i, s.step.length - 1);
     cursor.setAttribute("x1", c.X(s.step[j])); cursor.setAttribute("x2", c.X(s.step[j]));
-    label.textContent = `step ${s.step[j]}, E = ${fx(s.energy_eV[j], 3)} eV`;
+    label.textContent = `BFGS step ${s.step[j]}, E = ${fx(s.energy_eV[j], 3)} eV · periodic images`;
   };
   nums($('[data-nums="relax"]'), rel, [
     ["total energy, O at fcc", "total energy, O at fcc", 3],
     ["final fmax, O at fcc", "final fmax", 4],
     ["BFGS steps", "BFGS steps", 0, (k) => `${fx(k.value, 0)}`],
     ["O height above top Pt layer, fcc", "O height above the top Pt layer", 2],
-    ["shortest O–Pt distance", "shortest O–Pt distance", 2],
-    ["E(hcp) − E(fcc)", "E(hcp) − E(fcc), the two hollows", 3],
-    ["Pt lattice constant", "Pt lattice constant a (relaxed bulk)", 3],
   ]);
   const btn = $("#btn-relax");
   try {
-    const ctl = await loadScene($("#relax-scene"), "data/relax.xyz", {
-      view: { elevation: 12, azimuth: 0, zoom: 1 }, replicate: [2, 2], fps: 6, hold: 1.2, background: sceneBg(), onFrame });
+    // relax_centred.xyz: relax.xyz with the cell origin shifted in-plane so the O is mid-cell
+    // (rigid periodic translation, build.py); camera framed on the middle image's O.
+    const ctl = await loadScene($("#relax-scene"), "data/relax_centred.xyz", {
+      view: RELAX_VIEW, replicate: [3, 3], fps: 6, hold: 1.2, autoplay: true,
+      background: sceneBg(), onFrame });
     onFrame(ctl.frame);
+    btn.textContent = ctl.playing ? "Pause" : "Play";
     scenes.relax = ctl;
     btn.onclick = () => {
       if (ctl.playing) { ctl.pause(); btn.textContent = "Play"; }
@@ -585,7 +584,7 @@ async function relaxPair(rel, logs) {
     };
   } catch (e) {
     console.warn("relax 3D view unavailable:", e.message);
-    fallbackGif($("#relax-scene"), "relax3d", "Recorded animation of the 13 BFGS steps, side view, 2×2 periodic images");
+    fallbackGif($("#relax-scene"), "relax3d", "Recorded animation of the 13 BFGS steps, periodic images");
     label.textContent = "3D view unavailable; recorded animation";
     btn.hidden = true;
   }
@@ -602,7 +601,7 @@ function committeePair(com, logs) {
   const shown = [...members, `   ⋯ ${omitted} lines omitted (optimizer settings, output files)`, out[iLast]];
   outLines($("#com-out"), shown, new Set([members.length]));
   const s = com.series, tgt = kn(com, "fmax target");
-  const c = lineChart({ w: fitW($("#com-chart")), h: 270, x: s.step, xlabel: "BFGS step", ylabel: "force (eV/Å)", logy: true,
+  const c = lineChart({ w: fitW($("#com-chart")), h: 340, x: s.step, xlabel: "BFGS step", ylabel: "force (eV/Å)", logy: true,
     series: [
       { y: s.fmax_eV_per_A, cls: "s-ink", dot: "d-ink", label: "fmax of the mean force" },
       { y: s.sigma_max_free_eV_per_A, cls: "s-acc", dot: "d-acc", label: "σ max (free atoms)" },
@@ -617,16 +616,12 @@ function committeePair(com, logs) {
   $("#com-chart").replaceChildren(c.svg);
   const ratio = kn(com, "sigma_max_free / fmax");
   $("#com-note").textContent = k >= 0
-    ? `Shaded: from step ${s.step[k]} on, the largest disagreement between members (σ max) exceeds the force the optimizer is minimizing. ` +
-      `At the last step it is ${fx(ratio.value, 1)}× larger. σ is a standard deviation over the ${fx(kn(com, "committee members").value, 0)} members.`
+    ? `Shaded: σ max exceeds fmax (from step ${s.step[k]}; ${fx(ratio.value, 1)}× at the end).`
     : "";
   nums($('[data-nums="committee"]'), com, [
     ["sigma_max_free, final step", "σ max, free atoms, final step", 4],
-    ["sigma_mean_free, final step", "σ mean, free atoms, final step", 4],
     ["final fmax of the committee-mean force", "fmax of the mean force, final", 4],
     ["energy spread across members", "energy spread (std. dev., step-0 aligned)", 4],
-    ["BFGS steps", "BFGS steps", 0, (k) => fx(k.value, 0)],
-    ["free atoms", "free atoms in σ", 0, (k) => fx(k.value, 0)],
   ]);
 }
 
@@ -640,20 +635,16 @@ function nebPair(neb, logs) {
   nums($('[data-nums="neb"]'), neb, [
     ["forward barrier", "forward barrier, fcc → hcp", 3],
     ["reverse barrier", "reverse barrier, hcp → fcc", 3],
-    ["reaction energy", "reaction energy", 3],
     ["TS imaginary frequency", "imaginary mode at the TS", 1, (k) => `${fx(k.value, 1)}i ${k.unit}`],
-    ["overlap of imaginary mode", `overlap with the NEB tangent (threshold ${kn(neb, "overlap threshold").value})`, 3],
-    ["TS fmax", "TS fmax, free components", 4],
+    ["overlap of imaginary mode", `overlap with the path (≥ ${kn(neb, "overlap threshold").value})`, 3],
     ["final band fmax", "final band fmax", 4],
-    ["band check: largest drift", `largest drift from the seed band (allowance ${withUnit(kn(neb, "band check: allowance"), 2)})`, 2],
-    ["O height above top Pt layer at TS", "O height above the top Pt layer at the TS", 2],
   ]);
   $("#neb-flag").textContent = `Flag ${neb.flags.filter((f) => f !== "ts_verified").join(", ")}: ${neb.notes[0]}`;
-  const cap = $("#mode-cap");
-  cap.replaceChildren();
-  txt(cap, `Imaginary mode at the TS, ${fx(im.value, 1)}i ${im.unit}; overlap with the path ${fx(kn(neb, "overlap of imaginary mode").value, 3)}. ` +
-    `Drawn at ${withUnit(kn(neb, "TS mode animation peak displacement"), 1)} peak displacement: an illustration of the mode, not dynamics. ` +
-    `Top view of the periodic slab (3×3 images), centred on the O.`);
+  for (const id of ["#mode-cap", "#neb-mode-cap"]) {
+    const cap = $(id);
+    cap.replaceChildren();
+    txt(cap, `TS imaginary mode, ${fx(im.value, 1)}i ${im.unit} (mode, not dynamics) · 3×3 periodic images`);
+  }
 }
 
 async function mdPair(md, plan) {
@@ -667,8 +658,7 @@ async function mdPair(md, plan) {
     const p = el("div", { class: "pending-box" });
     const s = mdStatus(md);
     p.append(el("p", {}, s.charAt(0).toUpperCase() + s.slice(1) + "."));
-    p.append(el("p", {}, "There is no output here, and nothing is simulated in its place. " +
-      "When the run exists, this slot fills from md.json: its time series and frames."));
+    p.append(el("p", {}, "No output yet; nothing is simulated here."));
     box.replaceChildren(p);
     return;
   }
@@ -687,20 +677,16 @@ function webPair(web) {
   cmdBox($('[data-cmd="webapp"]'), web.command);
   statusPills($('[data-status="webapp"]'), web);
   $("#web-path").textContent =
-    `No terminal: the input of the first row, uploaded in the browser and sent to a remote GPU machine. ` +
-    `In this recording that machine was ${web.target.machine}, where the showcase runs ran (environment ${web.target.env}).`;
+    `The same relaxation, sent from the browser to a remote GPU machine (here ${web.target.machine}).`;
   const v = $("#web-video");
   v.src = "data/webapp.mp4";
   v.setAttribute("aria-label", "Screen recording of the mliprun web app submitting a relaxation to cos-cluster");
   const speed = kn(web, "video speed-up");
   $("#web-cap").textContent =
-    `Screen recording of the real job, ${fx(kn(web, "video length").value, 1)} s. ` +
-    `The waiting part is sped up ×${fx(speed.value, 0)} and labelled in the video; the form and the result play at normal speed.`;
+    `Real job, screen recording; waiting part ×${fx(speed.value, 0)}.`;
   if (!REDUCED) { v.autoplay = true; v.play().catch(() => {}); }
   nums($('[data-nums="webapp"]'), web, [
-    ["total energy, O at fcc hollow (relaxed, web app job)", "total energy, web app job", 3],
     ["energy difference, web app − CLI", "difference to the CLI run", 1, (k) => `${k.value.toExponential(1)} ${k.unit}`],
-    ["final fmax", "final fmax", 4],
     ["BFGS steps", "BFGS steps", 0, (k) => fx(k.value, 0)],
     ["job wall time", "job wall time, incl. model load", 1],
     ["relaxation wall time", "optimizer wall time", 1],
@@ -733,6 +719,25 @@ async function modeScene() {
   }
 }
 
+async function nebModeScene() {
+  const btn = $("#btn-neb-mode");
+  try {
+    const ctl = await loadScene($("#neb-mode-scene"), "data/ts_mode_centred.xyz", {
+      view: { ...MODE_VIEW, zoom: 2.4 }, replicate: [3, 3], fps: 20, hold: 0, restFrame: "first",
+      autoplay: true, background: sceneBg() });
+    scenes.nebmode = ctl;
+    btn.textContent = ctl.playing ? "Pause" : "Play";
+    btn.onclick = () => {
+      if (ctl.playing) { ctl.pause(); btn.textContent = "Play"; }
+      else { ctl.play({ force: true }); btn.textContent = "Pause"; }
+    };
+  } catch (e) {
+    console.warn("TS-mode 3D view unavailable:", e.message);
+    fallbackGif($("#neb-mode-scene"), "ts-mode", "Recorded animation of the imaginary mode at the TS, top view");
+    btn.hidden = true;
+  }
+}
+
 // ------------------------------------------------------------------ boot
 async function main() {
   const [rel, com, neb, md, web, plan, stdout, neblog, runlog, tsverify, relaxopt, comstdout] = await Promise.all([
@@ -754,7 +759,7 @@ async function main() {
   let t;
   window.addEventListener("resize", () => { clearTimeout(t); t = setTimeout(rewrapAll, 150); });
   document.documentElement.dataset.ready = "1";
-  await Promise.all([modeScene(), relaxPair(rel, logs)]);
+  await Promise.all([modeScene(), relaxPair(rel, logs), nebModeScene()]);
   document.documentElement.dataset.scenes = "1";
 }
 main().catch((e) => {
