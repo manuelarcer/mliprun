@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>mliprun: One Oxygen Atom</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="One O adatom on Pt(111) followed through relaxation, committee uncertainty, NEB and transition-state check, then water and a remote run, all with mliprun.">
+<meta name="viewer-path" content="../shared/viewer.js">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#ch-relax">Skip to the first chapter</a>
+
+<header class="mast">
+  <a class="wordmark" href="#top" id="top">mliprun</a>
+  <nav class="mast-links" aria-label="Project">
+    <a href="https://github.com/manuelarcer/mliprun#installation">Install</a>
+    <a href="https://github.com/manuelarcer/mliprun">GitHub</a>
+  </nav>
+</header>
+
+<main class="story">
+  <!-- The stage: one pinned scene, one live plot. Scroll position drives both. -->
+  <aside class="stage" id="stage" aria-label="Scene for the current chapter">
+    <div class="railbar">
+    <ol class="rail" id="rail" aria-label="Chapters">
+      <li><a href="#ch-relax" data-ch="relax"><span class="rail-n">1</span><span class="rail-t">Relax</span></a></li>
+      <li><a href="#ch-committee" data-ch="committee"><span class="rail-n">2</span><span class="rail-t">Committee</span></a></li>
+      <li><a href="#ch-neb" data-ch="neb"><span class="rail-n">3</span><span class="rail-t">NEB</span></a></li>
+      <li><a href="#ch-ts" data-ch="ts"><span class="rail-n">4</span><span class="rail-t">TS mode</span></a></li>
+      <li><a href="#ch-water" data-ch="water"><span class="rail-n">5</span><span class="rail-t">Water MD</span></a></li>
+      <li><a href="#ch-remote" data-ch="remote"><span class="rail-n">6</span><span class="rail-t">Remote</span></a></li>
+    </ol>
+    <p class="rail-now" id="rail-now" aria-hidden="true"></p>
+    </div>
+
+    <div class="viewport" id="viewport">
+      <div class="scene" id="scene" role="img" aria-label="3D view of O on Pt(111)"></div>
+      <p class="loading" id="loading" hidden>Loading scene…</p>
+      <video class="clip" id="clip" muted playsinline loop preload="none" controls hidden poster="data/webapp-poster.jpg"
+             aria-label="Screen recording: a relaxation submitted from the mliprun web app to the remote machine where the showcase runs ran"></video>
+      <dl class="hud" id="hud" aria-live="polite"></dl>
+      <button class="play" id="play" type="button" hidden>Play the mode</button>
+      <p class="fallback" id="fallback" hidden>The 3D scene could not load. The numbers and plots on this page still come from the data pack.</p>
+    </div>
+    <div class="capbar">
+      <p class="scene-cap" id="scene-cap"></p>
+      <div class="legend" id="legend" hidden></div>
+    </div>
+
+    <figure class="plot">
+      <svg id="plot" role="img" aria-labelledby="plot-cap"></svg>
+      <div class="plot-empty" id="plot-empty" hidden></div>
+      <figcaption id="plot-cap"></figcaption>
+    </figure>
+  </aside>
+
+  <div class="chapters" id="chapters">
+    <section class="intro" data-ch="intro" aria-labelledby="h-intro">
+      <h1 id="h-intro">One system, from first relaxation to a run on your own GPU machine</h1>
+      <p class="lede">An O atom on Pt(111) is relaxed, checked against a committee of models, moved from the fcc to the hcp hollow, and confirmed at its transition state. The story then turns to water on the same surface, where the MD is still to come, and ends with the same relaxation sent from the web app to a remote GPU machine. Each step is one <code>mlip</code> command, and the scene next to this text replays the real run as you scroll.</p>
+      <p class="setup">Every number is read from the showcase data pack when the page loads. Model <strong data-cmd="relax:mlip"></strong>, task head <strong data-cmd="relax:uma-task"></strong>, force target <span class="n" data-k="relax:fmax target" data-dp="2"></span>. Pt lattice constant <span class="n" data-k="relax:Pt lattice constant a (relaxed bulk, uma-s-1p2/oc20)" data-dp="3"></span>. <span data-note="relax:2"></span></p>
+      <p class="hint">Scroll down to start the relaxation.</p>
+    </section>
+
+    <!-- 1 Relax -->
+    <section class="chapter" id="ch-relax" data-ch="relax" aria-labelledby="h-relax">
+      <div class="beat">
+        <p class="kicker">Chapter 1 <span class="state" data-state="relax"></span></p>
+        <h2 id="h-relax">Relax the adsorbate</h2>
+        <p class="lede">Start every surface study here: <code>mlip optimize run</code> moves the free atoms until the largest force on any of them drops below <code>--fmax</code>.</p>
+        <div class="cmd" data-command="relax"></div>
+      </div>
+      <div class="beat">
+        <p>The forces fall from <span class="n" id="relax-f0"></span> to <span class="n" data-k="relax:final fmax, O at fcc hollow" data-dp="4"></span> in <span class="n" data-k="relax:BFGS steps, O at fcc hollow" data-dp="0"></span> of BFGS, under the target of <span class="n" data-k="relax:fmax target" data-dp="2"></span>.</p>
+        <p>The geometry hardly moves. The O atom sinks from <span class="n" id="relax-h0"></span> to <span class="n" id="relax-h1"></span> above the top Pt layer, and its Pt neighbours shift by at most <span class="n" id="relax-dpt"></span>. The slice through the slab shows how small that is, and the readout gives the O height at every step.</p>
+      </div>
+      <div class="beat">
+        <p>The energy carries the relaxation: it drops by <span class="n" id="relax-de"></span>, most of it in the first <span class="n" id="relax-de-steps"></span>.</p>
+        <p>The same command at the hcp hollow gives E(hcp) − E(fcc) = <span class="n" data-k="relax:E(hcp) − E(fcc)" data-dp="3"></span>. Chapter 3 connects the two minima.</p>
+        <p class="aside">Total energies are for the whole cell at one level of theory. Only differences between them mean anything.</p>
+      </div>
+    </section>
+
+    <!-- 2 Committee -->
+    <section class="chapter" id="ch-committee" data-ch="committee" aria-labelledby="h-committee">
+      <div class="beat">
+        <p class="kicker">Chapter 2 <span class="state" data-state="committee"></span></p>
+        <h2 id="h-committee">Ask a committee how sure it is</h2>
+        <p class="lede">Add <code>--committee</code> and the same relaxation runs with <span id="comm-n"></span> models at once, follows their mean force, and records how far they disagree at every step.</p>
+        <div class="cmd" data-command="committee"></div>
+        <p class="members" id="comm-members"></p>
+      </div>
+      <div class="beat">
+        <p class="key">The blue line, σmax, is the largest force disagreement between the models over the free atoms. Once the force being minimised (fmax, red) drops below it, into the shaded zone, the remaining force is smaller than what these models can tell apart.</p>
+        <p>Here fmax drops below σmax at step <span class="n" id="comm-cross"></span>. At the last step the disagreement is <span class="n" data-k="committee:sigma_max_free, final step (largest per-atom force disagreement, free atoms)" data-dp="3"></span>, <span class="n" data-k="committee:sigma_max_free / fmax, final step" data-dp="1" data-unit="times"></span> the final force of <span class="n" data-k="committee:final fmax of the committee-mean force" data-dp="4"></span>.</p>
+      </div>
+      <div class="beat">
+        <p>The energy spread stays small: <span class="n" data-k="committee:energy spread across members, final step (standard deviation, ddof=1, each member's step-0 energy subtracted)" data-dp="4"></span> at the end, a standard deviation after each member's step-0 energy is subtracted. The raw totals differ by <span class="n" id="comm-offset"></span> between models, so they are never compared directly.</p>
+        <p class="aside">The scene colours each atom by its force disagreement at the final step. The committee run saves numbers, not frames, so the colours are drawn on the chapter 1 geometry.</p>
+      </div>
+    </section>
+
+    <!-- 3 NEB -->
+    <section class="chapter" id="ch-neb" data-ch="neb" aria-labelledby="h-neb">
+      <div class="beat">
+        <p class="kicker">Chapter 3 <span class="state" data-state="neb"></span></p>
+        <h2 id="h-neb">Find the path between the hollows</h2>
+        <p class="lede"><code>mlip neb run</code> builds a band of images from the fcc to the hcp minimum, relaxes it, and lets the highest image climb to the saddle point.</p>
+        <div class="cmd" data-command="neb"></div>
+      </div>
+      <div class="beat">
+        <p>The band has <span class="n" id="neb-nimg"></span> between the two relaxed endpoints. It converged to <span class="n" data-k="neb:final band fmax" data-dp="4"></span> in <span class="n" data-k="neb:NEB optimizer steps" data-dp="0"></span>.</p>
+        <p>The forward barrier is <span class="n" data-k="neb:forward barrier, fcc → hcp" data-dp="3"></span>, the reverse barrier <span class="n" data-k="neb:reverse barrier, hcp → fcc" data-dp="3"></span>, and the reaction energy <span class="n" data-k="neb:reaction energy, E(hcp) − E(fcc)" data-dp="3"></span>, the same as the two separate relaxations.</p>
+      </div>
+      <div class="beat">
+        <p>The band did not explode: no atom drifted more than <span class="n" data-k="neb:band check: largest drift from seeded band" data-dp="3"></span> from the seeded band, against an allowance of <span class="n" data-k="neb:band check: allowance for that atom" data-dp="2"></span>.</p>
+      </div>
+    </section>
+
+    <!-- 4 TS -->
+    <section class="chapter" id="ch-ts" data-ch="ts" aria-labelledby="h-ts">
+      <div class="beat">
+        <p class="kicker">Chapter 4 <span class="state" data-state="neb" data-verdict="ts"></span></p>
+        <h2 id="h-ts">Check that the top is a real saddle</h2>
+        <p class="lede"><code>--verify-ts both</code> asks three questions of the climbing image: is there exactly one imaginary mode, does it point along the path, and does relaxing off it land in the two minima.</p>
+      </div>
+      <div class="beat">
+        <p>One imaginary mode at <span class="n" id="ts-nu"></span>. Its overlap with the NEB tangent is <span class="n" data-k="neb:overlap of imaginary mode with NEB tangent" data-dp="3"></span>, above the threshold of <span class="n" data-k="neb:overlap threshold" data-dp="1"></span>. Displaced along the mode and relaxed, the structure connects to both endpoints.</p>
+        <p>At the saddle the O atom sits <span class="n" data-k="neb:O height above top Pt layer at TS" data-dp="2"></span> above the top layer, higher than in either hollow.</p>
+      </div>
+      <div class="beat">
+        <p class="aside" id="ts-flag"></p>
+        <p class="aside" id="ts-illus"></p>
+      </div>
+    </section>
+
+    <!-- 5 Water -->
+    <section class="chapter" id="ch-water" data-ch="water" aria-labelledby="h-water">
+      <div class="beat">
+        <p class="kicker">Chapter 5 <span class="state" data-state="md"></span></p>
+        <h2 id="h-water">Water at finite temperature</h2>
+        <p class="lede" id="water-lede">MD not run; next step pending a decision.</p>
+        <p id="water-body">The story now moves to a new system, a bilayer of <span id="water-n"></span> water molecules on Pt(111). The scene shows the bilayer as built, a static structure. It is not a simulation.</p>
+      </div>
+    </section>
+
+    <!-- 6 Remote -->
+    <section class="chapter" id="ch-remote" data-ch="remote" aria-labelledby="h-remote">
+      <div class="beat">
+        <p class="kicker">Chapter 6 <span class="state" data-state="webapp"></span></p>
+        <h2 id="h-remote">Run it on your own GPU machine from the browser</h2>
+        <p class="lede"><code>mlip webapp</code> sends a job to a remote machine that you add yourself and brings the result back, so the GPU does the work and your laptop only submits. mliprun ships with no preconfigured machines.</p>
+        <ol class="steps">
+          <li>In the web app, open <strong>Machines</strong> and choose <strong>Add machine</strong>: your SSH alias (<code>&lt;your ssh alias&gt;</code>) and your remote folder (<code>&lt;your remote folder&gt;</code>).</li>
+          <li>Point it at your own MLIP environment (<code>&lt;your uma env&gt;</code>).</li>
+          <li>Press <strong>Test connection</strong>, then submit the job. The web app runs the same command as the CLI:</li>
+        </ol>
+        <div class="cmd" data-command="webapp"></div>
+      </div>
+      <div class="beat">
+        <p>In this recording the chapter 1 relaxation runs on <strong id="remote-machine"></strong>, the machine where all showcase runs on this page ran, on one GPU card. Your machine will be the one you add. The job took <span class="n" data-k="webapp:job wall time on cos-cluster (model load + relaxation)" data-dp="1"></span> in total, of which the relaxation itself took <span class="n" data-k="webapp:relaxation wall time (optimizer only)" data-dp="1"></span>; the rest is loading the model.</p>
+        <p>The result matches the command-line run: <span class="n" data-k="webapp:BFGS steps" data-dp="0"></span>, and an energy difference of <span class="n" id="remote-de"></span>, which is GPU floating-point noise.</p>
+        <p class="aside" id="remote-speed"></p>
+      </div>
+    </section>
+  </div>
+</main>
+
+<section class="after" aria-labelledby="h-after">
+  <div class="after-in">
+    <h2 id="h-after">Also in mliprun</h2>
+    <ul class="caps">
+      <li><code>mlip freq run</code><span>Finite-difference frequencies, imaginary-mode count and zero-point energy, with per-member spread from a committee.</span></li>
+      <li><code>mlip autoneb run</code><span>NEB with images inserted where the path needs them.</span></li>
+      <li><code>mlip benchmark run</code><span>Times one energy call for each installed MLIP on the same structure.</span></li>
+      <li><code>--mlip</code><span>UMA, MACE, SevenNet and CHGNet, each in its own environment.</span></li>
+      <li><code>mlip doctor</code><span>Checks that an environment can import and run its model.</span></li>
+    </ul>
+    <p class="install">To run any of this yourself, follow the <a href="https://github.com/manuelarcer/mliprun#installation">installation steps in the README</a>: one MLIP per environment. Where each number comes from is in the <a href="https://github.com/manuelarcer/mliprun/blob/main/docs/showcase/data/pack/PROVENANCE.md">data pack provenance</a>.</p>
+  </div>
+</section>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>

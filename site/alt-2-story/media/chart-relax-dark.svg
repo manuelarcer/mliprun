@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 250" width="720" height="250" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" role="img"><title>Relaxation: energy and fmax per BFGS step</title>
+<line x1="56.0" y1="38.0" x2="326.0" y2="38.0" stroke="#30363d" stroke-width="1"/>
+<text x="50.0" y="42.0" fill="#9198a1" font-size="11" text-anchor="end">0.0</text>
+<line x1="56.0" y1="98.3" x2="326.0" y2="98.3" stroke="#30363d" stroke-width="1"/>
+<text x="50.0" y="102.3" fill="#9198a1" font-size="11" text-anchor="end">−0.1</text>
+<line x1="56.0" y1="158.5" x2="326.0" y2="158.5" stroke="#30363d" stroke-width="1"/>
+<text x="50.0" y="162.5" fill="#9198a1" font-size="11" text-anchor="end">−0.2</text>
+<line x1="56.0" y1="206.0" x2="56.0" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="56.0" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">0</text>
+<line x1="146.0" y1="206.0" x2="146.0" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="146.0" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">4</text>
+<line x1="236.0" y1="206.0" x2="236.0" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="236.0" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">8</text>
+<line x1="326.0" y1="206.0" x2="326.0" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="326.0" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">12</text>
+<path d="M56,26V206H326" fill="none" stroke="#9198a1"/>
+<text x="326.0" y="237.0" fill="#e6edf3" font-size="12" text-anchor="end">BFGS step</text>
+<text x="12.0" y="18.0" fill="#e6edf3" font-size="12" text-anchor="start">E − E₀ (eV)</text>
+<path d="M56.0,38.0L78.5,98.4L101.0,161.0L123.5,169.3L146.0,176.7L168.5,184.6L191.0,187.3L213.5,188.2L236.0,189.1L258.5,190.0L281.0,190.5L303.5,190.7L326.0,190.7" fill="none" stroke="#e6edf3" stroke-width="1.8" stroke-linejoin="round"/>
+<circle cx="56.0" cy="38.0" r="2.6" fill="#e6edf3"/>
+<circle cx="78.5" cy="98.4" r="2.6" fill="#e6edf3"/>
+<circle cx="101.0" cy="161.0" r="2.6" fill="#e6edf3"/>
+<circle cx="123.5" cy="169.3" r="2.6" fill="#e6edf3"/>
+<circle cx="146.0" cy="176.7" r="2.6" fill="#e6edf3"/>
+<circle cx="168.5" cy="184.6" r="2.6" fill="#e6edf3"/>
+<circle cx="191.0" cy="187.3" r="2.6" fill="#e6edf3"/>
+<circle cx="213.5" cy="188.2" r="2.6" fill="#e6edf3"/>
+<circle cx="236.0" cy="189.1" r="2.6" fill="#e6edf3"/>
+<circle cx="258.5" cy="190.0" r="2.6" fill="#e6edf3"/>
+<circle cx="281.0" cy="190.5" r="2.6" fill="#e6edf3"/>
+<circle cx="303.5" cy="190.7" r="2.6" fill="#e6edf3"/>
+<circle cx="326.0" cy="190.7" r="2.6" fill="#e6edf3"/>
+<line x1="420.0" y1="186.5" x2="700.0" y2="186.5" stroke="#30363d" stroke-width="1"/>
+<text x="414.0" y="190.5" fill="#9198a1" font-size="11" text-anchor="end">0.01</text>
+<line x1="420.0" y1="121.7" x2="700.0" y2="121.7" stroke="#30363d" stroke-width="1"/>
+<text x="414.0" y="125.7" fill="#9198a1" font-size="11" text-anchor="end">0.1</text>
+<line x1="420.0" y1="56.9" x2="700.0" y2="56.9" stroke="#30363d" stroke-width="1"/>
+<text x="414.0" y="60.9" fill="#9198a1" font-size="11" text-anchor="end">1</text>
+<line x1="420.0" y1="206.0" x2="420.0" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="420.0" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">0</text>
+<line x1="513.3" y1="206.0" x2="513.3" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="513.3" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">4</text>
+<line x1="606.7" y1="206.0" x2="606.7" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="606.7" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">8</text>
+<line x1="700.0" y1="206.0" x2="700.0" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="700.0" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">12</text>
+<path d="M420,26V206H700" fill="none" stroke="#9198a1"/>
+<text x="700.0" y="237.0" fill="#e6edf3" font-size="12" text-anchor="end">BFGS step</text>
+<text x="376.0" y="18.0" fill="#e6edf3" font-size="12" text-anchor="start">fmax (eV/Å)</text>
+<line x1="420.0" y1="167.0" x2="700.0" y2="167.0" stroke="#ff7466" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="424.0" y="182.0" fill="#ff7466" font-size="11" text-anchor="start">target 0.02</text>
+<path d="M420.0,45.7L443.3,56.8L466.7,77.5L490.0,75.0L513.3,80.7L536.7,102.6L560.0,121.0L583.3,126.4L606.7,121.8L630.0,120.9L653.3,135.6L676.7,163.3L700.0,178.3" fill="none" stroke="#ff7466" stroke-width="1.8" stroke-linejoin="round"/>
+<circle cx="420.0" cy="45.7" r="2.6" fill="#ff7466"/>
+<circle cx="443.3" cy="56.8" r="2.6" fill="#ff7466"/>
+<circle cx="466.7" cy="77.5" r="2.6" fill="#ff7466"/>
+<circle cx="490.0" cy="75.0" r="2.6" fill="#ff7466"/>
+<circle cx="513.3" cy="80.7" r="2.6" fill="#ff7466"/>
+<circle cx="536.7" cy="102.6" r="2.6" fill="#ff7466"/>
+<circle cx="560.0" cy="121.0" r="2.6" fill="#ff7466"/>
+<circle cx="583.3" cy="126.4" r="2.6" fill="#ff7466"/>
+<circle cx="606.7" cy="121.8" r="2.6" fill="#ff7466"/>
+<circle cx="630.0" cy="120.9" r="2.6" fill="#ff7466"/>
+<circle cx="653.3" cy="135.6" r="2.6" fill="#ff7466"/>
+<circle cx="676.7" cy="163.3" r="2.6" fill="#ff7466"/>
+<circle cx="700.0" cy="178.3" r="2.6" fill="#ff7466"/>
+</svg>

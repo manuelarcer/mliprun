@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 250" width="720" height="250" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Noto Sans',Helvetica,Arial,sans-serif" role="img"><title>Committee: fmax and the largest force disagreement per step, and the energy spread</title>
+<line x1="56.0" y1="186.5" x2="346.0" y2="186.5" stroke="#30363d" stroke-width="1"/>
+<text x="50.0" y="190.5" fill="#9198a1" font-size="11" text-anchor="end">0.01</text>
+<line x1="56.0" y1="121.7" x2="346.0" y2="121.7" stroke="#30363d" stroke-width="1"/>
+<text x="50.0" y="125.7" fill="#9198a1" font-size="11" text-anchor="end">0.1</text>
+<line x1="56.0" y1="56.9" x2="346.0" y2="56.9" stroke="#30363d" stroke-width="1"/>
+<text x="50.0" y="60.9" fill="#9198a1" font-size="11" text-anchor="end">1</text>
+<line x1="56.0" y1="206.0" x2="56.0" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="56.0" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">0</text>
+<line x1="187.8" y1="206.0" x2="187.8" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="187.8" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">5</text>
+<line x1="319.6" y1="206.0" x2="319.6" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="319.6" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">10</text>
+<path d="M56,26V206H346" fill="none" stroke="#9198a1"/>
+<text x="346.0" y="237.0" fill="#e6edf3" font-size="12" text-anchor="end">BFGS step</text>
+<text x="12.0" y="18.0" fill="#e6edf3" font-size="12" text-anchor="start">force (eV/Å)</text>
+<path d="M56.0,122.4L82.4,122.2L108.7,124.0L135.1,126.1L161.5,129.7L187.8,132.2L214.2,132.5L240.5,132.9L266.9,133.4L293.3,133.7L319.6,134.0L346.0,134.4L346.0,206.0L56.0,206.0Z" fill="rgba(121,184,222,0.25)" stroke="none" stroke-width="0" stroke-linejoin="round"/>
+<path d="M56.0,122.4L82.4,122.2L108.7,124.0L135.1,126.1L161.5,129.7L187.8,132.2L214.2,132.5L240.5,132.9L266.9,133.4L293.3,133.7L319.6,134.0L346.0,134.4" fill="none" stroke="#79b8de" stroke-width="1.8" stroke-linejoin="round"/>
+<path d="M56.0,47.5L82.4,57.3L108.7,76.0L135.1,73.7L161.5,78.7L187.8,98.0L214.2,115.6L240.5,123.5L266.9,120.4L293.3,125.6L319.6,146.2L346.0,171.0" fill="none" stroke="#ff7466" stroke-width="1.8" stroke-linejoin="round"/>
+<line x1="56.0" y1="167.0" x2="346.0" y2="167.0" stroke="#ff7466" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="60.0" y="182.0" fill="#ff7466" font-size="11" text-anchor="start">target 0.02</text>
+<text x="62.0" y="40.0" fill="#ff7466" font-size="12" text-anchor="start">fmax</text>
+<text x="100.0" y="40.0" fill="#79b8de" font-size="12" text-anchor="start">σmax</text>
+<line x1="319.6" y1="26.0" x2="319.6" y2="206.0" stroke="#9198a1" stroke-width="1" stroke-dasharray="2 3"/>
+<text x="314.6" y="82.7" fill="#e6edf3" font-size="12" text-anchor="end">fmax &lt; σmax</text>
+<text x="314.6" y="97.7" fill="#9198a1" font-size="11" text-anchor="end">from step 10</text>
+<line x1="440.0" y1="206.0" x2="700.0" y2="206.0" stroke="#30363d" stroke-width="1"/>
+<text x="434.0" y="210.0" fill="#9198a1" font-size="11" text-anchor="end">0.000</text>
+<line x1="440.0" y1="146.5" x2="700.0" y2="146.5" stroke="#30363d" stroke-width="1"/>
+<text x="434.0" y="150.5" fill="#9198a1" font-size="11" text-anchor="end">0.004</text>
+<line x1="440.0" y1="87.0" x2="700.0" y2="87.0" stroke="#30363d" stroke-width="1"/>
+<text x="434.0" y="91.0" fill="#9198a1" font-size="11" text-anchor="end">0.008</text>
+<line x1="440.0" y1="27.5" x2="700.0" y2="27.5" stroke="#30363d" stroke-width="1"/>
+<text x="434.0" y="31.5" fill="#9198a1" font-size="11" text-anchor="end">0.012</text>
+<line x1="440.0" y1="206.0" x2="440.0" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="440.0" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">0</text>
+<line x1="558.2" y1="206.0" x2="558.2" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="558.2" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">5</text>
+<line x1="676.4" y1="206.0" x2="676.4" y2="210.0" stroke="#9198a1" stroke-width="1"/>
+<text x="676.4" y="222.0" fill="#9198a1" font-size="11" text-anchor="middle">10</text>
+<path d="M440,26V206H700" fill="none" stroke="#9198a1"/>
+<text x="700.0" y="237.0" fill="#e6edf3" font-size="12" text-anchor="end">BFGS step</text>
+<text x="396.0" y="18.0" fill="#e6edf3" font-size="12" text-anchor="start">energy spread, std. dev. (eV)</text>
+<path d="M440.0,206.0L463.6,140.4L487.3,62.8L510.9,62.0L534.5,74.9L558.2,88.9L581.8,96.8L605.5,104.5L629.1,113.1L652.7,118.1L676.4,117.1L700.0,115.7" fill="none" stroke="#79b8de" stroke-width="1.8" stroke-linejoin="round"/>
+</svg>
