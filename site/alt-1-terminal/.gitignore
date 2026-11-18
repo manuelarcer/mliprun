@@ -1,4 +1,0 @@
-shots/
-__pycache__/
-# the page fetches these real run logs; the repo-wide *.log rule must not drop them
-!data/logs/*.log
