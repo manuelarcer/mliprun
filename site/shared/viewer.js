@@ -1,12 +1,93 @@
 // Shared 3D trajectory viewer for the mliprun front-page showcase.
 //
-//   import { loadScene } from "../shared/viewer.js";
-//   const scene = await loadScene(el, "relax.xyz", { fps: 20, replicate: [2, 2] });
-//   scene.play();
+// THIS HEADER IS THE BUILDER CONTRACT. Task 9 builders must not edit
+// site/shared/; everything a page needs is described here.
 //
-// Input: multi-frame extended XYZ (ASE `write(..., format="extxyz")`), lattice in
-// the comment line. Renders with 3Dmol.js 2.4.2 (loaded on demand from the
-// pinned CDN URL when the page has not loaded it already).
+//   import { loadScene } from "../shared/viewer.js";
+//   const el = document.querySelector("#scene");   // must have a CSS size
+//   const scene = await loadScene(el, "../../docs/showcase/data/pack/relax.xyz", {
+//     background: "#0d1117", fps: 20 });
+//   playButton.onclick = () => scene.play({ force: true });   // user-pressed only
+//   if (!scene.reducedMotion) scene.play();
+//
+// INPUT
+//   Multi-frame extended XYZ (ASE `write(..., format="extxyz")`); the lattice is
+//   read from `Lattice="..."` in each comment line, columns from `Properties=`.
+//   Other comment keys (energy, step, ...) come back per frame in ctrl.frames[i].
+//   3Dmol.js is injected from THREEDMOL_URL (exact pinned 2.4.2) unless the page
+//   already loaded it. A failed 3Dmol load is not cached: the next loadScene
+//   call retries.
+//
+// OPTIONS (opts; defaults in DEFAULTS below)
+//   xyzText            string: xyz content to use instead of fetching xyzUrl
+//   fps (20)           playback frames per second (time-based, not per rAF)
+//   loop (true)        restart after the last frame; false = stop on the last
+//   bounce (false)     play forward then backward (NEB band, vibrational mode)
+//   hold (0.6)         seconds resting on the last frame (and frame 0 if bounce)
+//   style              "spacefill" (default) | "ballstick" (sticks only between
+//                      non-metal atoms; the metal stays large to read as a surface)
+//   showCell (false)   false | true (full cell) | "base" (in-plane parallelogram)
+//   replicate ([2,2])  periodic images [nx, ny]; [2,2] makes a slab read as a
+//                      surface. Default images include adsorbates (true periodic
+//                      images, so a 2x2 shows 4 O atoms).
+//   replicateElements  null (all atoms) | e.g. ["Pt"] to repeat only the metal;
+//                      then the picture is not the periodic system: say so.
+//   imageTint (0)      0..1 fade of the periodic images toward the background.
+//                      With background "transparent" the target is WHITE: on a
+//                      dark theme pass `background` explicitly or images fade
+//                      to white.
+//   spin (0)           deg/s about the surface normal while playing; true = 10.
+//                      Stops when the user presses on the canvas.
+//   view ("tilted")    "tilted" | "top" | "side" | "hero" or {elevation,
+//                      azimuth, zoom}; zoom is relative to the auto-fit.
+//   fill (0.9)         auto-fit: fraction of the limiting canvas side filled
+//   fitSpin (false)    fit for all azimuths (automatic when spin is set)
+//   background         "transparent" (default) | any CSS colour
+//   fog (true)         depth fog toward the background colour
+//   ambientOcclusion   strength 0..1 (0.4) or false
+//   fov (14)           field of view in degrees; orthographic (false)
+//   autoplay (false)   start playing on load (ignored under reduced motion)
+//   restFrame ("last") frame shown when not playing: "last" | "first" | index
+//   interactive (true) mouse rotation; scrollZoom (false): the wheel scrolls
+//                      the page, not the scene, unless scrollZoom is true
+//   pauseOffscreen (true) pause while the element is out of the viewport
+//   capture (false)    set window.__scene = ctrl (used by capture.py)
+//   onFrame(i)         called after each frame is drawn. It FIRES BEFORE the
+//                      loadScene promise resolves (initial frames); do not
+//                      touch the controller inside it until the await returns.
+//
+// CONTROLLER (resolved value)
+//   play({force})  start; returns false and does nothing under
+//                  prefers-reduced-motion unless force:true. Wire force ONLY to
+//                  a user-pressed control (button), never to page load.
+//   pause(), setFrame(i) (clamps, pauses, returns index), frame, playing,
+//   nFrames, frames (per-frame info objects), cell, symbols, reducedMotion,
+//   setView(v, {fit=true}), getView(), snapshot() (PNG data URL), resize(),
+//   destroy(), viewer (raw 3Dmol viewer for labels/arrows), ready.
+//
+// CONTRACT NOTES
+//   - The promise REJECTS on fetch failure (HTTP error), xyz parse failure or
+//     3Dmol load failure. Catch it and show a static fallback.
+//   - `el` needs an explicit CSS size (width and height); the canvas fills it.
+//   - Call ctrl.destroy() when a scene is replaced: it stops playback, removes
+//     listeners and models, and frees the scene's GPU buffers. WebGL contexts:
+//     3Dmol 2.4.2 draws ALL viewers on a page through ONE shared OffscreenCanvas
+//     WebGL2 context and copies each frame to the visible canvas, so the
+//     browser limit of about 16 contexts does not bind for many scenes; that
+//     shared context is never lost by destroy() (it would blank the other
+//     scenes). Only on browsers without OffscreenCanvas does each scene own a
+//     context, and destroy() then releases it with WEBGL_lose_context.
+//   - Window resizes refit automatically (debounced). After a CSS-only layout
+//     change (no window resize), call ctrl.resize().
+//   - prefers-reduced-motion is read ONCE, at load; under it the scene rests on
+//     restFrame (the final frame by default) and autoplay is ignored.
+//   - Small motions are invisible at the tilted view. Example: the O height in
+//     the relaxation changes by under 1 A and is hard to see; use view:"side",
+//     or an overlay (label, chart cursor) driven by ctrl.frames[i] in onFrame.
+//   - Auto-fit samples about 5 evenly spaced frames; an atom that leaves that
+//     envelope in other frames can touch the edge (lower `fill` if so).
+//   - A spinning scene is fitted for all azimuths, so it fills less of the
+//     frame (about 45% for a 3x3 rhombus).
 //
 // Every scene uses the same element colours and radii (ELEMENT_STYLE), the same
 // camera convention (VIEWS) and the same lighting, so the five design
@@ -48,7 +129,7 @@ const DEFAULTS = {
   hold: 0.6, // seconds to rest on the last frame (and on frame 0 when bouncing)
   style: "spacefill", // "spacefill" | "ballstick"
   showCell: false, // false | true (full cell) | "base" (in-plane parallelogram)
-  replicate: [1, 1],
+  replicate: [2, 2],
   replicateElements: null, // null = replicate every atom (true periodic images)
   imageTint: 0, // 0..1: fade periodic images toward the background colour
   spin: 0, // deg/s about the surface normal while playing; true = 10 deg/s
@@ -151,8 +232,16 @@ function ensure3Dmol() {
       const s = document.createElement("script");
       s.src = THREEDMOL_URL;
       s.async = true;
-      s.onload = () => (window.$3Dmol ? resolve(window.$3Dmol) : reject(new Error("3Dmol missing")));
-      s.onerror = () => reject(new Error(`could not load ${THREEDMOL_URL}`));
+      s.onload = () => {
+        if (window.$3Dmol) return resolve(window.$3Dmol);
+        threeDmolPromise = null;
+        return reject(new Error("3Dmol missing after load"));
+      };
+      s.onerror = () => {
+        threeDmolPromise = null; // let a later loadScene retry
+        s.remove();
+        reject(new Error(`could not load ${THREEDMOL_URL}`));
+      };
       document.head.appendChild(s);
     });
   }
@@ -243,7 +332,7 @@ function buildAtoms(frame, rep, repElements, center) {
   return atoms;
 }
 
-// Centre of the replicated block, averaged over all frames (fixed camera target).
+// Centre of the replicated block from the LAST frame's atoms (fixed camera target).
 function sceneCenter(frames, rep) {
   const f = frames[frames.length - 1];
   const n = f.symbols.length;
@@ -261,11 +350,19 @@ function sceneCenter(frames, rep) {
 // ------------------------------------------------------------------ main API
 /**
  * Load a multi-frame extended-XYZ trajectory into `el` and return a controller.
+ * Full contract (options, controller, caveats) in the header of this file.
  *
- * @param {HTMLElement} el      container; the canvas fills it (give it a size)
- * @param {string} xyzUrl       URL (http, relative or data:) of the .xyz file
- * @param {object} opts         see DEFAULTS above
- * @returns {Promise<{play, pause, setFrame, nFrames, ...}>}
+ * @param {HTMLElement} el  container with an explicit CSS width and height
+ * @param {string} xyzUrl   http, relative or data: URL of the .xyz file
+ *                          (ignored when opts.xyzText is given)
+ * @param {object} [opts]   options; see the OPTIONS list in the file header
+ * @param {string} [opts.xyzText]  xyz content to use instead of fetching
+ * @param {(i:number)=>void} [opts.onFrame]  fires before the promise resolves
+ * @returns {Promise<{play:(o?:{force?:boolean})=>boolean, pause:()=>void,
+ *   setFrame:(i:number)=>number, nFrames:number, frames:object[],
+ *   setView:Function, getView:Function, snapshot:()=>string,
+ *   resize:()=>void, destroy:()=>void, reducedMotion:boolean, viewer:object}>}
+ *   Rejects on fetch, parse or 3Dmol load failure.
  */
 export async function loadScene(el, xyzUrl, opts = {}) {
   const o = { ...DEFAULTS, ...opts };
@@ -411,7 +508,11 @@ export async function loadScene(el, xyzUrl, opts = {}) {
   const fit = ({ spinFit = false } = {}) => {
     const keep = current;
     silent = true;
-    const fitFrames = nFrames > 1 ? [0, nFrames - 1] : [0];
+    // About 5 evenly spaced frames (always first and last).
+    const nFit = Math.min(nFrames, 5);
+    const fitFrames = nFit > 1
+      ? [...new Set(Array.from({ length: nFit }, (_, j) => Math.round((j * (nFrames - 1)) / (nFit - 1))))]
+      : [0];
     const azimuths = spinFit ? [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330]
       .map((a) => viewState.azimuth + a) : [viewState.azimuth];
     viewer.setBackgroundColor(bgHex, 0);
@@ -518,11 +619,19 @@ export async function loadScene(el, xyzUrl, opts = {}) {
   const stopSpinOnTouch = () => { o.spin = 0; };
   el.addEventListener("pointerdown", stopSpinOnTouch);
 
+  let destroyed = false;
   const onResize = () => {
+    if (destroyed) return;
     viewer.resize();
     fit({ spinFit: !!(o.spin || o.fitSpin) });
   };
-  window.addEventListener("resize", onResize);
+  // Window resizes fire in bursts; refit once they settle (~150 ms).
+  let resizeTimer = 0;
+  const onWindowResize = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(onResize, 150);
+  };
+  window.addEventListener("resize", onWindowResize);
 
   const ctrl = {
     nFrames,
@@ -569,10 +678,25 @@ export async function loadScene(el, xyzUrl, opts = {}) {
     destroy() {
       stop();
       if (io) io.disconnect();
-      window.removeEventListener("resize", onResize);
+      destroyed = true;
+      clearTimeout(resizeTimer);
+      window.removeEventListener("resize", onWindowResize);
       el.removeEventListener("wheel", wheelGuard, { capture: true });
       el.removeEventListener("pointerdown", stopSpinOnTouch);
+      const canvas = viewer.getCanvas();
+      const gl = viewer.renderer && viewer.renderer._gl;
       viewer.clear();
+      // Release the WebGL context, but only one this scene owns. 3Dmol 2.4.2
+      // renders every viewer on the page through ONE shared OffscreenCanvas
+      // context (whenever OffscreenCanvas exists); losing that one would blank
+      // every other scene. Only the fallback path (no OffscreenCanvas) gives
+      // each canvas its own context, and that one is released here.
+      try {
+        if (gl && gl.canvas === canvas) {
+          const ext = gl.getExtension("WEBGL_lose_context");
+          if (ext) ext.loseContext();
+        }
+      } catch (e) { /* context already gone */ }
       el.innerHTML = "";
     },
   };

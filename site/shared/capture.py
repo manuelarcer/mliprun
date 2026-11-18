@@ -8,8 +8,13 @@ read back as PNG from the WebGL canvas, then ffmpeg encodes:
   OUT_STEM.gif  palettegen/paletteuse, loops forever
   OUT_STEM.mp4  H.264, yuv420p, +faststart, no audio track
 
-Each file is kept <= 5 MB: the GIF steps down colours, then width, then fps;
-the MP4 steps up CRF, then width, until it fits.
+Each file is kept <= 5 MB. GIF: at full width it tries 256, then 128
+colours, then 96 colours at 0.75x fps, then 64 colours at 0.6x fps; if none
+fits it repeats that sequence at 0.85, 0.7, 0.55 and 0.45x width. MP4: CRF 18,
+22, 26, 30 at full width, then the same at 0.8, 0.6 and 0.45x width.
+
+--keep-frames DIR refuses a directory that already holds f*.png frames.
+The Chromium build used is printed at the end of each run.
 
 No local web server is used: every request from the page is answered by a
 Playwright route handler (works inside sandboxes that forbid binding a port).
@@ -83,19 +88,31 @@ def _chromium_candidates():
     return found
 
 
+LAST_CHROMIUM = {"executable": None, "version": None}
+
+
 def _launch(pw):
+    browser = _launch_any(pw)
+    LAST_CHROMIUM["version"] = browser.version
+    return browser
+
+
+def _launch_any(pw):
     # SwiftShader (software WebGL) renders identically on every machine and
     # needs no GPU, so captured frames are reproducible.
     args = ["--use-angle=swiftshader", "--enable-unsafe-swiftshader",
             "--ignore-gpu-blocklist"]
     exe = os.environ.get("MLIPRUN_CHROMIUM")
     if exe:
+        LAST_CHROMIUM["executable"] = exe
         return pw.chromium.launch(executable_path=exe, args=args)
     try:
+        LAST_CHROMIUM["executable"] = pw.chromium.executable_path
         return pw.chromium.launch(args=args)
     except Exception as err:  # bundled revision missing: use a cached one
         for cand in _chromium_candidates():
             try:
+                LAST_CHROMIUM["executable"] = cand
                 return pw.chromium.launch(executable_path=cand, args=args)
             except Exception:
                 continue
@@ -185,8 +202,15 @@ def scene_page(xyz_text: str, width: int = 640, height: int = 480, scale: float 
 
 
 # ---------------------------------------------------------------- encoding
-def _run(cmd):
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+def _run(cmd, timeout=600):
+    try:
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.PIPE, text=True, timeout=timeout)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"ffmpeg failed (exit {e.returncode}): {' '.join(cmd)}\n"
+                           f"{(e.stderr or '').strip()}") from e
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"ffmpeg timed out after {timeout} s: {' '.join(cmd)}") from e
 
 
 def _even(x: float) -> int:
@@ -237,6 +261,10 @@ def render_frames(xyz: Path, frames_dir: Path, *, n_frames=None, width=640, heig
                   camera=None, image_tint=0.0, scale=2) -> list[int]:
     """Write f00000.png ... into frames_dir; return the frame plan."""
     frames_dir.mkdir(parents=True, exist_ok=True)
+    stale = sorted(frames_dir.glob("f*.png"))
+    if stale:
+        raise FileExistsError(f"{frames_dir} already holds {len(stale)} f*.png frames; "
+                              "use an empty directory (stale frames would be encoded)")
     text = Path(xyz).read_text()
     opts = {"replicate": list(replicate), "view": view, "style": style,
             "imageTint": image_tint, "fitSpin": bool(spin)}
@@ -293,7 +321,8 @@ def main(argv=None) -> int:
                    help="0..1 fade of periodic images toward the background")
     p.add_argument("--scale", type=float, default=2.0,
                    help="supersampling factor (render at scale x size, downscale)")
-    p.add_argument("--keep-frames", type=Path, default=None)
+    p.add_argument("--keep-frames", type=Path, default=None,
+                   help="write the PNG frames here (must be new or hold no f*.png)")
     a = p.parse_args(argv)
 
     camera = {k: v for k, v in (("elevation", a.elevation), ("azimuth", a.azimuth),
@@ -311,6 +340,7 @@ def main(argv=None) -> int:
         mp4 = encode_mp4(frames_dir, a.fps, a.out_stem.with_suffix(".mp4"), a.width)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    print(f"chromium: {LAST_CHROMIUM['version']} ({LAST_CHROMIUM['executable']})")
     print(f"frames: {len(plan)} output ({len(set(plan))} distinct source frames)")
     print(f"gif: {a.out_stem.with_suffix('.gif')}  {gif['bytes'] / 1e6:.2f} MB  "
           f"width {gif['width']} px, {gif['colors']} colours, {gif['fps']:g} fps")
