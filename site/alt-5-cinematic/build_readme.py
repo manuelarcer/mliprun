@@ -229,6 +229,8 @@ def root(pages_url=None):
 
 # mliprun
 
+*One CLI for machine-learning interatomic potentials: run it locally, or on your own GPU machine from the web app.*
+
 [![Tests]({REPO}/actions/workflows/tests.yml/badge.svg)]({REPO}/actions/workflows/tests.yml)
 [![Fresh-install smoke test]({REPO}/actions/workflows/install-smoke.yml/badge.svg)]({REPO}/actions/workflows/install-smoke.yml)
 
@@ -236,7 +238,7 @@ def root(pages_url=None):
 
 <sub>O hops fcc → hcp on Pt(111); NEB, barrier {num(kn(neb, 'forward barrier')['value'])} eV. Images, not dynamics.</sub>
 
-**Machine-learning interatomic potentials from one command:** UMA, MACE, SevenNet and CHGNet, from a CLI or a web app.{live}
+Works with UMA, MACE, SevenNet and CHGNet.{live}
 
 {chr(10).join(table)}
 

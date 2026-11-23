@@ -2,6 +2,8 @@
 
 # mliprun
 
+*One CLI for machine-learning interatomic potentials: run it locally, or on your own GPU machine from the web app.*
+
 [![Tests](https://github.com/manuelarcer/mliprun/actions/workflows/tests.yml/badge.svg)](https://github.com/manuelarcer/mliprun/actions/workflows/tests.yml)
 [![Fresh-install smoke test](https://github.com/manuelarcer/mliprun/actions/workflows/install-smoke.yml/badge.svg)](https://github.com/manuelarcer/mliprun/actions/workflows/install-smoke.yml)
 
@@ -9,7 +11,7 @@
 
 <sub>O hops fcc → hcp on Pt(111); NEB, barrier 0.544 eV. Images, not dynamics.</sub>
 
-**Machine-learning interatomic potentials from one command:** UMA, MACE, SevenNet and CHGNet, from a CLI or a web app.
+Works with UMA, MACE, SevenNet and CHGNet.
 
 <table>
 <tr>
