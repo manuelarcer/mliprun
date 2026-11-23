@@ -61,14 +61,23 @@ pytest -m uma                          # UMA integration tests only
 github.com is the main repository. A read-only copy lives at
 `https://ghes.a-star.edu.sg/juar/mliprun` for users inside A*STAR.
 
-- The workflow `.github/workflows/mirror-ghes.yml` pushes `main` and the tags
-  to the GHES after every merge. It can also be started by hand from the
-  Actions tab ("Run workflow").
-- It needs the repository secret `GHES_MIRROR_TOKEN`: a GHES personal access
-  token (classic) with the `repo` and `workflow` scopes. When the token
-  expires the job fails; create a new token and replace the secret.
+- `scripts/mirror_to_ghes.sh` copies `main` and the tags to the GHES and then
+  confirms that both servers show the same commit. Run it for an immediate
+  update:
+  ```bash
+  scripts/mirror_to_ghes.sh
+  ```
+  It needs `git` and a `gh` login on the GHES
+  (`gh auth login --hostname ghes.a-star.edu.sg`).
+- The maintainer's Mac runs an installed copy of the script once a day through
+  launchd (the macOS scheduler; job `com.juar.mliprun-ghes-mirror`). The copy
+  can therefore be up to one day behind github.com. The job writes to
+  `~/Library/Logs/mliprun-ghes-mirror.log` and shows a notification when it
+  fails.
+- A GitHub Actions workflow cannot do this: the GHES refuses connections from
+  GitHub's hosted runners (HTTP 403 before any login; measured 2026-11-23).
 - Never commit on the GHES copy. The push is not forced, so a commit made
-  there makes the job fail until that commit is removed.
+  there makes the script fail until that commit is removed.
 - Issues, pull requests and CI stay on github.com. On the GHES copy, issues
   and Actions are switched off.
 - Feature branches are not mirrored.
