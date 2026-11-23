@@ -56,6 +56,23 @@ pytest -m uma                          # UMA integration tests only
 
 ---
 
+## Mirror on the A*STAR GHES
+
+github.com is the main repository. A read-only copy lives at
+`https://ghes.a-star.edu.sg/juar/mliprun` for users inside A*STAR.
+
+- The workflow `.github/workflows/mirror-ghes.yml` pushes `main` and the tags
+  to the GHES after every merge. It can also be started by hand from the
+  Actions tab ("Run workflow").
+- It needs the repository secret `GHES_MIRROR_TOKEN`: a GHES personal access
+  token (classic) with the `repo` and `workflow` scopes. When the token
+  expires the job fails; create a new token and replace the secret.
+- Never commit on the GHES copy. The push is not forced, so a commit made
+  there makes the job fail until that commit is removed.
+- Issues, pull requests and CI stay on github.com. On the GHES copy, issues
+  and Actions are switched off.
+- Feature branches are not mirrored.
+
 ## Developer notes
 
 - CLI powered by [`typer`](https://typer.tiangolo.com/)
