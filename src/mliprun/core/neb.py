@@ -26,6 +26,10 @@ from mliprun.core.utils import calc_fmax, resolve_device
 
 logger = logging.getLogger(__name__)
 
+# Value a restart writes into neb_parameters.txt for a field it cannot know
+# (the endpoint file names). The parser skips it.
+RESTART_PLACEHOLDER = "(from restart)"
+
 
 def summarize_neb_path(energies) -> dict:
     """Barrier metrics for one converged NEB path.
@@ -214,6 +218,11 @@ class CustomNEB:
                 key = key.strip()
                 value = value.strip()
 
+                if value == RESTART_PLACEHOLDER:
+                    # Written by a restart that had no value to carry forward
+                    # (older versions always wrote it for the IDPP lines).
+                    # Treat the field as absent so the next restart parses.
+                    continue
                 if key in key_parsers:
                     param_name, converter = key_parsers[key]
                     params[param_name] = converter(value)

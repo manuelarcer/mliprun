@@ -10,7 +10,7 @@ from ase.io import read
 from ase.optimize import FIRE, MDMin, BFGS, LBFGS
 
 from mliprun.cli.commands.ts import echo_ts_verification
-from mliprun.core.neb import CustomNEB
+from mliprun.core.neb import RESTART_PLACEHOLDER, CustomNEB
 from mliprun.core.params_io import write_parameters_file, write_endpoint_results
 from mliprun.core.run_record import RunContext
 from mliprun.core.ts_verify import CHECKS_BY_CHOICE, neb_tangent, verify_ts
@@ -88,6 +88,12 @@ def _aqcat_param_lines(mlip, aqcat_spin, aqcat_fidelity) -> dict:
         return {}
     return {"AQCat spin:": aqcat_spin,
             "AQCat fidelity:": resolve_aqcat_fidelity(aqcat_fidelity)}
+
+
+def _carried(loaded_params, name):
+    """A loaded parameter for the restart's parameter file, or the placeholder."""
+    value = loaded_params.get(name)
+    return RESTART_PLACEHOLDER if value is None else value
 
 
 def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
@@ -230,12 +236,14 @@ def _handle_restart(output_dir, *, mlip, uma_task, mace_head, sevennet_task,
         **_aqcat_param_lines(params["mlip"], params["aqcat_spin"],
                              params["aqcat_fidelity"]),
         "Device:": params["device"],
-        "Initial:": "(from restart)",
-        "Final:": "(from restart)",
+        "Initial:": RESTART_PLACEHOLDER,
+        "Final:": RESTART_PLACEHOLDER,
         "Intermediate images:": params["num_images"],
         "Total images:": params["total_images"],
-        "IDPP fmax:": "(from restart)",
-        "IDPP steps:": "(from restart)",
+        # Carried forward so the original IDPP settings survive any number
+        # of restarts; the placeholder only when the loaded file had none.
+        "IDPP fmax:": _carried(loaded_params, "interp_fmax"),
+        "IDPP steps:": _carried(loaded_params, "interp_steps"),
         "Final fmax:": params["fmax"],
         "Spring constant (k):": params["k"],
         "Climb:": params["climb"],
