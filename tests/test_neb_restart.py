@@ -336,3 +336,78 @@ class TestAqcatNebRecord:
             neb.run_autoneb()
         assert "singlepoint, optimize and neb only" in str(exc.value)
         assert not (tmp_path / "mliprun_run.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Second restart in the same folder
+# ---------------------------------------------------------------------------
+# A restart used to write "IDPP fmax: (from restart)" into neb_parameters.txt,
+# and the next restart's parser ran float() on it and crashed.
+
+_FIRST_RESTART_PARAMS = (
+    "NEB Run Parameters (RESTART)\n"
+    "=============================\n"
+    "Restarted from:        previous_1\n"
+    "MLIP model:            mace\n"
+    "Initial:               (from restart)\n"
+    "Final:                 (from restart)\n"
+    "Intermediate images:   3\n"
+    "Total images:          5\n"
+    "IDPP fmax:             (from restart)\n"
+    "IDPP steps:            (from restart)\n"
+    "Final fmax:            0.05\n"
+    "Optimize endpoints:    False (restart)\n"
+)
+
+
+class TestSecondRestart:
+    def test_a_file_written_by_an_older_restart_parses(self, tmp_path):
+        params_file = tmp_path / "neb_parameters.txt"
+        params_file.write_text(_FIRST_RESTART_PARAMS)
+        params = CustomNEB._parse_parameters_file(params_file)
+        assert params["num_images"] == 3
+        assert params["fmax"] == 0.05
+        assert "interp_fmax" not in params
+        assert "interp_steps" not in params
+
+    def test_two_restarts_in_one_folder_run_and_keep_the_idpp_values(
+            self, tmp_path, monkeypatch):
+        from ase.build import add_adsorbate, fcc100
+        from ase.calculators.emt import EMT
+        from ase.constraints import FixAtoms
+        from ase.io import write
+        from typer.testing import CliRunner
+
+        from mliprun.cli.commands.neb import app
+
+        def slab(shift):
+            s = fcc100("Al", size=(2, 2, 2), vacuum=5.0)
+            add_adsorbate(s, "Al", 1.5, "hollow")
+            s.positions[-1] += shift * s.cell[0]
+            z = s.positions[:, 2]
+            s.set_constraint(FixAtoms(mask=z < z.min() + 0.1))
+            return s
+
+        monkeypatch.chdir(tmp_path)
+        write("initial.vasp", slab(0.0), format="vasp")
+        write("final.vasp", slab(0.5), format="vasp")
+        monkeypatch.setattr("mliprun.cli.commands.neb.resolve_mlip",
+                            lambda mlip, *a, **k: "emt")
+        monkeypatch.setattr(CustomNEB, "setup_calculator",
+                            lambda self, *a, **k: EMT())
+        runner = CliRunner()
+
+        new = runner.invoke(app, ["--initial", "initial.vasp", "--final",
+                                  "final.vasp", "--num-images", "3",
+                                  "--interp-fmax", "0.2", "--interp-steps", "50",
+                                  "--neb-max-steps", "5"])
+        assert new.exit_code == 0, new.stdout
+        for fmax in ("0.04", "0.03"):
+            restarted = runner.invoke(app, ["--restart", "--fmax", fmax,
+                                            "--neb-max-steps", "5"])
+            assert restarted.exit_code == 0, restarted.stdout
+
+        params = CustomNEB._parse_parameters_file(tmp_path / "neb_parameters.txt")
+        assert params["fmax"] == 0.03
+        assert params["interp_fmax"] == 0.2
+        assert params["interp_steps"] == 50

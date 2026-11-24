@@ -68,6 +68,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
   so `--mlip auto` no longer resolves to `uma-s-1p2` in that env, and
   `mlip doctor` reports it under AQCat25-EV2 instead of UMA.
 
+### Fixed
+
+- **A second `neb run --restart` in the same folder no longer fails** with
+  `could not convert string to float: '(from restart)'`. A restart now
+  carries the original `IDPP fmax` and `IDPP steps` forward into
+  `neb_parameters.txt` instead of writing the placeholder, and the parser
+  skips a `(from restart)` value, so folders already written by an older
+  restart also restart again.
+
 ## [0.5.0] - 2026-10-16
 
 ### Added
