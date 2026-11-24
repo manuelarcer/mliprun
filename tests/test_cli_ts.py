@@ -228,12 +228,12 @@ def test_the_console_summary_prints_the_relax_note(capsys, tmp_path):
     from mliprun.cli.commands.ts import echo_ts_verification
 
     results = {
-        "verdict": "inconclusive", "reason": "r", "n_imaginary": 1,
+        "verdict": "not_verified", "reason": "r", "n_imaginary": 1,
         "imaginary_frequencies_cm-1": [64.5], "ts_fmax_free_eV_per_A": 0.01,
         "ts_fmax_limit_eV_per_A": 0.03,
-        "relax": {"result": "inconclusive", "status": "inconclusive",
-                  "note": "a relaxation returned to the TS; use a larger "
-                          "displacement or another optimizer"},
+        "relax": {"result": "neither", "status": "fail",
+                  "note": "a relaxation returned to the TS at 1x, 2x and 4x the "
+                          "displacement; try another optimizer or a larger --displacement"},
     }
     echo_ts_verification(results, tmp_path)
     assert "Note: a relaxation returned to the TS" in capsys.readouterr().out

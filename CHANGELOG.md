@@ -67,6 +67,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   fairchem-core 1.x install is the AQCat25-EV2 line (`AQCAT_AVAILABLE`),
   so `--mlip auto` no longer resolves to `uma-s-1p2` in that env, and
   `mlip doctor` reports it under AQCat25-EV2 instead of UMA.
+- **TS verification: a displace-and-relax side that returns to the TS is
+  retried, then fails.** Before, it made the check `inconclusive`. Now that
+  side is redone with 2× and then 4× the displacement; if it still lands on
+  the TS it counts as unmatched, the check fails and the verdict is
+  `not_verified`, with a note naming the optimizer and `--displacement`.
+  Each side records `displacements_tried_A`. Juan's ruling on the PR #65
+  review.
 
 ### Fixed
 
