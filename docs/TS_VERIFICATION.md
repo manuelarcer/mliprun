@@ -79,11 +79,11 @@ The result is one of:
 | `one_side` | One side matches an endpoint, the other matches neither. |
 | `same_side` | Both sides match the same endpoint. |
 | `neither` | No side matches an endpoint. |
-| `inconclusive` | A relaxation did not converge within its steps, or a relaxation returned to the TS (see below). |
+| `inconclusive` | A relaxation did not converge within its steps. |
 
 Only `connects` passes. The other results, except `inconclusive`, fail the check.
 
-**A relaxation that returns to the TS.** If a relaxed structure matches neither endpoint and lies within the match tolerance of the TS itself, the relaxation did not test the connection. The check is then `inconclusive`, with the note "a relaxation returned to the TS; use a larger displacement or another optimizer". Each side reports `distance_to_ts_A` and `returned_to_ts`. This was seen with the `lbfgs` optimizer on a test potential. The default `bfgs` and `fire` reached the minima in the same test.
+**A relaxation that returns to the TS.** If a relaxed structure matches neither endpoint and lies within the match tolerance of the TS itself, that relaxation did not test the connection. On a flat saddle, a small displacement can leave forces already below the relax fmax. That side is therefore redone with 2× and then 4× the displacement (0.2 and 0.4 Å by default). The other side is not affected. If the side still returns to the TS after the 4× try, it counts as matching no endpoint, so the check fails (`one_side` or `neither`) and the verdict is `not_verified`. The note then says "a relaxation returned to the TS at 1x, 2x and 4x the displacement; try another optimizer or a larger --displacement". Each side reports `distance_to_ts_A`, `returned_to_ts` and `displacements_tried_A`, and the report names the displacement used when a retry was needed. On the analytic test double well, `lbfgs` lands back on the saddle at all three sizes, so a true saddle is `not_verified` with that optimizer. The default `bfgs` and `fire` reach the minima in the same test.
 
 **Unrelaxed endpoints.** The report prints the fmax of IS and FS. When it exceeds the relax fmax, a note says that a failed match can reflect the endpoints and not the TS.
 

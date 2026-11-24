@@ -197,6 +197,11 @@ def _endpoint_state(endpoint, free_mask, calculator_factory) -> tuple[float, flo
     return energy, fmax
 
 
+_RETRY_SCALES = (1, 2, 4)  # displacement multiples tried while a side returns to the TS
+_RETURN_NOTE = ("a relaxation returned to the TS at 1x, 2x and 4x the displacement; "
+                "try another optimizer or a larger --displacement")
+
+
 def _displace_and_relax(
     work, initial, final, vector, *, calculator_factory, output_path, optimizer_class, fmax, max_steps, match_tolerance
 ) -> dict:
@@ -207,21 +212,29 @@ def _displace_and_relax(
         energy, endpoint_fmax = _endpoint_state(endpoint, free_mask, calculator_factory)
         endpoints[label] = {"structure": endpoint, "energy": energy, "fmax": endpoint_fmax}
 
+    base_size = float(np.linalg.norm(vector, axis=1).max())
     sides = {}
     for side, sign in (("plus", 1.0), ("minus", -1.0)):
-        atoms = work.copy()
-        atoms.set_positions(work.get_positions() + sign * vector)
-        atoms.calc = calculator_factory()
-        prefix = output_path / f"ts_relax_{side}"
-        optimizer = optimizer_class(atoms, trajectory=str(prefix) + ".traj", logfile=str(prefix) + ".log")
-        converged = bool(optimizer.run(fmax=fmax, steps=max_steps))
+        tried = []
+        # A side that relaxes back onto the TS did not test the connection: on a
+        # flat saddle the kick can leave forces below fmax. Retry it larger.
+        for scale in _RETRY_SCALES:
+            tried.append(base_size * scale)
+            atoms = work.copy()
+            atoms.set_positions(work.get_positions() + sign * scale * vector)
+            atoms.calc = calculator_factory()
+            prefix = output_path / f"ts_relax_{side}"
+            optimizer = optimizer_class(atoms, trajectory=str(prefix) + ".traj", logfile=str(prefix) + ".log")
+            converged = bool(optimizer.run(fmax=fmax, steps=max_steps))
+            distances = {label: endpoint_distance(atoms, info["structure"]) for label, info in endpoints.items()}
+            nearest = min(distances, key=distances.get)
+            matched = nearest if distances[nearest] <= match_tolerance else None
+            distance_to_ts = endpoint_distance(atoms, work)
+            returned_to_ts = bool(matched is None and distance_to_ts <= match_tolerance)
+            if not returned_to_ts:
+                break
         relaxed_energy = float(atoms.get_potential_energy())
         ase_write(str(prefix) + ".vasp", atoms, format="vasp")
-
-        distances = {label: endpoint_distance(atoms, info["structure"]) for label, info in endpoints.items()}
-        nearest = min(distances, key=distances.get)
-        matched = nearest if distances[nearest] <= match_tolerance else None
-        distance_to_ts = endpoint_distance(atoms, work)
         sides[side] = {
             "converged": converged,
             "steps": int(optimizer.nsteps),
@@ -229,7 +242,8 @@ def _displace_and_relax(
             "distance_to_final_A": distances["final"],
             "distance_to_ts_A": distance_to_ts,
             "matched": matched,
-            "returned_to_ts": bool(matched is None and distance_to_ts <= match_tolerance),
+            "returned_to_ts": returned_to_ts,
+            "displacements_tried_A": tried,
             "energy_difference_eV": None if matched is None else relaxed_energy - endpoints[matched]["energy"],
         }
 
@@ -243,6 +257,15 @@ def _displace_and_relax(
         "plus": sides["plus"],
         "minus": sides["minus"],
     }
+
+
+def _retry_text(row) -> str:
+    """Report suffix for a side that needed a larger displacement ('' when none)."""
+    tried = row.get("displacements_tried_A", [])
+    retries = len(tried) - 1
+    if retries < 1:
+        return ""
+    return f", displacement {tried[-1]:.4g} A after {retries} {'retry' if retries == 1 else 'retries'}"
 
 
 _GEOMETRY_TOLERANCE = 1e-6  # Angstrom, for "the same TS geometry"
@@ -370,6 +393,7 @@ def _format_report(results: dict, settings: dict) -> str:
                     f"to FS {row['distance_to_final_A']:.3f} A, to TS {row['distance_to_ts_A']:.3f} A, "
                     f"energy difference {energy}, "
                     f"{'converged' if row['converged'] else 'not converged'} in {row['steps']} steps"
+                    + _retry_text(row)
                 )
             if "note" in relax:
                 lines.append(f"  Note: {relax['note']}")
@@ -566,10 +590,9 @@ def verify_ts(
                         )
                     )
                 if "plus" in relax and (relax["plus"]["returned_to_ts"] or relax["minus"]["returned_to_ts"]):
-                    # A relaxation that ends on the TS did not test the connection.
-                    relax["result"] = "inconclusive"
-                    relax["status"] = "inconclusive"
-                    relax["note"] = "a relaxation returned to the TS; use a larger displacement or another optimizer"
+                    # Still on the TS after every retry: that side is unmatched, so the
+                    # check fails (classify_connection) and the note says why.
+                    relax["note"] = _RETURN_NOTE
             statuses["relax"] = relax["status"]
 
         verdict, reason = decide_verdict(n_imaginary, ts_fmax, ts_fmax_limit, statuses)

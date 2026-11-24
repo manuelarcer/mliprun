@@ -259,27 +259,56 @@ def test_the_optimizer_name_is_case_insensitive(tmp_path):
     assert r["relax"]["result"] == "connects"
 
 
-def _assert_returned_to_ts(r):
-    relax = r["relax"]
-    assert relax["result"] == "inconclusive" and relax["status"] == "inconclusive"
-    assert r["verdict"] == "inconclusive"
-    assert any(relax[s]["returned_to_ts"] is True and relax[s]["distance_to_ts_A"] < 0.3
-               for s in ("plus", "minus"))
-    assert relax["note"] == "a relaxation returned to the TS; use a larger displacement or another optimizer"
+RETURN_NOTE = ("a relaxation returned to the TS at 1x, 2x and 4x the displacement; "
+               "try another optimizer or a larger --displacement")
 
 
-def test_lbfgs_converging_back_onto_the_saddle_is_inconclusive(tmp_path):
-    # On this surface LBFGS overshoots across the flat saddle and converges on it.
-    r = _verify(tmp_path, checks=("relax",), relax_optimizer="lbfgs")
-    _assert_returned_to_ts(r)
-    assert "a relaxation returned to the TS" in (tmp_path / "ts_verify.txt").read_text()
-
-
-def test_a_relaxation_that_starts_converged_on_the_ts_is_inconclusive(tmp_path):
-    # At the exact saddle the force is zero, so a tiny displacement converges at once.
+def test_a_side_that_keeps_returning_to_the_ts_fails_after_two_retries(tmp_path):
+    # At the exact saddle the force is zero: 1e-6, 2e-6 and 4e-6 A all converge at once.
     r = _verify(tmp_path, checks=("relax",), displacement=1e-6)
-    _assert_returned_to_ts(r)
-    assert r["relax"]["plus"]["steps"] == 0 and r["relax"]["plus"]["matched"] is None
+    relax = r["relax"]
+    assert relax["status"] == "fail" and r["verdict"] == "not_verified"
+    assert relax["result"] == "neither"
+    for side in ("plus", "minus"):
+        assert relax[side]["returned_to_ts"] is True and relax[side]["matched"] is None
+        assert relax[side]["steps"] == 0
+        assert relax[side]["displacements_tried_A"] == pytest.approx([1e-6, 2e-6, 4e-6])
+    assert relax["note"] == RETURN_NOTE
+    report = (tmp_path / "ts_verify.txt").read_text()
+    assert RETURN_NOTE in report
+    assert "displacement 4e-06 A after 2 retries" in report
+
+
+def test_a_retry_with_twice_the_displacement_rescues_a_flat_saddle(tmp_path):
+    # Force near the saddle is about 4x eV/A: 0.002 A gives 0.008, below the
+    # relax fmax 0.01, so the first try stops on the TS; 0.004 A escapes.
+    r = _verify(tmp_path, checks=("relax",), displacement=0.002)
+    relax = r["relax"]
+    assert relax["result"] == "connects" and r["verdict"] == "verified"
+    for side in ("plus", "minus"):
+        assert relax[side]["displacements_tried_A"] == pytest.approx([0.002, 0.004])
+        assert relax[side]["returned_to_ts"] is False
+    assert "note" not in relax
+    first = ase_read(str(tmp_path / "ts_relax_plus.traj"), index=0)
+    assert np.linalg.norm(first.get_positions()[0] - CENTRE) == pytest.approx(0.004, abs=1e-9)
+    assert "displacement 0.004 A after 1 retry" in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_a_side_that_escapes_at_once_is_not_retried(tmp_path):
+    r = _verify(tmp_path, checks=("relax",))
+    for side in ("plus", "minus"):
+        assert r["relax"][side]["displacements_tried_A"] == [0.1]
+    assert "retr" not in (tmp_path / "ts_verify.txt").read_text()
+
+
+def test_lbfgs_landing_on_the_saddle_at_every_size_is_not_verified(tmp_path):
+    # Measured: on this surface LBFGS overshoots across the flat saddle and converges
+    # on it at 0.1, 0.2 and 0.4 A, so a true saddle fails and the note names the optimizer.
+    r = _verify(tmp_path, checks=("relax",), relax_optimizer="lbfgs")
+    for side in ("plus", "minus"):
+        assert r["relax"][side]["displacements_tried_A"] == pytest.approx([0.1, 0.2, 0.4])
+        assert r["relax"][side]["returned_to_ts"] is True
+    assert r["verdict"] == "not_verified" and r["relax"]["note"] == RETURN_NOTE
 
 
 def test_two_sides_matching_the_same_endpoint_is_same_side(tmp_path):
